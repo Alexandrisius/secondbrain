@@ -14,30 +14,29 @@ appId: com.neurocanvas.app
 # Имя продукта (отображается в Windows)
 productName: NeuroCanvas
 
-# Директория с исходниками Electron
+# Описание (показывается в свойствах файла)
+copyright: Copyright © 2024 NeuroCanvas Team
+
+# Директории
 directories:
-  # Где находится main.js и preload.js
-  app: .
   # Куда складывать собранные файлы
   output: dist
-  # Куда складывать промежуточные файлы
+  # Куда складывать промежуточные файлы сборки
   buildResources: electron/resources
 
-# Файлы для включения в сборку
+# -----------------------------------------------------------------------------
+# ФАЙЛЫ ДЛЯ ВКЛЮЧЕНИЯ В СБОРКУ
+# -----------------------------------------------------------------------------
+
+# Файлы приложения
 files:
-  # Standalone сборка Next.js (включает сервер)
-  - .next/standalone/**/*
-  # Статичные ресурсы Next.js
-  - .next/static/**/*
-  # Public файлы
-  - public/**/*
   # Electron файлы
   - electron/**/*
-  # Папка данных (создастся при первом запуске)
-  - data/.gitkeep
+  # Package.json нужен для запуска
+  - package.json
   # Исключаем лишнее
   - "!src/**/*"
-  - "!node_modules/**/*"
+  - "!data/**/*"
   - "!.next/cache/**/*"
   - "!**/*.map"
   - "!**/*.ts"
@@ -50,39 +49,26 @@ files:
   - "!BUILD.md"
   - "!.git/**/*"
   - "!.github/**/*"
+  - "!electron-builder.yml"
+  - "!components.json"
 
-# Дополнительные ресурсы для копирования после сборки
+# Дополнительные ресурсы (копируются в resources/)
 extraResources:
-  # Копируем standalone в ресурсы
+  # Standalone сервер Next.js
   - from: ".next/standalone"
     to: "standalone"
     filter:
       - "**/*"
-  # Копируем статику
+  # Статичные файлы Next.js (CSS, JS)
   - from: ".next/static"
     to: "standalone/.next/static"
     filter:
       - "**/*"
-  # Public
+  # Public файлы (favicon и т.д.)
   - from: "public"
     to: "standalone/public"
     filter:
       - "**/*"
-
-# Точка входа Electron
-main: electron/main.js
-
-# -----------------------------------------------------------------------------
-# МЕТАДАННЫЕ
-# -----------------------------------------------------------------------------
-
-# Информация об авторе
-author:
-  name: NeuroCanvas Team
-  email: your-email@example.com
-
-# Описание (показывается в свойствах файла)
-copyright: Copyright © 2024 NeuroCanvas Team
 
 # -----------------------------------------------------------------------------
 # НАСТРОЙКИ ДЛЯ WINDOWS
@@ -90,13 +76,16 @@ copyright: Copyright © 2024 NeuroCanvas Team
 
 win:
   # Иконка для Windows (256x256 .ico)
-  icon: electron/icon.ico
+  # Закомментировано пока нет файла - будет использована дефолтная
+  # icon: electron/icon.ico
+  
+  # Отключаем подпись кода (не нужна для бесплатного распространения)
+  signAndEditExecutable: false
   
   # Целевые форматы сборки
   target:
     # NSIS - установщик с wizard'ом
     - target: nsis
-      # Архитектуры: x64 для современных ПК
       arch:
         - x64
     
@@ -121,12 +110,6 @@ nsis:
   
   # Имя ярлыка
   shortcutName: NeuroCanvas
-  
-  # Показать лицензию при установке (опционально)
-  # license: LICENSE.txt
-  
-  # Язык установщика
-  language: 1049  # Русский
 
 # Настройки portable версии
 portable:
@@ -139,7 +122,7 @@ portable:
 
 mac:
   # Иконка для macOS (512x512 .icns)
-  icon: electron/icon.icns
+  # icon: electron/icon.icns
   
   # Категория в App Store
   category: public.app-category.productivity
@@ -149,12 +132,6 @@ mac:
     - target: dmg
       arch:
         - x64
-        - arm64  # Для Apple Silicon (M1, M2, M3)
-    
-    # ZIP архив (для автообновлений)
-    - target: zip
-      arch:
-        - x64
         - arm64
 
 # Настройки DMG образа
@@ -162,74 +139,36 @@ dmg:
   # Заголовок окна DMG
   title: "${productName} ${version}"
   
-  # Иконка DMG
-  icon: electron/icon.icns
-  
-  # Фон окна DMG (опционально)
-  # background: electron/resources/dmg-background.png
-  
   # Содержимое окна DMG
   contents:
-    # Иконка приложения
     - x: 130
       y: 220
-    # Ссылка на Applications
     - x: 410
       y: 220
       type: link
       path: /Applications
 
 # -----------------------------------------------------------------------------
-# НАСТРОЙКИ ДЛЯ LINUX (опционально)
+# НАСТРОЙКИ ДЛЯ LINUX
 # -----------------------------------------------------------------------------
 
 linux:
-  # Иконка для Linux
-  icon: electron/icons
-  
   # Целевые форматы
   target:
     - target: AppImage
       arch:
         - x64
-    - target: deb
-      arch:
-        - x64
 
   # Категория в меню
   category: Utility
-  
-  # Описание
-  description: Visual AI canvas for building prompts and knowledge graphs
-
-# -----------------------------------------------------------------------------
-# АВТООБНОВЛЕНИЯ (опционально)
-# -----------------------------------------------------------------------------
-
-# Настройки для electron-updater
-# Раскомментируйте когда настроите GitHub Releases
-# publish:
-#   provider: github
-#   owner: YOUR_GITHUB_USERNAME
-#   repo: neurocanvas
-#   releaseType: release
 
 # -----------------------------------------------------------------------------
 # ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ
 # -----------------------------------------------------------------------------
 
-# Сжатие ASAR архива (упаковка исходников)
+# Включаем asar архив
 asar: true
+
+# Файлы которые не нужно паковать в asar (нативные модули)
 asarUnpack:
-  # Файлы которые не нужно паковать в asar
   - "**/*.node"
-
-# Удалять неиспользуемые локали Electron (уменьшает размер)
-electronLanguages:
-  - en
-  - ru
-
-# Настройки для подписи кода (для публикации в магазинах)
-# Требует сертификаты разработчика
-# afterSign: scripts/notarize.js
-
