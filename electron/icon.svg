@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NeuroCanvas Icon
+  
+  Мозг с нейронными связями - символ AI и графа знаний.
+  
+  Для конвертации в ICO/ICNS используйте:
+  1. Откройте https://cloudconvert.com/svg-to-ico
+  2. Загрузите этот SVG
+  3. Выберите размер 256x256 для ICO
+  4. Скачайте и переименуйте в icon.ico
+  
+  Или используйте утилиту electron-icon-builder с PNG файлом.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Фон - круг с градиентом -->
+  <defs>
+    <!-- Градиент фона -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e1e2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#313244;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Градиент для мозга -->
+    <linearGradient id="brainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#89b4fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#b4befe;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Свечение -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Фоновый круг -->
+  <circle cx="256" cy="256" r="240" fill="url(#bgGradient)" stroke="#45475a" stroke-width="4"/>
+  
+  <!-- Нейронные связи (линии на заднем плане) -->
+  <g stroke="#89b4fa" stroke-width="3" stroke-opacity="0.4" fill="none">
+    <!-- Вертикальные и диагональные линии -->
+    <line x1="160" y1="140" x2="200" y2="200"/>
+    <line x1="352" y1="140" x2="312" y2="200"/>
+    <line x1="140" y1="280" x2="190" y2="250"/>
+    <line x1="372" y1="280" x2="322" y2="250"/>
+    <line x1="200" y1="360" x2="230" y2="310"/>
+    <line x1="312" y1="360" x2="282" y2="310"/>
+    <line x1="256" y1="120" x2="256" y2="180"/>
+    <line x1="256" y1="380" x2="256" y2="330"/>
+  </g>
+  
+  <!-- Мозг (стилизованный) -->
+  <g fill="url(#brainGradient)" filter="url(#glow)">
+    <!-- Левая половина мозга -->
+    <path d="
+      M 180 200
+      C 140 200, 120 240, 130 280
+      C 140 320, 160 350, 200 360
+      C 220 365, 240 355, 250 340
+      L 250 260
+      C 250 230, 220 210, 190 210
+      C 175 210, 170 195, 180 200
+      Z
+    " opacity="0.9"/>
+    
+    <!-- Правая половина мозга -->
+    <path d="
+      M 332 200
+      C 372 200, 392 240, 382 280
+      C 372 320, 352 350, 312 360
+      C 292 365, 272 355, 262 340
+      L 262 260
+      C 262 230, 292 210, 322 210
+      C 337 210, 342 195, 332 200
+      Z
+    " opacity="0.9"/>
+    
+    <!-- Центральная часть (соединение) -->
+    <ellipse cx="256" cy="280" rx="30" ry="50" opacity="0.7"/>
+  </g>
+  
+  <!-- Нейронные узлы (точки) -->
+  <g fill="#f9e2af">
+    <!-- Внешние узлы -->
+    <circle cx="160" cy="140" r="8"/>
+    <circle cx="352" cy="140" r="8"/>
+    <circle cx="140" cy="280" r="8"/>
+    <circle cx="372" cy="280" r="8"/>
+    <circle cx="200" cy="360" r="8"/>
+    <circle cx="312" cy="360" r="8"/>
+    <circle cx="256" cy="120" r="8"/>
+    <circle cx="256" cy="380" r="8"/>
+    
+    <!-- Внутренние узлы (на мозге) -->
+    <circle cx="200" cy="200" r="6" fill="#89b4fa"/>
+    <circle cx="312" cy="200" r="6" fill="#89b4fa"/>
+    <circle cx="180" cy="260" r="6" fill="#89b4fa"/>
+    <circle cx="332" cy="260" r="6" fill="#89b4fa"/>
+    <circle cx="230" cy="310" r="6" fill="#89b4fa"/>
+    <circle cx="282" cy="310" r="6" fill="#89b4fa"/>
+    <circle cx="256" cy="180" r="6" fill="#89b4fa"/>
+    <circle cx="256" cy="330" r="6" fill="#89b4fa"/>
+  </g>
+  
+  <!-- Активные связи (яркие линии) -->
+  <g stroke="#f9e2af" stroke-width="2" stroke-opacity="0.8" fill="none">
+    <line x1="200" y1="200" x2="230" y2="310"/>
+    <line x1="312" y1="200" x2="282" y2="310"/>
+    <line x1="180" y1="260" x2="230" y2="310"/>
+    <line x1="332" y1="260" x2="282" y2="310"/>
+    <line x1="256" y1="180" x2="200" y2="200"/>
+    <line x1="256" y1="180" x2="312" y2="200"/>
+    <line x1="256" y1="330" x2="230" y2="310"/>
+    <line x1="256" y1="330" x2="282" y2="310"/>
+  </g>
+</svg>
+

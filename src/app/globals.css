@@ -1,27 +1,1156 @@
+/**
+ * @file globals.css
+ * @description Глобальные стили для NeuroCanvas
+ * 
+ * Содержит:
+ * - Tailwind директивы
+ * - CSS переменные для темы
+ * - Кастомные стили для React Flow
+ * - Стили для нового дизайна карточек (вопрос сверху, ответ-слайдер снизу)
+ * - Анимации морфинга нод
+ */
+
+/* =============================================================================
+   TAILWIND ДИРЕКТИВЫ
+   ============================================================================= */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
+/* =============================================================================
+   УТИЛИТЫ
+   ============================================================================= */
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+}
+
+/* =============================================================================
+   CSS ПЕРЕМЕННЫЕ - СВЕТЛАЯ ТЕМА
+   ============================================================================= */
+
+@layer base {
+  :root {
+    /* --- Основные цвета --- */
+    --background: 220 20% 97%;
+    --foreground: 220 20% 10%;
+    
+    /* --- Карточки --- */
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+    
+    /* --- Popover --- */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+    
+    /* --- Primary (акцентный цвет - глубокий индиго) --- */
+    --primary: 245 58% 51%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* --- Secondary --- */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 20% 20%;
+    
+    /* --- Muted --- */
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 46%;
+    
+    /* --- Accent --- */
+    --accent: 220 14% 96%;
+    --accent-foreground: 220 20% 20%;
+    
+    /* --- Destructive --- */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* --- Границы и инпуты --- */
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 245 58% 51%;
+    
+    /* --- Графики (для MiniMap и т.д.) --- */
+    --chart-1: 245 58% 51%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    
+    /* --- Скругления --- */
+    --radius: 0.75rem;
+    
+    /* --- NeuroCanvas специфичные переменные --- */
+    --neuro-node-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.1);
+    --neuro-node-shadow-hover: 0 8px 30px -4px rgba(0, 0, 0, 0.15);
+    --neuro-handle-size: 24px;
+    --neuro-transition: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  /* =============================================================================
+     CSS ПЕРЕМЕННЫЕ - ТЁМНАЯ ТЕМА
+     ============================================================================= */
+  
+  .dark {
+    /* --- Основные цвета --- */
+    --background: 220 20% 7%;
+    --foreground: 220 10% 98%;
+    
+    /* --- Карточки --- */
+    --card: 220 20% 10%;
+    --card-foreground: 220 10% 98%;
+    
+    /* --- Popover --- */
+    --popover: 220 20% 10%;
+    --popover-foreground: 220 10% 98%;
+    
+    /* --- Primary (акцентный - яркий индиго) --- */
+    --primary: 245 70% 65%;
+    --primary-foreground: 220 20% 7%;
+    
+    /* --- Secondary --- */
+    --secondary: 220 20% 15%;
+    --secondary-foreground: 220 10% 98%;
+    
+    /* --- Muted --- */
+    --muted: 220 20% 15%;
+    --muted-foreground: 220 10% 60%;
+    
+    /* --- Accent --- */
+    --accent: 220 20% 15%;
+    --accent-foreground: 220 10% 98%;
+    
+    /* --- Destructive --- */
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* --- Границы и инпуты --- */
+    --border: 220 20% 18%;
+    --input: 220 20% 18%;
+    --ring: 245 70% 65%;
+    
+    /* --- Графики --- */
+    --chart-1: 245 70% 65%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    
+    /* --- NeuroCanvas тёмная тема --- */
+    --neuro-node-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+    --neuro-node-shadow-hover: 0 8px 30px -4px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* =============================================================================
+   БАЗОВЫЕ СТИЛИ
+   ============================================================================= */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Убираем стандартный outline, заменяем на ring */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  
+  /* Исключение: убираем ring для input внутри search-контейнера сайдбара */
+  /* Красивая подсветка идёт от родительского контейнера через focus-within */
+  .sidebar-search-input:focus-visible {
+    @apply ring-0 ring-offset-0;
+  }
+}
+
+/* =============================================================================
+   REACT FLOW КАСТОМИЗАЦИЯ
+   ============================================================================= */
+
+@layer components {
+  /* --- Основной контейнер Canvas --- */
+  .neuro-canvas {
+    @apply bg-background;
+  }
+  
+  /* --- Фоновая сетка --- */
+  .neuro-canvas .react-flow__background {
+    @apply bg-background;
+  }
+  
+  /* --- Панель управления --- */
+  .neuro-controls {
+    @apply bg-card border border-border rounded-lg shadow-lg overflow-hidden;
+  }
+  
+  .neuro-controls button {
+    @apply bg-card hover:bg-accent text-foreground border-0 border-b border-border;
+    @apply transition-colors duration-150;
+  }
+  
+  .neuro-controls button:last-child {
+    @apply border-b-0;
+  }
+  
+  .neuro-controls button svg {
+    @apply fill-current;
+  }
+  
+  /* --- MiniMap --- */
+  .neuro-minimap {
+    @apply bg-card/80 backdrop-blur-sm border border-border rounded-lg shadow-lg overflow-hidden;
+  }
+  
+  .neuro-minimap .react-flow__minimap-mask {
+    fill: hsl(var(--muted) / 0.5);
+  }
+  
+  .neuro-minimap .react-flow__minimap-node {
+    fill: hsl(var(--primary));
+    stroke: hsl(var(--primary-foreground));
+    stroke-width: 1;
+  }
+  
+  /* --- Линии соединения --- */
+  .react-flow__edge-path {
+    stroke: hsl(var(--primary) / 0.5);
+    stroke-width: 2;
+    transition: stroke 150ms ease;
+  }
+  
+  .react-flow__edge:hover .react-flow__edge-path,
+  .react-flow__edge.selected .react-flow__edge-path {
+    stroke: hsl(var(--primary));
+    stroke-width: 3;
+  }
+  
+  /* --- Линия во время создания соединения --- */
+  .react-flow__connection-path {
+    stroke: hsl(var(--primary));
+    stroke-width: 2;
+    stroke-dasharray: 5, 5;
+    animation: dash-flow 0.5s linear infinite;
+  }
+  
+  @keyframes dash-flow {
+    to {
+      stroke-dashoffset: -10;
+    }
+  }
+  
+  /* --- Handles (точки соединения) - УВЕЛИЧЕННЫЕ для лёгкого попадания --- */
+  .neuro-handle {
+    width: var(--neuro-handle-size) !important;
+    height: var(--neuro-handle-size) !important;
+    background: hsl(var(--primary)) !important;
+    border: 3px solid hsl(var(--background)) !important;
+    border-radius: 50% !important;
+    /* Убрана анимация hover - она мешает попаданию! */
+    cursor: crosshair;
+  }
+  
+  /* Только визуальный feedback без движения */
+  .neuro-handle:hover {
+    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.3);
+  }
+  
+  /* --- Выделение ноды через React Flow --- */
+  .react-flow__node.selected .neuro-node {
+    @apply ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+  
+  /* =================================================================
+     РАМКА ВЫДЕЛЕНИЯ (Selection Box) - ДИНАМИЧЕСКИЕ СТИЛИ
+     
+     Реализует паттерн из графических редакторов:
+     - Слева направо (Full mode): сплошная синяя рамка, выделяются
+       только ноды, ПОЛНОСТЬЮ попавшие в рамку
+     - Справа налево (Partial mode): пунктирная зелёная рамка,
+       выделяются ноды с ЛЮБЫМ пересечением
+     ================================================================= */
+  
+  /* --- Базовые стили рамки выделения --- */
+  .react-flow__selection {
+    /* Скрываем рамку по умолчанию (когда не идёт выделение) */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 100ms ease-out;
+  }
+  
+  /* --- Показываем рамку ТОЛЬКО во время активного выделения --- */
+  .selection-active .react-flow__selection {
+    opacity: 1;
+  }
+  
+  /* --- FULL MODE (слева направо) - сплошная синяя рамка --- */
+  .selection-mode-full .react-flow__selection {
+    background: hsl(var(--primary) / 0.08) !important;
+    border: 2px solid hsl(var(--primary) / 0.6) !important;
+    border-radius: 4px;
+  }
+  
+  /* --- PARTIAL MODE (справа налево) - пунктирная зелёная рамка --- */
+  .selection-mode-partial .react-flow__selection {
+    background: hsl(160 60% 45% / 0.08) !important;
+    border: 2px dashed hsl(160 60% 45% / 0.7) !important;
+    border-radius: 4px;
+  }
+  
+  /* --- Стили для UserSelection (внутренний компонент React Flow) --- */
+  .react-flow__nodesselection-rect,
+  .react-flow__selection-rect {
+    /* Наследуем стили от родителя .react-flow__selection */
+  }
+  
+  /* --- Скрываем рамку выделенных нод после завершения выделения --- */
+  /* React Flow создаёт отдельную рамку вокруг группы выделенных нод */
+  .react-flow__nodesselection {
+    /* Скрываем после завершения выделения */
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  /* Показываем только во время активного выделения */
+  .selection-active .react-flow__nodesselection {
+    opacity: 1;
+  }
+  
+  /* --- ПРЕДОТВРАЩЕНИЕ ВЫДЕЛЕНИЯ ТЕКСТА ПРИ DRAG-ОПЕРАЦИЯХ --- */
+  /* 
+   * Когда пользователь перетаскивает связь (connecting) или панорамирует холст,
+   * браузер может начать выделять текст. Эти правила предотвращают это.
+   */
+  
+  /* Во время создания связи - отключаем выделение на ВСЁМ холсте */
+  /* КРИТИЧНО: Перебиваем ВСЕ другие правила включая .nodrag и .select-text */
+  /* Это предотвращает выделение текста на других карточках при протягивании связи */
+  .react-flow.connecting,
+  .react-flow.connecting *,
+  .react-flow.connecting .nodrag,
+  .react-flow.connecting .nodrag *,
+  .react-flow.connecting .select-text,
+  .react-flow.connecting .select-text * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    /* Курсор "прицел" показывает что идёт создание связи */
+    cursor: crosshair !important;
+  }
+  
+  /* 
+   * ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: Класс connecting-active управляется через React state
+   * Это гарантирует блокировку выделения текста даже если .react-flow.connecting не работает
+   */
+  .connecting-active,
+  .connecting-active *,
+  .connecting-active .react-flow__node,
+  .connecting-active .react-flow__node *,
+  .connecting-active .neuro-node,
+  .connecting-active .neuro-node *,
+  .connecting-active .nodrag,
+  .connecting-active .nodrag *,
+  .connecting-active .select-text,
+  .connecting-active .select-text * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  
+  /* На панели холста (пустое место) - выделение не нужно */
+  .react-flow__pane {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  
+  /* На фоне холста - выделение не нужно */
+  .react-flow__background {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  
+  /* На линиях связи - выделение не нужно */
+  .react-flow__edges,
+  .react-flow__edge {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  
+  /* На handles (точках соединения) - выделение не нужно */
+  .react-flow__handle {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+}
+
+/* =============================================================================
+   NEURONODE КОМПОНЕНТ - НОВЫЙ ДИЗАЙН
+   ============================================================================= */
+
+@layer components {
+  /* --- Wrapper для позиционирования resize control --- */
+  .neuro-node-wrapper {
+    position: relative;
+  }
+  
+  /* --- Базовые стили ноды --- */
+  .neuro-node {
+    box-shadow: var(--neuro-node-shadow);
+    transition: all var(--neuro-transition);
+    
+    /* Красивый градиентный бордер при наведении */
+    position: relative;
+    background-clip: padding-box;
+    overflow: hidden;
+    
+    /* ВАЖНО: По умолчанию запрещаем выделение текста в карточках
+       Выделение разрешается только в режиме цитирования через класс .select-text */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  
+  .neuro-node:hover {
+    box-shadow: var(--neuro-node-shadow-hover);
+  }
+  
+  /* --- Question Section (верхняя часть с вопросом) --- */
+  .neuro-question-section {
+    position: relative;
+    /* Для правильного позиционирования handles */
+    z-index: 1;
+  }
+  
+  /* --- Answer Section (нижняя часть со слайдером) --- */
+  .neuro-answer-section {
+    /* Разделительная линия сверху */
+    border-top: 1px solid hsl(var(--border));
+    /* Фоновый цвет чуть темнее для визуального разделения */
+    background: hsl(var(--muted) / 0.3);
+  }
+  
+  /* --- STALE (устаревшая) нода - ЯРКИЙ ОРАНЖЕВЫЙ! --- */
+  .neuro-node--stale {
+    /* Оранжевая рамка */
+    border: 2px solid hsl(25 95% 53%) !important;
+    /* Оранжевый градиентный фон */
+    background: linear-gradient(
+      135deg,
+      hsl(var(--card)) 0%,
+      hsl(25 95% 53% / 0.15) 100%
+    ) !important;
+    /* Оранжевая тень */
+    box-shadow: 
+      0 0 0 2px hsl(25 95% 53% / 0.2),
+      0 4px 20px -2px hsl(25 95% 53% / 0.3) !important;
+  }
+  
+  /* Пульсация для привлечения внимания */
+  .neuro-node--stale::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 2px solid hsl(25 95% 53% / 0.5);
+    border-radius: inherit;
+    animation: stale-pulse 2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: -1;
+  }
+  
+  @keyframes stale-pulse {
+    0%, 100% { opacity: 0; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.02); }
+  }
+  
+  /* =================================================================
+     ЦИТАТНЫЕ КАРТОЧКИ - ИНВАЛИДИРОВАННОЕ СОСТОЯНИЕ (КРАСНАЯ ПОДСВЕТКА)
+     
+     Применяется когда исходный текст ответа изменился и цитата
+     больше не соответствует оригиналу. Пользователь должен выделить
+     новую цитату из обновлённого текста.
+     ================================================================= */
+  .neuro-node--quote-invalid {
+    /* Красная рамка */
+    border: 2px solid hsl(0 84% 60%) !important;
+    /* Красный градиентный фон */
+    background: linear-gradient(
+      135deg,
+      hsl(var(--card)) 0%,
+      hsl(0 84% 60% / 0.12) 100%
+    ) !important;
+    /* Красная тень */
+    box-shadow: 
+      0 0 0 2px hsl(0 84% 60% / 0.2),
+      0 4px 20px -2px hsl(0 84% 60% / 0.25) !important;
+  }
+  
+  /* Пульсация для привлечения внимания к инвалидированной цитате */
+  .neuro-node--quote-invalid::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border: 2px solid hsl(0 84% 60% / 0.5);
+    border-radius: inherit;
+    animation: quote-invalid-pulse 2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: -1;
+  }
+  
+  @keyframes quote-invalid-pulse {
+    0%, 100% { opacity: 0; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.02); }
+  }
+}
+
+/* =============================================================================
+   ЦИТИРОВАНИЕ - UI КОМПОНЕНТЫ
+   ============================================================================= */
+
+@layer components {
+  /* --- Секция цитаты в карточке --- */
+  .quote-section {
+    /* Базовые стили задаются inline через Tailwind */
+    
+    /* ВАЖНО: Запрещаем выделение текста в секции цитаты
+       Это позволяет перетаскивать карточку за эту область,
+       а не выделять текст при попытке drag */
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    cursor: grab;
+  }
+  
+  .quote-section:active {
+    cursor: grabbing;
+  }
+  
+  /* Запрещаем выделение во всех дочерних элементах секции цитаты */
+  .quote-section *,
+  .quote-section blockquote,
+  .quote-section span {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+  
+  /* --- Мини-тулбар выделения текста для создания цитаты --- */
+  .quote-selection-toolbar {
+    /* Анимация появления */
+    animation: quote-toolbar-appear 0.15s ease-out;
+  }
+  
+  @keyframes quote-toolbar-appear {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* --- Режим цитирования активен --- */
+  .quote-mode-active {
+    /* Подсветка фона для индикации режима */
+    background: hsl(var(--primary) / 0.03);
+    border-radius: 0.5rem;
+    padding: 0.25rem;
+    margin: -0.25rem;
+  }
+  
+  /* Выделение текста в режиме цитирования - более яркое */
+  .quote-mode-active ::selection {
+    background: hsl(var(--primary) / 0.4);
+    color: inherit;
+  }
+  
+  .quote-mode-active ::-moz-selection {
+    background: hsl(var(--primary) / 0.4);
+    color: inherit;
+  }
+  
+  /* --- Разрешение выделения текста в зоне цитирования --- */
+  .select-text {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+  
+  .select-text * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+}
+
+/* =============================================================================
+   ЗАПРЕТ ВЫДЕЛЕНИЯ ТЕКСТА В ОТВЕТНОЙ ЧАСТИ (по умолчанию)
+   
+   Выделение текста разрешается ТОЛЬКО в режиме цитирования через класс .select-text
+   ============================================================================= */
+
+@layer components {
+  /* --- Панель управления ответом (кнопки Скрыть/Показать) --- */
+  /* ВАЖНО: Запрещаем выделение текста на панели управления
+     Это позволяет перетаскивать карточку за эту область */
+  .neuro-answer-toolbar,
+  .neuro-answer-toolbar *,
+  .neuro-answer-toolbar button,
+  .neuro-answer-toolbar span {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    cursor: grab;
+  }
+  
+  .neuro-answer-toolbar:active,
+  .neuro-answer-toolbar:active * {
+    cursor: grabbing;
+  }
+  
+  /* Для кнопок внутри панели - курсор pointer */
+  .neuro-answer-toolbar button {
+    cursor: pointer !important;
+  }
+  
+  /* Запрещаем выделение во всех элементах ответной части */
+  .neuro-answer-section,
+  .neuro-answer-section *,
+  .neuro-answer-section .prose,
+  .neuro-answer-section .prose * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    /* Курсор "рука" для навигации по холсту и перемещения карточки */
+    cursor: grab;
+  }
+  
+  .neuro-answer-section:active,
+  .neuro-answer-section:active * {
+    cursor: grabbing;
+  }
+  
+  /* Переопределяем ТОЛЬКО когда активен режим цитирования */
+  .neuro-answer-section .select-text,
+  .neuro-answer-section .select-text *,
+  .neuro-answer-section .select-text .prose,
+  .neuro-answer-section .select-text .prose * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    cursor: text;
+  }
+}
+
+/* =============================================================================
+   PROSE (TYPOGRAPHY) КАСТОМИЗАЦИЯ
+   ============================================================================= */
+
+@layer components {
+  /* Кастомизация prose для Markdown в нодах */
+  .neuro-node .prose,
+  .neuro-answer-section .prose {
+    --tw-prose-body: hsl(var(--foreground));
+    --tw-prose-headings: hsl(var(--foreground));
+    --tw-prose-links: hsl(var(--primary));
+    --tw-prose-bold: hsl(var(--foreground));
+    --tw-prose-counters: hsl(var(--muted-foreground));
+    --tw-prose-bullets: hsl(var(--muted-foreground));
+    --tw-prose-hr: hsl(var(--border));
+    --tw-prose-quotes: hsl(var(--foreground));
+    --tw-prose-quote-borders: hsl(var(--primary));
+    --tw-prose-captions: hsl(var(--muted-foreground));
+    --tw-prose-code: hsl(var(--foreground));
+    --tw-prose-pre-code: hsl(var(--foreground));
+    --tw-prose-pre-bg: hsl(var(--muted));
+    --tw-prose-th-borders: hsl(var(--border));
+    --tw-prose-td-borders: hsl(var(--border));
+    
+    /* Инвертированные цвета для тёмной темы */
+    --tw-prose-invert-body: hsl(var(--foreground));
+    --tw-prose-invert-headings: hsl(var(--foreground));
+    --tw-prose-invert-links: hsl(var(--primary));
+    --tw-prose-invert-bold: hsl(var(--foreground));
+    --tw-prose-invert-counters: hsl(var(--muted-foreground));
+    --tw-prose-invert-bullets: hsl(var(--muted-foreground));
+    --tw-prose-invert-hr: hsl(var(--border));
+    --tw-prose-invert-quotes: hsl(var(--foreground));
+    --tw-prose-invert-quote-borders: hsl(var(--primary));
+    --tw-prose-invert-captions: hsl(var(--muted-foreground));
+    --tw-prose-invert-code: hsl(var(--foreground));
+    --tw-prose-invert-pre-code: hsl(var(--foreground));
+    --tw-prose-invert-pre-bg: hsl(var(--muted));
+    --tw-prose-invert-th-borders: hsl(var(--border));
+    --tw-prose-invert-td-borders: hsl(var(--border));
+  }
+  
+  /* Код в нодах */
+  .neuro-node .prose code,
+  .neuro-answer-section .prose code {
+    @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+    font-weight: inherit;
+  }
+  
+  .neuro-node .prose code::before,
+  .neuro-node .prose code::after,
+  .neuro-answer-section .prose code::before,
+  .neuro-answer-section .prose code::after {
+    content: none;
+  }
+  
+  /* Pre блоки */
+  .neuro-node .prose pre,
+  .neuro-answer-section .prose pre {
+    @apply bg-muted rounded-lg p-4 overflow-x-auto;
+  }
+  
+  .neuro-node .prose pre code,
+  .neuro-answer-section .prose pre code {
+    @apply bg-transparent p-0;
+  }
+  
+  /* Таблицы (GFM) */
+  .neuro-node .prose table,
+  .neuro-answer-section .prose table {
+    @apply w-full border-collapse;
+  }
+  
+  .neuro-node .prose th,
+  .neuro-node .prose td,
+  .neuro-answer-section .prose th,
+  .neuro-answer-section .prose td {
+    @apply border border-border px-3 py-2 text-left;
+  }
+  
+  .neuro-node .prose th,
+  .neuro-answer-section .prose th {
+    @apply bg-muted font-semibold;
+  }
+  
+  /* Чекбоксы (GFM task lists) */
+  .neuro-node .prose input[type="checkbox"],
+  .neuro-answer-section .prose input[type="checkbox"] {
+    @apply mr-2 accent-primary;
+  }
+}
+
+/* =============================================================================
+   АНИМАЦИИ
+   ============================================================================= */
+
+@layer utilities {
+  /* Курсор печатающей машинки для streaming */
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  
+  .animate-blink {
+    animation: blink 1s step-end infinite;
+  }
+  
+  /* Пульсация для загрузки */
+  @keyframes gentle-pulse {
+    0%, 100% { 
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% { 
+      opacity: 0.7;
+      transform: scale(0.98);
+    }
+  }
+  
+  .animate-gentle-pulse {
+    animation: gentle-pulse 2s ease-in-out infinite;
+  }
+  
+  /* Появление ноды */
+  @keyframes node-appear {
+    from {
+      opacity: 0;
+      transform: scale(0.9) translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  
+  .animate-node-appear {
+    animation: node-appear 300ms ease-out forwards;
+  }
+  
+  /* Морфинг высоты */
+  @keyframes expand {
+    from {
+      max-height: 60px;
+      opacity: 0.8;
+    }
+    to {
+      max-height: 1000px;
+      opacity: 1;
+    }
+  }
+  
+  .animate-expand {
+    animation: expand 300ms ease-out forwards;
+  }
+  
+  /* Slide down для ответной части */
+  @keyframes slide-down {
+    from {
+      max-height: 0;
+      opacity: 0;
+    }
+    to {
+      max-height: 400px;
+      opacity: 1;
+    }
+  }
+  
+  .animate-slide-down {
+    animation: slide-down 300ms ease-out forwards;
+  }
+  
+  /* Slide up для скрытия ответа */
+  @keyframes slide-up {
+    from {
+      max-height: 400px;
+      opacity: 1;
+    }
+    to {
+      max-height: 0;
+      opacity: 0;
+    }
+  }
+  
+  .animate-slide-up {
+    animation: slide-up 300ms ease-out forwards;
+  }
+}
+
+/* =============================================================================
+   СКРОЛЛБАРЫ
+   ============================================================================= */
+
+@layer base {
+  /* Кастомные скроллбары для webkit браузеров */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+    transition: background 150ms ease;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+  
+  /* Firefox скроллбары */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) hsl(var(--muted));
+  }
+}
+
+/* Стили выделения текста перенесены в секцию TEXTAREA ниже */
+
+/* =============================================================================
+   TEXTAREA В КАРТОЧКАХ - УЛУЧШЕННАЯ РАБОТА С ТЕКСТОМ
+   ============================================================================= */
+
+@layer components {
+  /* --- Убираем стандартный focus ring для textarea внутри нод --- */
+  .neuro-node textarea:focus-visible,
+  .neuro-question-section textarea:focus-visible {
+    @apply outline-none ring-0;
+  }
+  
+  /* --- Кастомные стили для textarea в нодах --- */
+  .neuro-textarea {
+    /* Явно указываем что текст можно выделять */
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    
+    /* Курсор текста по умолчанию */
+    cursor: text !important;
+    
+    /* Плавный каретка (мигающий курсор) */
+    caret-color: hsl(var(--primary));
+    
+    /* Красивая анимация при фокусе */
+    transition: 
+      background-color 200ms ease,
+      border-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  
+  /* --- Состояние фокуса --- */
+  .neuro-textarea:focus {
+    /* Тонкая подсветка при фокусе */
+    box-shadow: 
+      inset 0 0 0 1px hsl(var(--primary) / 0.2),
+      0 0 0 3px hsl(var(--primary) / 0.1);
+  }
+  
+  /* --- Выделение текста внутри textarea --- */
+  .neuro-textarea::selection {
+    background: hsl(var(--primary) / 0.3);
+    color: inherit;
+  }
+  
+  /* --- Placeholder стили --- */
+  .neuro-textarea::placeholder {
+    color: hsl(var(--muted-foreground) / 0.5);
+    transition: color 200ms ease;
+  }
+  
+  .neuro-textarea:focus::placeholder {
+    color: hsl(var(--muted-foreground) / 0.3);
+  }
+  
+  /* --- Disabled состояние --- */
+  .neuro-textarea:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  
+  /* --- Специфика для React Flow: предотвращение drag при выделении текста --- */
+  /* Эти стили работают в связке с классами nodrag, nowheel, nopan */
+  .react-flow__node .neuro-textarea {
+    /* Позволяем стандартное поведение drag для выделения текста */
+    -webkit-user-drag: none;
+    
+    /* Z-index выше чтобы клики точно попадали на textarea */
+    position: relative;
+    z-index: 10;
+  }
+  
+  /* --- Scrollbar внутри textarea (для длинного текста) --- */
+  .neuro-textarea::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .neuro-textarea::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .neuro-textarea::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 3px;
+  }
+  
+  .neuro-textarea::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+}
+
+/* =============================================================================
+   ГЛОБАЛЬНОЕ ВЫДЕЛЕНИЕ ТЕКСТА - УЛУЧШЕННЫЕ СТИЛИ
+   ============================================================================= */
+
+@layer base {
+  /* Красивое выделение текста везде в приложении */
+  ::selection {
+    background: hsl(var(--primary) / 0.25);
+    color: inherit;
+  }
+  
+  /* Firefox специфика */
+  ::-moz-selection {
+    background: hsl(var(--primary) / 0.25);
+    color: inherit;
+  }
+  
+  /* Явное разрешение выделения текста в интерактивных зонах */
+  .nodrag {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+}
+
+/* =============================================================================
+   SIDEBAR - СОВРЕМЕННЫЙ ДИЗАЙН И АНИМАЦИИ
+   ============================================================================= */
+
+@layer utilities {
+  /* --- Анимация появления слева --- */
+  @keyframes slide-in-from-left {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  
+  .animate-slide-in-left {
+    animation: slide-in-from-left 200ms ease-out forwards;
+  }
+  
+  /* --- Анимация появления сверху --- */
+  @keyframes slide-in-from-top {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  .animate-slide-in-top {
+    animation: slide-in-from-top 150ms ease-out forwards;
+  }
+  
+  /* --- Анимация пульсации для поиска --- */
+  @keyframes search-pulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+    }
+    50% {
+      box-shadow: 0 0 0 4px hsl(var(--primary) / 0.1);
+    }
+  }
+  
+  .animate-search-pulse {
+    animation: search-pulse 2s ease-in-out infinite;
+  }
+  
+  /* --- Fade in анимация --- */
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 150ms ease-out forwards;
+  }
+  
+  /* --- Scale анимация для контекстного меню --- */
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  
+  .animate-scale-in {
+    animation: scale-in 150ms ease-out forwards;
+  }
+  
+  /* --- Shimmer эффект для skeleton loading --- */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+}
+
+@layer components {
+  /* --- Кастомный тонкий скроллбар для сайдбара --- */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(220 20% 25%);
+    border-radius: 2px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(220 20% 35%);
+  }
+  
+  .scrollbar-track-transparent::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thumb-\[#313244\]::-webkit-scrollbar-thumb {
+    background: #313244;
+  }
+  
+  .hover\:scrollbar-thumb-\[#45475a\]:hover::-webkit-scrollbar-thumb {
+    background: #45475a;
+  }
+  
+  /* --- Sidebar glassmorphism эффект --- */
+  .sidebar-glass {
+    background: rgba(30, 30, 46, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  
+  /* --- Context menu glassmorphism --- */
+  .context-menu-glass {
+    background: rgba(30, 30, 46, 0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  
+  /* --- Gradient border эффект для активных элементов --- */
+  .gradient-border {
+    position: relative;
+  }
+  
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, #89b4fa, #b4befe);
+    -webkit-mask: 
+      linear-gradient(#fff 0 0) content-box, 
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  
+  /* --- Hover lift эффект --- */
+  .hover-lift {
+    transition: transform 150ms ease, box-shadow 150ms ease;
+  }
+  
+  .hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.3);
+  }
+  
+  /* --- Press эффект --- */
+  .press-effect:active {
+    transform: scale(0.98);
   }
 }

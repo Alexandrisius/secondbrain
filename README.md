@@ -1,36 +1,258 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/brain.svg" width="80" height="80" alt="NeuroCanvas Logo" />
+</p>
 
-## Getting Started
+<h1 align="center">🧠 NeuroCanvas</h1>
 
-First, run the development server:
+<p align="center">
+  <strong>Визуальный AI-холст для построения промптов и графов знаний</strong>
+</p>
+
+<p align="center">
+  <a href="#-особенности">Особенности</a> •
+  <a href="#-демо">Демо</a> •
+  <a href="#-быстрый-старт">Быстрый старт</a> •
+  <a href="#-горячие-клавиши">Горячие клавиши</a> •
+  <a href="#-стек-технологий">Технологии</a>
+</p>
+
+<p align="center">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js" />
+  <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind-3.4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" />
+</p>
+
+---
+
+## 🎯 Что это?
+
+**NeuroCanvas** — это инновационный инструмент для визуального построения AI-промптов на бесконечном холсте. Вместо линейного чата вы создаёте **граф знаний**, где каждая карточка связана с другими, а контекст передаётся автоматически.
+
+### 💡 Проблема, которую мы решаем
+
+Традиционные AI-чаты имеют критическую проблему: **линейная история**. Когда вы исследуете сложную тему, вы неизбежно уходите в боковые ветки, и возврат к основной линии разговора становится болезненным.
+
+### ✨ Наше решение
+
+NeuroCanvas позволяет:
+- **Разветвлять** диалоги как ветки в Git
+- **Цитировать** конкретные части ответов для продолжения
+- **Визуализировать** связи между идеями
+- **Искать** по всем холстам с помощью гибридного AI-поиска
+
+---
+
+## 🌟 Особенности
+
+### 🎨 Визуальный холст
+- **Бесконечный canvas** с pan, zoom и навигацией
+- **Drag-to-Create**: потяните связь на пустое место для создания карточки
+- **Double-Click**: создание новой карточки двойным кликом
+- **Smart Selection**: выделение слева направо (полное) vs справа налево (пересечение)
+
+### 🔗 Система связей
+- **Автоматический контекст**: родительские карточки формируют контекст для дочерних
+- **Цитирование**: выделите часть ответа и создайте ветку от неё
+- **Суммаризация**: длинные контексты автоматически сжимаются AI
+
+### 🔍 Гибридный поиск "Мини-Google"
+- **BM25** — классический keyword matching
+- **Semantic Search** — поиск по смыслу через embeddings
+- **Fuzzy Search** — нечёткий поиск (опечатки)
+- **Exact Match** — точное совпадение фраз
+- Результаты объединяются через **Reciprocal Rank Fusion (RRF)**
+
+### 📁 Workspace
+- **Папки и холсты**: организуйте знания в иерархию
+- **Drag-and-Drop**: перемещайте холсты между папками
+- **Недавние**: быстрый доступ к последним холстам
+- **Автосохранение**: данные сохраняются локально
+
+### 🌐 Мультиязычность
+- Полная поддержка **русского** и **английского** языков
+- Переключение в один клик
+
+---
+
+## 🚀 Быстрый старт
+
+### Требования
+- Node.js 18+
+- npm или yarn
+
+### Установка
 
 ```bash
+# Клонируйте репозиторий
+git clone https://github.com/yourusername/neurocanvas.git
+cd neurocanvas
+
+# Установите зависимости
+npm install
+
+# Запустите dev-сервер
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте [http://localhost:3000](http://localhost:3000) в браузере.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Настройка API
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Нажмите кнопку ⚙️ (настройки) в правом верхнем углу
+2. Введите API ключ для OpenAI-совместимого API (по умолчанию: vsellm.ru)
+3. Выберите модель (рекомендуется: `gemini-2.0-flash`)
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## ⌨️ Горячие клавиши
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Клавиша | Действие |
+|---------|----------|
+| `Double Click` | Создать новую карточку |
+| `Tab` | Создать дочернюю карточку (от выделенных) |
+| `Ctrl + Enter` | Создать сестринскую карточку |
+| `Space` | Свернуть/развернуть ответ |
+| `Delete` / `Backspace` | Удалить выделенные карточки |
+| `Ctrl + P` | Открыть поиск |
+| `Ctrl + Z` | Отменить действие |
+| `Ctrl + Y` | Повторить действие |
+| `Escape` | Снять выделение / закрыть модалку |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Навигация
+| Действие | Способ |
+|----------|--------|
+| Pan холста | Средняя кнопка мыши / ПКМ |
+| Zoom | Колёсико мыши |
+| Множественное выделение | Ctrl + Click / Рамка ЛКМ |
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🏗️ Архитектура
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+├── app/                    # Next.js App Router
+│   ├── api/               # API Routes
+│   │   ├── canvas/        # CRUD для холстов
+│   │   ├── chat/          # Прокси к LLM API
+│   │   ├── embeddings/    # Генерация векторов
+│   │   └── summarize/     # Суммаризация контекста
+│   └── page.tsx           # Главная страница
+│
+├── components/
+│   ├── canvas/            # React Flow компоненты
+│   │   ├── Canvas.tsx     # Обёртка холста
+│   │   ├── CanvasContent.tsx  # Логика холста
+│   │   ├── NeuroNode.tsx  # Карточка (нода)
+│   │   └── SearchBar.tsx  # Гибридный поиск
+│   ├── sidebar/           # Боковая панель
+│   └── ui/                # UI компоненты (shadcn)
+│
+├── store/                 # Zustand stores
+│   ├── useCanvasStore.ts  # Состояние холста
+│   ├── useSettingsStore.ts    # Настройки
+│   └── useWorkspaceStore.ts   # Workspace (папки, холсты)
+│
+├── lib/
+│   ├── db/               # IndexedDB (Dexie)
+│   ├── i18n/             # Интернационализация
+│   └── search/           # Поисковый движок
+│       ├── bm25.ts       # BM25 индекс
+│       ├── fuzzy.ts      # Fuzzy поиск
+│       ├── semantic.ts   # Семантический поиск
+│       └── hybrid.ts     # RRF объединение
+│
+└── types/                # TypeScript типы
+```
+
+---
+
+## 🛠️ Стек технологий
+
+| Категория | Технология |
+|-----------|------------|
+| **Framework** | Next.js 14 (App Router) |
+| **UI** | React 18, Tailwind CSS, shadcn/ui |
+| **Canvas** | React Flow (@xyflow/react) |
+| **State** | Zustand + Immer + Zundo (undo/redo) |
+| **Database** | IndexedDB (Dexie) |
+| **AI** | OpenAI-compatible API |
+| **Search** | Custom BM25 + Semantic + Fuzzy |
+| **Markdown** | react-markdown + remark-gfm |
+
+---
+
+## 📝 API Endpoints
+
+### POST `/api/chat`
+Прокси к LLM API для генерации ответов.
+
+```typescript
+// Request
+{
+  messages: Array<{ role: string; content: string }>;
+  model?: string;
+  apiKey: string;
+}
+
+// Response (Stream)
+data: {"content": "...", "isEnd": false}
+```
+
+### POST `/api/embeddings`
+Генерация векторного представления текста.
+
+```typescript
+// Request
+{
+  text: string;
+  apiKey: string;
+}
+
+// Response
+{
+  embedding: number[];  // 1536 dimensions
+  dimension: number;
+  tokenCount: number;
+}
+```
+
+### POST `/api/summarize`
+Суммаризация контекста для длинных цепочек.
+
+---
+
+## 🎨 Дизайн
+
+NeuroCanvas использует **Catppuccin Mocha** цветовую палитру для тёмной темы:
+
+- **Background**: `#1e1e2e`
+- **Surface**: `#313244`
+- **Primary**: `#89b4fa`
+- **Accent**: `#f9e2af`
+- **Text**: `#cdd6f4`
+
+Поддерживается и светлая тема через CSS переменные.
+
+---
+
+## 🤝 Участие в разработке
+
+1. Fork репозитория
+2. Создайте feature branch: `git checkout -b feature/amazing-feature`
+3. Commit изменения: `git commit -m 'Add amazing feature'`
+4. Push в branch: `git push origin feature/amazing-feature`
+5. Создайте Pull Request
+
+---
+
+## 📄 Лицензия
+
+MIT © 2024 NeuroCanvas Team
+
+---
+
+<p align="center">
+  Сделано с ❤️ для продуктивной работы с AI
+</p>
