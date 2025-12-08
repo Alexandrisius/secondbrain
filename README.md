@@ -5,254 +5,152 @@
 <h1 align="center">🧠 NeuroCanvas</h1>
 
 <p align="center">
-  <strong>Визуальный AI-холст для построения промптов и графов знаний</strong>
+  <strong>Visual AI canvas for prompt engineering and knowledge graphs</strong>
 </p>
 
 <p align="center">
-  <a href="#-особенности">Особенности</a> •
-  <a href="#-демо">Демо</a> •
-  <a href="#-быстрый-старт">Быстрый старт</a> •
-  <a href="#-горячие-клавиши">Горячие клавиши</a> •
-  <a href="#-стек-технологий">Технологии</a>
+  <a href="#-download">Download</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-hotkeys">Hotkeys</a> •
+  <a href="#-api-setup">API Setup</a>
 </p>
 
 <p align="center">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js" />
   <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=white" />
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-28-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
-  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind-3.4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" />
 </p>
 
 ---
 
-## 🎯 Что это?
+## 📥 Download
 
-**NeuroCanvas** — это инновационный инструмент для визуального построения AI-промптов на бесконечном холсте. Вместо линейного чата вы создаёте **граф знаний**, где каждая карточка связана с другими, а контекст передаётся автоматически.
+Download the latest version for Windows:
 
-### 💡 Проблема, которую мы решаем
-
-Традиционные AI-чаты имеют критическую проблему: **линейная история**. Когда вы исследуете сложную тему, вы неизбежно уходите в боковые ветки, и возврат к основной линии разговора становится болезненным.
-
-### ✨ Наше решение
-
-NeuroCanvas позволяет:
-- **Разветвлять** диалоги как ветки в Git
-- **Цитировать** конкретные части ответов для продолжения
-- **Визуализировать** связи между идеями
-- **Искать** по всем холстам с помощью гибридного AI-поиска
+- [**Installer (.exe)**](https://github.com/Alexandrisius/secondbrain/releases/latest)
+- [**Portable Version**](https://github.com/Alexandrisius/secondbrain/releases/latest)
 
 ---
 
-## 🌟 Особенности
+## 🎯 What is it?
 
-### 🎨 Визуальный холст
-- **Бесконечный canvas** с pan, zoom и навигацией
-- **Drag-to-Create**: потяните связь на пустое место для создания карточки
-- **Double-Click**: создание новой карточки двойным кликом
-- **Smart Selection**: выделение слева направо (полное) vs справа налево (пересечение)
+**NeuroCanvas** is an innovative tool for visually building AI prompts on an infinite canvas. Instead of a linear chat, you create a **knowledge graph** where each card connects to others, and context is passed automatically.
 
-### 🔗 Система связей
-- **Автоматический контекст**: родительские карточки формируют контекст для дочерних
-- **Цитирование**: выделите часть ответа и создайте ветку от неё
-- **Суммаризация**: длинные контексты автоматически сжимаются AI
+### 💡 The Problem
+Traditional AI chats suffer from a critical issue: **linear history**. When exploring a complex topic, you inevitably drift into side branches, making it painful to return to the main conversation line.
 
-### 🔍 Гибридный поиск "Мини-Google"
-- **BM25** — классический keyword matching
-- **Semantic Search** — поиск по смыслу через embeddings
-- **Fuzzy Search** — нечёткий поиск (опечатки)
-- **Exact Match** — точное совпадение фраз
-- Результаты объединяются через **Reciprocal Rank Fusion (RRF)**
-
-### 📁 Workspace
-- **Папки и холсты**: организуйте знания в иерархию
-- **Drag-and-Drop**: перемещайте холсты между папками
-- **Недавние**: быстрый доступ к последним холстам
-- **Автосохранение**: данные сохраняются локально
-
-### 🌐 Мультиязычность
-- Полная поддержка **русского** и **английского** языков
-- Переключение в один клик
+### ✨ The Solution
+NeuroCanvas allows you to:
+- **Branch** dialogues like Git branches
+- **Quote** specific parts of answers to continue
+- **Visualize** connections between ideas
+- **Search** across all canvases using hybrid AI search
 
 ---
 
-## 🚀 Быстрый старт
+## 🌟 Features
 
-### Требования
+### 🤖 Multi-AI Support
+- **OpenAI** (GPT-4o, GPT-3.5)
+- **OpenRouter** (Claude 3, Llama 3, Mistral, etc.)
+- **Groq** (Ultra-fast inference)
+- **Together AI** (Open-source models)
+- **vsellm.ru** (Russian proxy, RUB payments)
+- **Custom API** (Any OpenAI-compatible API, e.g., LM Studio or Ollama)
+
+### 🎨 Visual Canvas
+- **Infinite canvas** with navigation and zoom
+- **Drag-to-Create**: drag a connection to create a card
+- **Smart Selection**: intelligent selection and bulk operations
+- **Automatic Context**: parent cards form the context for children
+
+### 🔍 Smart Search (RRF)
+Combines 4 search methods for perfect results:
+1. **BM25** (Keyword matching)
+2. **Semantic Search** (Vector search by meaning)
+3. **Fuzzy Search** (Typo-tolerant search)
+4. **Exact Match** (Precise phrase matching)
+
+### ⚙️ Advanced Capabilities
+- **Embeddings Model Selection**: tune search quality (`text-embedding-3`, `multilingual-e5`, etc.)
+- **Corporate Mode**: work in networks with SSL inspection
+- **Summarization**: automatic compression of long contexts
+- **Local Storage**: all data is stored only on your device
+
+---
+
+## 🔑 API Setup
+
+To use the application, **you need your own API key** from your chosen provider (OpenAI, OpenRouter, etc.).
+
+1. Open settings (⚙️) in the top right corner.
+2. Select a provider (e.g., OpenAI or OpenRouter).
+3. Enter your API key.
+4. Select a chat model and (optionally) an embeddings model.
+
+> 🎁 **Need a test key?**
+> 
+> If you don't have a key, I'm ready to provide a **free test key** in exchange for a Star ⭐️ on this repository!
+> 
+> 1. Give this project a Star ⭐.
+> 2. Email me at: **klim95alex@yandex.by** with the subject "NeuroCanvas Key".
+
+---
+
+## 🚀 Build from Source
+
+### Requirements
 - Node.js 18+
-- npm или yarn
+- npm or yarn
 
-### Установка
+### Installation
 
 ```bash
-# Клонируйте репозиторий
-git clone https://github.com/yourusername/neurocanvas.git
+# Clone the repository
+git clone https://github.com/Alexandrisius/secondbrain.git
 cd neurocanvas
 
-# Установите зависимости
+# Install dependencies
 npm install
 
-# Запустите dev-сервер
-npm run dev
-```
+# Run in development mode (Next.js + Electron)
+npm run electron:dev
 
-Откройте [http://localhost:3000](http://localhost:3000) в браузере.
-
-### Настройка API
-
-1. Нажмите кнопку ⚙️ (настройки) в правом верхнем углу
-2. Введите API ключ для OpenAI-совместимого API (по умолчанию: vsellm.ru)
-3. Выберите модель (рекомендуется: `gemini-2.0-flash`)
-
----
-
-## ⌨️ Горячие клавиши
-
-| Клавиша | Действие |
-|---------|----------|
-| `Double Click` | Создать новую карточку |
-| `Tab` | Создать дочернюю карточку (от выделенных) |
-| `Ctrl + Enter` | Создать сестринскую карточку |
-| `Space` | Свернуть/развернуть ответ |
-| `Delete` / `Backspace` | Удалить выделенные карточки |
-| `Ctrl + P` | Открыть поиск |
-| `Ctrl + Z` | Отменить действие |
-| `Ctrl + Y` | Повторить действие |
-| `Escape` | Снять выделение / закрыть модалку |
-
-### Навигация
-| Действие | Способ |
-|----------|--------|
-| Pan холста | Средняя кнопка мыши / ПКМ |
-| Zoom | Колёсико мыши |
-| Множественное выделение | Ctrl + Click / Рамка ЛКМ |
-
----
-
-## 🏗️ Архитектура
-
-```
-src/
-├── app/                    # Next.js App Router
-│   ├── api/               # API Routes
-│   │   ├── canvas/        # CRUD для холстов
-│   │   ├── chat/          # Прокси к LLM API
-│   │   ├── embeddings/    # Генерация векторов
-│   │   └── summarize/     # Суммаризация контекста
-│   └── page.tsx           # Главная страница
-│
-├── components/
-│   ├── canvas/            # React Flow компоненты
-│   │   ├── Canvas.tsx     # Обёртка холста
-│   │   ├── CanvasContent.tsx  # Логика холста
-│   │   ├── NeuroNode.tsx  # Карточка (нода)
-│   │   └── SearchBar.tsx  # Гибридный поиск
-│   ├── sidebar/           # Боковая панель
-│   └── ui/                # UI компоненты (shadcn)
-│
-├── store/                 # Zustand stores
-│   ├── useCanvasStore.ts  # Состояние холста
-│   ├── useSettingsStore.ts    # Настройки
-│   └── useWorkspaceStore.ts   # Workspace (папки, холсты)
-│
-├── lib/
-│   ├── db/               # IndexedDB (Dexie)
-│   ├── i18n/             # Интернационализация
-│   └── search/           # Поисковый движок
-│       ├── bm25.ts       # BM25 индекс
-│       ├── fuzzy.ts      # Fuzzy поиск
-│       ├── semantic.ts   # Семантический поиск
-│       └── hybrid.ts     # RRF объединение
-│
-└── types/                # TypeScript типы
+# Or build the application
+npm run electron:build:win
 ```
 
 ---
 
-## 🛠️ Стек технологий
+## ⌨️ Hotkeys
 
-| Категория | Технология |
-|-----------|------------|
-| **Framework** | Next.js 14 (App Router) |
-| **UI** | React 18, Tailwind CSS, shadcn/ui |
-| **Canvas** | React Flow (@xyflow/react) |
-| **State** | Zustand + Immer + Zundo (undo/redo) |
-| **Database** | IndexedDB (Dexie) |
-| **AI** | OpenAI-compatible API |
-| **Search** | Custom BM25 + Semantic + Fuzzy |
-| **Markdown** | react-markdown + remark-gfm |
-
----
-
-## 📝 API Endpoints
-
-### POST `/api/chat`
-Прокси к LLM API для генерации ответов.
-
-```typescript
-// Request
-{
-  messages: Array<{ role: string; content: string }>;
-  model?: string;
-  apiKey: string;
-}
-
-// Response (Stream)
-data: {"content": "...", "isEnd": false}
-```
-
-### POST `/api/embeddings`
-Генерация векторного представления текста.
-
-```typescript
-// Request
-{
-  text: string;
-  apiKey: string;
-}
-
-// Response
-{
-  embedding: number[];  // 1536 dimensions
-  dimension: number;
-  tokenCount: number;
-}
-```
-
-### POST `/api/summarize`
-Суммаризация контекста для длинных цепочек.
+| Key | Action |
+|-----|--------|
+| `Double Click` | Create new card |
+| `Tab` | Create child card (from selection) |
+| `Ctrl + Enter` | Create sibling card |
+| `Space` | Collapse/Expand answer |
+| `Delete` | Delete selected cards |
+| `Ctrl + P` | Open search |
+| `Ctrl + Z` / `Y` | Undo / Redo action |
 
 ---
 
-## 🎨 Дизайн
+## 🤝 Support the Project
 
-NeuroCanvas использует **Catppuccin Mocha** цветовую палитру для тёмной темы:
+If this application helps you in your work, you can support its development:
 
-- **Background**: `#1e1e2e`
-- **Surface**: `#313244`
-- **Primary**: `#89b4fa`
-- **Accent**: `#f9e2af`
-- **Text**: `#cdd6f4`
-
-Поддерживается и светлая тема через CSS переменные.
+- 🇷🇺 **[Boosty](https://boosty.to/klimovich_alexandr)** (Russian cards)
+- 🌍 **[Ko-fi](https://ko-fi.com/klimovich_alexandr)** (PayPal, International cards)
 
 ---
 
-## 🤝 Участие в разработке
+## 📄 License
 
-1. Fork репозитория
-2. Создайте feature branch: `git checkout -b feature/amazing-feature`
-3. Commit изменения: `git commit -m 'Add amazing feature'`
-4. Push в branch: `git push origin feature/amazing-feature`
-5. Создайте Pull Request
-
----
-
-## 📄 Лицензия
-
-MIT © 2024 NeuroCanvas Team
-
----
+MIT © 2024-2025 NeuroCanvas Team
 
 <p align="center">
-  Сделано с ❤️ для продуктивной работы с AI
+  Made with ❤️ for productive work with AI
 </p>
