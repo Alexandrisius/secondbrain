@@ -6,26 +6,34 @@
  * - GET /api/canvas - загрузка данных из файла
  * - POST /api/canvas - сохранение данных в файл
  * 
- * Данные хранятся в файле data/canvas.json в корне проекта
+ * Данные хранятся в пользовательской папке:
+ * - Electron: %APPDATA%\NeuroCanvas\data\
+ * - Dev режим: ./data/
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getDataDirectory } from '@/lib/paths';
 
 // =============================================================================
-// КОНСТАНТЫ
+// ПУТИ К ДАННЫМ
 // =============================================================================
 
 /**
- * Путь к директории с данными (относительно корня проекта)
+ * Получает путь к директории данных
+ * Использует USER_DATA_PATH из Electron или fallback на локальную папку
  */
-const DATA_DIR = path.join(process.cwd(), 'data');
+function getDataDir(): string {
+  return getDataDirectory();
+}
 
 /**
- * Путь к файлу с данными Canvas
+ * Получает путь к файлу canvas.json (устаревший формат, для совместимости)
  */
-const CANVAS_FILE = path.join(DATA_DIR, 'canvas.json');
+function getCanvasFile(): string {
+  return path.join(getDataDir(), 'canvas.json');
+}
 
 // =============================================================================
 // ТИПЫ
@@ -85,6 +93,7 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
   } catch {
     // Директория не существует - создаём
     await fs.mkdir(dirPath, { recursive: true });
+    console.log('[Canvas API] Создана директория:', dirPath);
   }
 }
 
@@ -94,18 +103,21 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
  * @returns Данные Canvas
  */
 async function readCanvasData(): Promise<CanvasData> {
+  const canvasFile = getCanvasFile();
+  
   try {
     // Проверяем существование файла
-    await fs.access(CANVAS_FILE);
+    await fs.access(canvasFile);
     
     // Читаем и парсим JSON
-    const content = await fs.readFile(CANVAS_FILE, 'utf-8');
+    const content = await fs.readFile(canvasFile, 'utf-8');
     const data = JSON.parse(content) as CanvasData;
     
     return data;
   } catch {
     // Файл не существует или невалидный JSON - возвращаем дефолт
     console.log('[Canvas API] Файл не найден, используем данные по умолчанию');
+    console.log('[Canvas API] Ожидаемый путь:', canvasFile);
     return { ...DEFAULT_DATA, lastSaved: Date.now() };
   }
 }
@@ -116,12 +128,17 @@ async function readCanvasData(): Promise<CanvasData> {
  * @param data - данные для записи
  */
 async function writeCanvasData(data: CanvasData): Promise<void> {
+  const dataDir = getDataDir();
+  const canvasFile = getCanvasFile();
+  
   // Убеждаемся что директория существует
-  await ensureDirectoryExists(DATA_DIR);
+  await ensureDirectoryExists(dataDir);
   
   // Записываем с красивым форматированием (для удобства отладки)
   const content = JSON.stringify(data, null, 2);
-  await fs.writeFile(CANVAS_FILE, content, 'utf-8');
+  await fs.writeFile(canvasFile, content, 'utf-8');
+  
+  console.log('[Canvas API] Сохранено в:', canvasFile);
 }
 
 // =============================================================================
@@ -214,4 +231,3 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 }
-

@@ -3,30 +3,37 @@
  * @description API Route для вычисления эмбеддингов текста
  * 
  * Этот endpoint принимает текст и возвращает его векторное представление
- * через API vsellm.ru (прокси к OpenAI Embeddings API).
+ * через выбранный API провайдер (OpenAI, vsellm.ru, Together AI, etc.).
  * 
- * Используется модель text-embedding-3-small (1536 измерений):
+ * Используется модель text-embedding-3-small (1536 измерений) по умолчанию:
  * - Быстрая генерация
  * - Высокое качество
  * - Экономичная стоимость
+ * 
+ * Поддерживаются любые OpenAI-совместимые Embeddings API через параметр embeddingsBaseUrl.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  DEFAULT_EMBEDDING_MODEL,
   type EmbeddingResponse,
   type EmbeddingError,
 } from '@/types/embeddings';
+
+/**
+ * Модель эмбеддингов по умолчанию (fallback если не указана в запросе)
+ * Используется для обратной совместимости со старыми клиентами
+ */
+const FALLBACK_EMBEDDING_MODEL = 'text-embedding-3-small';
 
 // =============================================================================
 // КОНФИГУРАЦИЯ
 // =============================================================================
 
 /**
- * URL API для эмбеддингов через vsellm.ru
- * Совместим с OpenAI Embeddings API
+ * URL API для эмбеддингов по умолчанию
+ * Используется если embeddingsBaseUrl не передан в запросе (для обратной совместимости)
  */
-const EMBEDDINGS_API_URL = 'https://api.vsellm.ru/v1/embeddings';
+const DEFAULT_EMBEDDINGS_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Таймаут запроса в миллисекундах
@@ -52,8 +59,15 @@ interface RequestBody {
   text: string;
   /** API ключ для авторизации */
   apiKey: string;
+  /** Базовый URL API провайдера для эмбеддингов (например "https://api.openai.com/v1") */
+  embeddingsBaseUrl?: string;
   /** Модель эмбеддингов (опционально) */
   model?: string;
+  /** 
+   * Корпоративный режим - отключает проверку SSL сертификатов
+   * Используется для работы в корпоративных сетях с SSL-инспекцией
+   */
+  corporateMode?: boolean;
 }
 
 /**
@@ -132,21 +146,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(error, { status: 400 });
     }
     
-    // Используем модель из запроса или модель по умолчанию
-    const model = body.model || DEFAULT_EMBEDDING_MODEL;
+    // Используем baseUrl из запроса или URL по умолчанию
+    const embeddingsBaseUrl = body.embeddingsBaseUrl || DEFAULT_EMBEDDINGS_BASE_URL;
+    
+    // Формируем полный URL для embeddings
+    const apiUrl = `${embeddingsBaseUrl}/embeddings`;
+    
+    // Используем модель из запроса или fallback модель
+    // ВАЖНО: Модель должна быть передана из настроек клиента!
+    const model = body.model || FALLBACK_EMBEDDING_MODEL;
     
     // =========================================================================
     // ЗАПРОС К API ЭМБЕДДИНГОВ
     // =========================================================================
+    
+    // Корпоративный режим: отключаем проверку SSL сертификатов
+    const originalTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    if (body.corporateMode) {
+      console.log('[Embeddings API] Корпоративный режим: отключаем проверку SSL');
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    }
     
     // Создаём AbortController для таймаута
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     
     try {
-      console.log('[Embeddings API] Запрос эмбеддинга, длина текста:', body.text.length);
+      console.log(`[Embeddings API] Запрос к ${apiUrl}, модель: ${model}, длина текста: ${body.text.length}, corporateMode: ${body.corporateMode || false}`);
       
-      const response = await fetch(EMBEDDINGS_API_URL, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -230,6 +258,15 @@ export async function POST(request: NextRequest) {
     } catch (fetchError) {
       clearTimeout(timeoutId);
       
+      // Восстанавливаем настройку SSL после ошибки
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
+      
       // Обработка ошибки таймаута
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
         const error: EmbeddingError = {
@@ -252,7 +289,28 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(error, { status: 503 });
       }
       
+      // Обработка SSL ошибок (корпоративные сети)
+      if (fetchError instanceof Error && 
+          (fetchError.message.includes('certificate') || 
+           fetchError.message.includes('SSL') ||
+           fetchError.message.includes('CERT'))) {
+        const error: EmbeddingError = {
+          error: 'Ошибка SSL сертификата',
+          details: 'Включите "Корпоративный режим" в настройках',
+        };
+        return NextResponse.json(error, { status: 495 });
+      }
+      
       throw fetchError;
+    } finally {
+      // Гарантированно восстанавливаем настройку SSL
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
     }
     
   } catch (error) {

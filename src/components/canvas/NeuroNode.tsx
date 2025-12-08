@@ -30,14 +30,19 @@ import {
   Quote,
   PlusCircle,
   X,
+  Square,
+  GripVertical,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { 
   useSettingsStore, 
-  selectApiKey, 
+  selectApiKey,
+  selectApiBaseUrl,
+  selectEmbeddingsBaseUrl,
   selectModel, 
-  selectUseSummarization 
+  selectUseSummarization,
+  selectCorporateMode,
 } from '@/store/useSettingsStore';
 import { ContextViewerModal } from '@/components/canvas/ContextViewerModal';
 import { useTranslation, format } from '@/lib/i18n';
@@ -60,8 +65,12 @@ type NeuroNodeProps = NodeProps<NeuroNodeType>;
 // КОНСТАНТЫ
 // =============================================================================
 
-/** Фиксированная ширина карточки */
-const CARD_WIDTH = 400;
+/** Минимальная ширина карточки (px) */
+const MIN_CARD_WIDTH = 300;
+/** Максимальная ширина карточки (px) */
+const MAX_CARD_WIDTH = 800;
+/** Ширина карточки по умолчанию (px) */
+const DEFAULT_CARD_WIDTH = 400;
 /** Фиксированная высота ответной части */
 const ANSWER_SECTION_HEIGHT = 400;
 
@@ -99,10 +108,22 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const markChildrenStale = useCanvasStore((s) => s.markChildrenStale);
   
   /**
+   * Action для проверки и снятия stale у потомков
+   * Используется при blur для проверки восстановления контекста
+   */
+  const checkAndClearStale = useCanvasStore((s) => s.checkAndClearStale);
+  
+  /**
    * Action для сохранения хэша контекста после генерации
    * Используется для автоматического снятия stale при возврате контекста
    */
   const saveContextHash = useCanvasStore((s) => s.saveContextHash);
+  
+  /**
+   * Action для уведомления о завершении генерации в пакетном режиме
+   * Вызывается после успешной генерации, если идёт пакетная регенерация
+   */
+  const onBatchNodeComplete = useCanvasStore((s) => s.onBatchNodeComplete);
   
   /**
    * Action для быстрого создания связанной карточки справа
@@ -167,6 +188,20 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const apiKey = useSettingsStore(selectApiKey);
   
   /**
+   * Базовый URL API из глобальных настроек
+   * 
+   * Определяет к какому провайдеру будут отправляться запросы.
+   */
+  const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
+  
+  /**
+   * Базовый URL API для эмбеддингов из глобальных настроек
+   * 
+   * Используется для семантического поиска.
+   */
+  const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
+  
+  /**
    * Модель из глобальных настроек
    * 
    * Название модели для генерации ответов (например "openai/gpt-4o").
@@ -180,6 +215,22 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * Когда false - для всех предков используется полный response (для моделей с большим контекстом)
    */
   const useSummarization = useSettingsStore(selectUseSummarization);
+  
+  /**
+   * Корпоративный режим из глобальных настроек
+   * 
+   * Когда true - отключается проверка SSL сертификатов для работы
+   * в корпоративных сетях с SSL-инспекцией (DLP, прокси).
+   */
+  const corporateMode = useSettingsStore(selectCorporateMode);
+  
+  /**
+   * Модель эмбеддингов из глобальных настроек
+   * 
+   * Используется для семантического поиска.
+   * Разные провайдеры поддерживают разные модели эмбеддингов.
+   */
+  const embeddingsModel = useSettingsStore((s) => s.embeddingsModel);
   
   /**
    * Вычисляем ПРЯМЫХ родителей через useMemo
@@ -389,6 +440,21 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const [hasVerticalScroll, setHasVerticalScroll] = useState(false);
   
   // ===========================================================================
+  // СОСТОЯНИЕ RESIZE (ИЗМЕНЕНИЕ ШИРИНЫ КАРТОЧКИ)
+  // ===========================================================================
+  
+  /**
+   * Флаг активного resize (пользователь тянет ручку)
+   */
+  const [isResizing, setIsResizing] = useState(false);
+  
+  /**
+   * Текущая ширина карточки во время resize
+   * Используется для мгновенного UI feedback
+   */
+  const [resizeWidth, setResizeWidth] = useState(data.width ?? DEFAULT_CARD_WIDTH);
+  
+  // ===========================================================================
   // СОСТОЯНИЕ ЦИТИРОВАНИЯ
   // ===========================================================================
   
@@ -443,6 +509,17 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * AbortController для отмены streaming запроса
    */
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  /**
+   * Ref для хранения начальной позиции мыши при resize
+   * Используется в обработчиках mousemove/mouseup
+   */
+  const resizeStartXRef = useRef<number>(0);
+  
+  /**
+   * Ref для хранения начальной ширины карточки при resize
+   */
+  const resizeStartWidthRef = useRef<number>(DEFAULT_CARD_WIDTH);
 
   // ===========================================================================
   // ЭФФЕКТЫ
@@ -536,6 +613,17 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   
   
   /**
+   * Синхронизация resizeWidth с data.width при внешнем изменении
+   * (например, при загрузке сохранённого холста)
+   */
+  useEffect(() => {
+    if (data.width !== undefined && data.width !== resizeWidth && !isResizing) {
+      setResizeWidth(data.width);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.width]);
+  
+  /**
    * Отслеживание наличия вертикального скролла в ответной части
    * 
    * Использует ResizeObserver для реактивного обновления при изменении контента.
@@ -584,6 +672,67 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       resizeObserver.disconnect();
     };
   }, [isAnswerExpanded, data.response, streamingText]); // Пересчитываем при изменении контента или раскрытии
+  
+  /**
+   * Глобальные обработчики mousemove/mouseup для resize
+   * 
+   * ВАЖНО: Обработчики добавляются на document чтобы:
+   * 1. Отслеживать движение мыши за пределами карточки
+   * 2. Гарантированно завершить resize при отпускании кнопки
+   */
+  useEffect(() => {
+    // Если resize не активен - обработчики не нужны
+    if (!isResizing) return;
+    
+    /**
+     * Обработчик движения мыши во время resize
+     * Вычисляет новую ширину и обновляет локальное состояние
+     */
+    const handleMouseMove = (e: MouseEvent) => {
+      // Предотвращаем выделение текста во время resize
+      e.preventDefault();
+      
+      // Вычисляем дельту относительно начальной позиции
+      const deltaX = e.clientX - resizeStartXRef.current;
+      
+      // Вычисляем новую ширину с ограничениями
+      const rawWidth = resizeStartWidthRef.current + deltaX;
+      
+      // Округляем до ближайших 10px для "магнитного" эффекта
+      const snappedWidth = Math.round(rawWidth / 10) * 10;
+      
+      // Применяем ограничения min/max
+      const newWidth = Math.min(
+        MAX_CARD_WIDTH,
+        Math.max(MIN_CARD_WIDTH, snappedWidth)
+      );
+      
+      // Обновляем локальное состояние (мгновенный UI feedback)
+      setResizeWidth(newWidth);
+    };
+    
+    /**
+     * Обработчик отпускания кнопки мыши
+     * Завершает resize и сохраняет ширину в store
+     */
+    const handleMouseUp = () => {
+      // Сохраняем финальную ширину в store
+      updateNodeData(id, { width: resizeWidth });
+      
+      // Завершаем resize
+      setIsResizing(false);
+    };
+    
+    // Добавляем глобальные обработчики
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    // Cleanup при размонтировании или завершении resize
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, resizeWidth, id, updateNodeData]);
 
   // ===========================================================================
   // ОБРАБОТЧИКИ
@@ -735,13 +884,37 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   
   /**
    * Сохранение промпта в store при потере фокуса
+   * 
+   * ВАЖНО: При blur ВСЕГДА проверяем stale детей!
+   * Даже если промпт в store не изменился, дети могли быть помечены
+   * как stale в handlePromptChange (при каждом нажатии клавиши).
+   * 
+   * Если промпт вернулся к исходному значению - дети должны снять stale.
    */
   const handlePromptBlur = useCallback(() => {
     setIsEditing(false); // Выходим из режима редактирования
+    
     if (localPrompt !== data.prompt) {
+      // Промпт изменился - сохраняем в store
+      // updateNodeData автоматически вызовет checkAndClearStale
       updateNodeData(id, { prompt: localPrompt });
+    } else {
+      // Промпт НЕ изменился в store, но дети могли быть помечены stale
+      // в handlePromptChange. Проверяем нужно ли снять stale.
+      // 
+      // Это происходит когда пользователь:
+      // 1. Начал печатать (дети стали stale)
+      // 2. Стёр изменения (вернул исходный текст)
+      // 3. Blur - промпт совпадает с store, но дети stale
+      // 
+      // checkAndClearStale проверит хэш контекста и снимет stale
+      // если контекст вернулся к эталонному
+      if (data.response) {
+        // Проверяем только если у ноды есть ответ (и соответственно могут быть дети)
+        checkAndClearStale(id);
+      }
     }
-  }, [id, localPrompt, data.prompt, updateNodeData]);
+  }, [id, localPrompt, data.prompt, data.response, updateNodeData, checkAndClearStale]);
   
   /**
    * Генерация краткого резюме (summary) ответа
@@ -773,7 +946,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         body: JSON.stringify({ 
           text: responseText,
           apiKey: apiKey,
+          apiBaseUrl: apiBaseUrl,
           model: model,
+          // Корпоративный режим: отключает проверку SSL для корпоративных сетей
+          corporateMode: corporateMode,
         }),
       });
       
@@ -805,7 +981,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         isSummarizing: false 
       });
     }
-  }, [id, updateNodeData, apiKey, model]);
+  }, [id, updateNodeData, apiKey, apiBaseUrl, model]);
   
   /**
    * Построение ИЕРАРХИЧЕСКОГО контекста из цепочки предков
@@ -1048,9 +1224,12 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           ],
           // КРИТИЧНО: передаём контекст родителя!
           context: parentContext,
-          // Передаём API ключ и модель для авторизации
+          // Передаём API ключ, базовый URL и модель для авторизации
           apiKey: apiKey,
+          apiBaseUrl: apiBaseUrl,
           model: model,
+          // Корпоративный режим: отключает проверку SSL для корпоративных сетей
+          corporateMode: corporateMode,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -1118,22 +1297,39 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       saveContextHash(id);
       
       // =======================================================================
+      // УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ В ПАКЕТНОМ РЕЖИМЕ
+      // Если идёт пакетная регенерация - уведомляем store о завершении
+      // Это позволяет перейти к следующему уровню когда все ноды текущего завершены
+      // =======================================================================
+      onBatchNodeComplete(id);
+      
+      // =======================================================================
       // ГЕНЕРАЦИЯ ЭМБЕДДИНГА ДЛЯ СЕМАНТИЧЕСКОГО ПОИСКА
       // После успешной генерации ответа вычисляем эмбеддинг карточки
       // и сохраняем в IndexedDB для последующего поиска.
       // Выполняется в фоне, не блокирует UI.
       // =======================================================================
-      if (apiKey) {
+      if (apiKey && embeddingsBaseUrl && embeddingsModel) {
         // Динамический импорт для ленивой загрузки модуля поиска
         import('@/lib/search/semantic').then(({ generateAndSaveEmbedding }) => {
           // Получаем ID текущего холста из workspace store
           import('@/store/useWorkspaceStore').then(({ useWorkspaceStore }) => {
             const canvasId = useWorkspaceStore.getState().activeCanvasId;
             if (canvasId) {
-              generateAndSaveEmbedding(id, canvasId, localPrompt, fullText, apiKey)
+              // Передаём модель эмбеддингов для корректной векторизации
+              generateAndSaveEmbedding(
+                id, 
+                canvasId, 
+                localPrompt, 
+                fullText, 
+                apiKey, 
+                embeddingsBaseUrl,
+                corporateMode,
+                embeddingsModel
+              )
                 .then((success) => {
                   if (success) {
-                    console.log('[NeuroNode] Эмбеддинг сохранён для карточки:', id);
+                    console.log('[NeuroNode] Эмбеддинг сохранён для карточки:', id, 'модель:', embeddingsModel);
                   }
                 })
                 .catch((err) => {
@@ -1175,31 +1371,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [id, localPrompt, updateNodeData, buildParentContext, generateSummary, useSummarization, apiKey, model, saveContextHash, t.node.apiKeyMissing]);
-  
-  /**
-   * Авто-регенерация при установке флага pendingRegenerate
-   * 
-   * Используется после обновления цитаты в карточке:
-   * - Store устанавливает pendingRegenerate = true
-   * - Этот эффект запускает генерацию и сбрасывает флаг
-   * 
-   * ВАЖНО: Этот useEffect должен быть ПОСЛЕ определения handleGenerate!
-   */
-  useEffect(() => {
-    if (data.pendingRegenerate && localPrompt.trim()) {
-      // Сбрасываем флаг сразу, чтобы избежать повторных запусков
-      updateNodeData(id, { pendingRegenerate: false });
-      
-      // Запускаем генерацию с небольшой задержкой для завершения рендера
-      const timer = setTimeout(() => {
-        handleGenerate();
-      }, 100);
-      
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.pendingRegenerate, id, localPrompt, updateNodeData, handleGenerate]);
+  }, [id, localPrompt, updateNodeData, buildParentContext, generateSummary, useSummarization, apiKey, model, saveContextHash, onBatchNodeComplete, t.node.apiKeyMissing]);
   
   /**
    * Регенерация ответа
@@ -1214,6 +1386,95 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     });
     handleGenerate();
   }, [id, updateNodeData, handleGenerate]);
+  
+  /**
+   * Ref для отслеживания уже обработанных pendingRegenerate
+   * Предотвращает повторный запуск при ре-рендере
+   */
+  const pendingRegenerateHandledRef = useRef(false);
+  
+  /**
+   * Авто-регенерация при установке флага pendingRegenerate
+   * 
+   * Используется:
+   * - После обновления цитаты в карточке
+   * - При пакетной регенерации устаревших карточек
+   * 
+   * Store устанавливает pendingRegenerate = true, этот эффект:
+   * 1. Проверяет что ещё не обработали (через ref)
+   * 2. Сразу вызывает handleRegenerate (без setTimeout!)
+   * 3. Store сам сбросит флаг через updateNodeData в handleRegenerate
+   * 
+   * ВАЖНО: Этот useEffect ПОСЛЕ handleRegenerate (иначе ReferenceError)!
+   */
+  useEffect(() => {
+    if (data.pendingRegenerate && localPrompt.trim() && !pendingRegenerateHandledRef.current) {
+      console.log('[NeuroNode] Запуск авто-регенерации для:', id);
+      
+      // Помечаем как обработанное ДО вызова, чтобы избежать дублей
+      pendingRegenerateHandledRef.current = true;
+      
+      // Сбрасываем флаг в store
+      updateNodeData(id, { pendingRegenerate: false });
+      
+      // Вызываем регенерацию СИНХРОННО (без setTimeout)
+      // setTimeout вызывал проблемы: cleanup отменял таймер при ре-рендере
+      console.log('[NeuroNode] Вызов handleRegenerate для:', id);
+      handleRegenerate();
+    }
+    
+    // Сбрасываем ref когда pendingRegenerate становится false
+    if (!data.pendingRegenerate) {
+      pendingRegenerateHandledRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.pendingRegenerate, id, localPrompt, updateNodeData, handleRegenerate]);
+  
+  /**
+   * Остановка генерации ответа
+   * 
+   * Немедленно прерывает текущий fetch запрос через AbortController.
+   * Это полностью прекращает связь с API и останавливает streaming.
+   * 
+   * ВАЖНО: Сохраняет уже сгенерированный текст в карточку!
+   * Пользователь не теряет частично сгенерированный ответ.
+   * 
+   * Действия:
+   * 1. Вызываем abort() на AbortController - отменяет fetch запрос
+   * 2. Сохраняем текущий streamingText как response (если не пустой)
+   * 3. Сбрасываем локальное состояние isGenerating
+   * 4. Обновляем флаги в store
+   * 5. Очищаем ссылку на AbortController
+   */
+  const handleAbortGeneration = useCallback(() => {
+    // Отменяем текущий fetch запрос через AbortController
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Сбрасываем локальное состояние генерации
+    setIsGenerating(false);
+    
+    // Сохраняем уже сгенерированный текст (если есть)
+    // Это позволяет не терять частично сгенерированный ответ
+    if (streamingText.trim()) {
+      updateNodeData(id, { 
+        response: streamingText,
+        isGenerating: false,
+        isStale: false, // Сбрасываем stale - ответ актуален
+      });
+      
+      // Отмечаем что генерация была (для UI)
+      setHasGeneratedOnce(true);
+      
+      console.log('[NeuroNode] Генерация остановлена, сохранён частичный ответ:', streamingText.length, 'символов');
+    } else {
+      // Текста нет - просто обновляем флаг
+      updateNodeData(id, { isGenerating: false });
+      console.log('[NeuroNode] Генерация остановлена (текст не сгенерирован)');
+    }
+  }, [id, updateNodeData, streamingText]);
   
   /**
    * Копирование ответа в буфер обмена
@@ -1461,6 +1722,29 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     // Выходим из режима цитирования
     handleExitQuoteMode();
   }, [selectedQuoteText, parentNode, id, updateQuote, handleExitQuoteMode]);
+  
+  // ===========================================================================
+  // ОБРАБОТЧИКИ RESIZE (ИЗМЕНЕНИЕ ШИРИНЫ КАРТОЧКИ)
+  // ===========================================================================
+  
+  /**
+   * Начало resize при mousedown на ручке
+   * 
+   * Сохраняет начальные значения и активирует режим resize.
+   * КРИТИЧНО: stopPropagation предотвращает перетаскивание карточки.
+   */
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    // Предотвращаем перетаскивание карточки и другие действия
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Сохраняем начальные значения в refs
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = resizeWidth;
+    
+    // Активируем режим resize
+    setIsResizing(true);
+  }, [resizeWidth]);
 
   // ===========================================================================
   // ВЫЧИСЛЯЕМЫЕ ЗНАЧЕНИЯ
@@ -1505,9 +1789,13 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   
   return (
     <div 
-      className="neuro-node-wrapper relative"
+      className={cn(
+        'neuro-node-wrapper relative',
+        // Во время resize отключаем transition для мгновенного отклика
+        isResizing && 'neuro-node-wrapper--resizing'
+      )}
       style={{ 
-        width: CARD_WIDTH,
+        width: resizeWidth,
       }}
     >
       {/* ===================================================================
@@ -1717,8 +2005,9 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             </div>
           )}
           
-          {/* Поле ввода вопроса с кнопкой генерации внутри */}
-          <div className="relative">
+          {/* Поле ввода вопроса с кнопкой генерации справа */}
+          {/* flex items-end - кнопка прижата к нижнему краю поля ввода */}
+          <div className="flex items-end gap-2">
             {isEditing ? (
               <TextareaAutosize
                 ref={textareaRef}
@@ -1731,10 +2020,12 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 autoFocus
                 // Без maxRows - поле растёт без ограничений
                 className={cn(
-                  'w-full resize-none overflow-hidden',
+                  // flex-1 занимает всё доступное пространство, кроме кнопки
+                  // min-w-0 - КРИТИЧНО для переноса текста в flex-контейнере!
+                  'flex-1 min-w-0 resize-none overflow-hidden',
                   'text-sm font-medium',
-                  // Округлённые углы и padding (справа больше места для кнопки)
-                  'rounded-lg p-3 pr-12',
+                  // Округлённые углы и равномерный padding (кнопка теперь снаружи)
+                  'rounded-lg p-3',
                   // Фон и граница
                   'bg-muted/30 border border-transparent',
                   // Фокус - подсветка
@@ -1759,15 +2050,22 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               <div
                 onDoubleClick={() => setIsEditing(true)}
                 className={cn(
-                  'w-full min-h-[46px]', // Высота как у textarea с 1 строкой
+                  // flex-1 занимает всё доступное пространство, кроме кнопки
+                  // min-w-0 - КРИТИЧНО для переноса текста в flex-контейнере!
+                  // Без этого flex-item не сужается меньше content size и текст не переносится
+                  // min-h-[46px] - одинаковая минимальная высота как у textarea с 1 строкой
+                  'flex-1 min-w-0 min-h-[46px]',
                   'text-sm font-medium',
-                  'rounded-lg p-3 pr-12',
+                  // Равномерный padding (кнопка теперь снаружи)
+                  'rounded-lg p-3',
                   'bg-muted/30 border border-transparent',
                   'text-foreground',
                   // Курсор рука для перетаскивания
                   'cursor-grab active:cursor-grabbing',
                   // Перенос слов
                   'whitespace-pre-wrap break-words',
+                  // overflow-hidden предотвращает выход текста за границы
+                  'overflow-hidden',
                   // ВАЖНО: НЕТ класса nodrag - это позволяет таскать ноду за этот элемент!
                 )}
               >
@@ -1779,33 +2077,50 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               </div>
             )}
             
-            {/* Кнопка генерации - маленькая квадратная со значком молнии внутри поля */}
+            {/* Кнопка генерации / остановки - справа от поля ввода, прижата к низу */}
             {/* КРИТИЧНО: nodrag + stopPropagation предотвращают перехват клика React Flow */}
+            {/* 
+              Логика кнопки:
+              - При isGenerating = true: красная кнопка с квадратиком (stop) для остановки
+              - При isGenerating = false: синяя кнопка с молнией для генерации/регенерации
+              
+              mb-2 - отступ снизу для центрирования с однострочным полем ввода
+            */}
             <button
-              onClick={hasContent ? handleRegenerate : handleGenerate}
+              onClick={isGenerating ? handleAbortGeneration : (hasContent ? handleRegenerate : handleGenerate)}
               onPointerDown={(e) => e.stopPropagation()}
-              disabled={!localPrompt.trim() || isGenerating}
+              // Кнопка НЕ disabled во время генерации - иначе нельзя будет остановить!
+              // Disabled только когда нет текста И не идёт генерация
+              disabled={!localPrompt.trim() && !isGenerating}
               className={cn(
-                'absolute right-2 top-1/2 -translate-y-1/2',
-                // z-20 чтобы кнопка была выше textarea (у которого z-10)
-                'z-20',
+                // flex-shrink-0 - кнопка не сжимается
+                // mb-2 - отступ снизу для центрирования с однострочным полем ввода (8px)
+                'flex-shrink-0 mb-2',
                 'w-8 h-8 rounded-md',
-                'bg-primary text-primary-foreground',
                 'flex items-center justify-center',
-                'hover:bg-primary/90',
-                'disabled:opacity-50 disabled:cursor-not-allowed',
                 'transition-all duration-150',
                 'shadow-sm hover:shadow-md',
                 // nodrag предотвращает начало drag-операции при клике
-                'nodrag'
+                'nodrag',
+                // Разные стили для режима генерации и обычного режима
+                isGenerating ? [
+                  // РЕЖИМ ГЕНЕРАЦИИ: красная кнопка остановки
+                  'bg-red-500 text-white',
+                  'hover:bg-red-600',
+                ] : [
+                  // ОБЫЧНЫЙ РЕЖИМ: синяя кнопка генерации
+                  'bg-primary text-primary-foreground',
+                  'hover:bg-primary/90',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                ]
               )}
-              title={hasContent ? t.node.regenerateResponse : t.node.generateResponse}
+              title={isGenerating ? t.node.stopGeneration : (hasContent ? t.node.regenerateResponse : t.node.generateResponse)}
             >
               {isGenerating ? (
-                // Спиннер во время генерации
-                <Loader2 className="w-4 h-4 animate-spin" />
+                // Квадратик (stop) во время генерации - для остановки
+                <Square className="w-4 h-4 fill-current" />
               ) : (
-                // Всегда иконка молнии (для генерации и регенерации)
+                // Иконка молнии для генерации и регенерации
                 <Zap className="w-4 h-4" />
               )}
             </button>
@@ -1921,17 +2236,59 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 )}
               </button>
               
-              {/* Правая часть: кнопка удаления */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleDelete}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="h-8 w-8 p-0 text-destructive hover:text-destructive nodrag"
-                title={t.node.deleteCard}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+              {/* Правая часть: кнопка удаления + ручка resize */}
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleDelete}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="h-8 w-8 p-0 text-destructive hover:text-destructive nodrag"
+                  title={t.node.deleteCard}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+                
+                {/* ===============================================================
+                    RESIZE HANDLE (РУЧКА ИЗМЕНЕНИЯ ШИРИНЫ)
+                    
+                    Компактная ручка на правом краю toolbar для изменения ширины.
+                    Работает через drag: mousedown → mousemove → mouseup
+                    
+                    Расположение в toolbar решает проблемы:
+                    1. Не перекрывает Handle для создания связей
+                    2. Всегда в одном месте независимо от высоты карточки
+                    3. Визуально понятно что это ручка (иконка GripVertical)
+                    =============================================================== */}
+                <div
+                  onMouseDown={handleResizeStart}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={cn(
+                    'neuro-resize-handle',
+                    // Размер и форма
+                    'h-8 w-4 -mr-2',
+                    // Flex для центрирования иконки
+                    'flex items-center justify-center',
+                    // Курсор изменения размера
+                    'cursor-ew-resize',
+                    // Цвет иконки
+                    'text-muted-foreground/50',
+                    // Hover эффект
+                    'hover:text-muted-foreground hover:bg-muted/50',
+                    // Активное состояние
+                    isResizing && 'text-primary bg-primary/10',
+                    // Скругление справа
+                    'rounded-r-lg',
+                    // Плавная анимация
+                    'transition-colors duration-150',
+                    // Предотвращаем перетаскивание карточки
+                    'nodrag'
+                  )}
+                  title={t.node.resizeCard}
+                >
+                  <GripVertical className="w-3 h-4" />
+                </div>
+              </div>
             </div>
             
             {/* Контент ответа со слайд-анимацией */}
@@ -2051,6 +2408,22 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         quote={data.quote}
         quoteSourceNodeId={data.quoteSourceNodeId}
       />
+      
+      {/* Индикатор ширины во время resize */}
+      {isResizing && (
+        <div
+          className={cn(
+            'absolute -bottom-8 left-1/2 -translate-x-1/2',
+            'px-2 py-1 rounded-md',
+            'bg-primary text-primary-foreground',
+            'text-xs font-mono font-medium',
+            'shadow-lg',
+            'animate-in fade-in zoom-in-95 duration-150'
+          )}
+        >
+          {Math.round(resizeWidth)}px
+        </div>
+      )}
     </div>
   );
 };

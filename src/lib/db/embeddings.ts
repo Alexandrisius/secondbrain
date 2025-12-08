@@ -15,7 +15,6 @@
 import Dexie, { type Table } from 'dexie';
 import {
   type EmbeddingRecord,
-  EMBEDDING_DIMENSION,
   RESPONSE_PREVIEW_LENGTH,
 } from '@/types/embeddings';
 
@@ -99,12 +98,10 @@ export async function saveEmbedding(
 ): Promise<void> {
   const database = getDatabase();
   
-  // Валидация размерности
-  if (embedding.length !== EMBEDDING_DIMENSION) {
-    console.warn(
-      `[EmbeddingsDB] Неожиданная размерность: ${embedding.length}, ожидалось ${EMBEDDING_DIMENSION}`
-    );
-  }
+  // Логируем размерность для отладки (разные модели имеют разную размерность)
+  console.log(
+    `[EmbeddingsDB] Сохранение эмбеддинга для ноды ${nodeId}, размерность: ${embedding.length}`
+  );
   
   // Создаём превью ответа (первые N символов)
   const responsePreview = response.length > RESPONSE_PREVIEW_LENGTH

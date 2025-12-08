@@ -8,6 +8,8 @@
  * 
  * В отличие от /api/chat, этот endpoint НЕ использует streaming,
  * т.к. summary короткий и не требует постепенного отображения.
+ * 
+ * Поддерживаются любые OpenAI-совместимые API через параметр apiBaseUrl.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,10 +19,10 @@ import { NextRequest, NextResponse } from 'next/server';
 // =============================================================================
 
 /**
- * URL внешнего API провайдера
- * Используем vsellm.ru - прокси для доступа к различным LLM
+ * URL внешнего API провайдера по умолчанию
+ * Используется если baseUrl не передан в запросе (для обратной совместимости)
  */
-const API_BASE_URL = 'https://api.vsellm.ru/v1/chat/completions';
+const DEFAULT_API_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Модель по умолчанию
@@ -58,8 +60,15 @@ interface SummarizeRequestBody {
   text: string;
   /** API ключ для авторизации */
   apiKey?: string;
+  /** Базовый URL API провайдера (например "https://api.openai.com/v1") */
+  apiBaseUrl?: string;
   /** Название модели (например "openai/gpt-4o") */
   model?: string;
+  /** 
+   * Корпоративный режим - отключает проверку SSL сертификатов
+   * Используется для работы в корпоративных сетях с SSL-инспекцией
+   */
+  corporateMode?: boolean;
 }
 
 // =============================================================================
@@ -108,6 +117,12 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Используем baseUrl из запроса или URL по умолчанию
+    const apiBaseUrl = body.apiBaseUrl || DEFAULT_API_BASE_URL;
+    
+    // Формируем полный URL для chat/completions
+    const apiUrl = `${apiBaseUrl}/chat/completions`;
+    
     // Используем модель из запроса или модель по умолчанию
     const model = body.model || DEFAULT_MODEL;
     
@@ -122,12 +137,21 @@ export async function POST(request: NextRequest) {
     // ЗАПРОС К LM STUDIO (БЕЗ STREAMING)
     // =========================================================================
     
+    // Корпоративный режим: отключаем проверку SSL сертификатов
+    const originalTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    if (body.corporateMode) {
+      console.log('[Summarize API] Корпоративный режим: отключаем проверку SSL');
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    }
+    
     // Создаём AbortController для таймаута
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     
     try {
-      const response = await fetch(API_BASE_URL, {
+      console.log(`[Summarize API] Запрос к ${apiUrl}, модель: ${model}, corporateMode: ${body.corporateMode || false}`);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -208,6 +232,15 @@ export async function POST(request: NextRequest) {
     } catch (fetchError) {
       clearTimeout(timeoutId);
       
+      // Восстанавливаем настройку SSL после ошибки
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
+      
       // Обработка ошибки таймаута
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
         return NextResponse.json(
@@ -229,7 +262,30 @@ export async function POST(request: NextRequest) {
         );
       }
       
+      // Обработка SSL ошибок (корпоративные сети)
+      if (fetchError instanceof Error && 
+          (fetchError.message.includes('certificate') || 
+           fetchError.message.includes('SSL') ||
+           fetchError.message.includes('CERT'))) {
+        return NextResponse.json(
+          { 
+            error: 'Ошибка SSL сертификата',
+            details: 'Включите "Корпоративный режим" в настройках',
+          },
+          { status: 495 }
+        );
+      }
+      
       throw fetchError;
+    } finally {
+      // Гарантированно восстанавливаем настройку SSL
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
     }
     
   } catch (error) {

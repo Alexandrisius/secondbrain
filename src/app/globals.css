@@ -394,6 +394,29 @@
   /* --- Wrapper для позиционирования resize control --- */
   .neuro-node-wrapper {
     position: relative;
+    /* Плавное изменение ширины */
+    transition: width 150ms ease-out;
+  }
+  
+  /* Отключаем transition во время активного resize для мгновенного отклика */
+  .neuro-node-wrapper--resizing {
+    transition: none !important;
+  }
+  
+  /* --- Resize Handle (ручка изменения ширины) --- */
+  .neuro-resize-handle {
+    /* Убираем стандартное выделение текста */
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    /* Предотвращаем drag */
+    -webkit-user-drag: none;
+    /* ВАЖНО: Принудительно cursor ew-resize, перебивает cursor: grab от toolbar */
+    cursor: ew-resize !important;
+  }
+  
+  /* Активное состояние - тоже ew-resize */
+  .neuro-resize-handle:active {
+    cursor: ew-resize !important;
   }
   
   /* --- Базовые стили ноды --- */
@@ -609,6 +632,17 @@
   /* Для кнопок внутри панели - курсор pointer */
   .neuro-answer-toolbar button {
     cursor: pointer !important;
+  }
+  
+  /* Для ручки resize внутри панели - курсор ew-resize */
+  .neuro-answer-toolbar .neuro-resize-handle,
+  .neuro-answer-toolbar .neuro-resize-handle * {
+    cursor: ew-resize !important;
+  }
+  
+  .neuro-answer-toolbar:active .neuro-resize-handle,
+  .neuro-answer-toolbar:active .neuro-resize-handle * {
+    cursor: ew-resize !important;
   }
   
   /* Запрещаем выделение во всех элементах ответной части */

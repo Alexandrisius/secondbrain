@@ -109,13 +109,41 @@ const djb2Hash = (str: string): string => {
 };
 
 /**
+ * Нормализация текста для вычисления хэша
+ * 
+ * Применяется ко всем текстовым полям перед хэшированием:
+ * - trim(): удаление пробелов в начале и конце
+ * - toLowerCase(): приведение к нижнему регистру
+ * 
+ * Это позволяет:
+ * - "  Hello  " и "Hello" давать одинаковый хэш
+ * - "Hello" и "hello" давать одинаковый хэш
+ * - Избежать ложных срабатываний stale при незначительных изменениях
+ * 
+ * @param text - исходный текст (может быть null/undefined)
+ * @returns нормализованная строка или пустая строка
+ */
+const normalizeForHash = (text: string | null | undefined): string => {
+  if (!text) return '';
+  return text.trim().toLowerCase();
+};
+
+/**
  * Вычисление хэша контекста для карточки
  * 
- * Контекст включает:
+ * Контекст включает (с нормализацией всех текстов):
  * - Промпт самой карточки
  * - Цитата (если есть)
  * - Response прямых родителей (полный текст)
  * - Summary дальних предков (дедушки и далее)
+ * 
+ * НОРМАЛИЗАЦИЯ: Все текстовые поля проходят через normalizeForHash():
+ * - trim() - удаление пробелов в начале и конце
+ * - toLowerCase() - приведение к нижнему регистру
+ * 
+ * Это позволяет избежать ложных срабатываний stale при:
+ * - Добавлении/удалении пробелов
+ * - Изменении регистра букв
  * 
  * Этот хэш используется для:
  * 1. Сохранения "эталонного" состояния контекста после генерации ответа
@@ -138,12 +166,12 @@ const computeContextHash = (
   // Начинаем собирать контекст для хэширования
   const contextParts: string[] = [];
   
-  // 1. ПРОМПТ самой карточки (всегда включается)
-  contextParts.push(`PROMPT:${node.data.prompt || ''}`);
+  // 1. ПРОМПТ самой карточки (всегда включается) - НОРМАЛИЗОВАН
+  contextParts.push(`PROMPT:${normalizeForHash(node.data.prompt)}`);
   
-  // 2. ЦИТАТА (если есть)
+  // 2. ЦИТАТА (если есть) - НОРМАЛИЗОВАНА
   if (node.data.quote) {
-    contextParts.push(`QUOTE:${node.data.quote}`);
+    contextParts.push(`QUOTE:${normalizeForHash(node.data.quote)}`);
     contextParts.push(`QUOTE_SOURCE:${node.data.quoteSourceNodeId || ''}`);
   }
   
@@ -165,7 +193,7 @@ const computeContextHash = (
     }
   }
   
-  // 4. Собираем контекст от ПРЯМЫХ РОДИТЕЛЕЙ (полный response)
+  // 4. Собираем контекст от ПРЯМЫХ РОДИТЕЛЕЙ (полный response) - НОРМАЛИЗОВАН
   directParentIds.forEach((parentId, index) => {
     const parent = nodes.find((n) => n.id === parentId);
     if (parent) {
@@ -174,13 +202,15 @@ const computeContextHash = (
       if (node.data.quote && node.data.quoteSourceNodeId === parentId) {
         // Цитата уже добавлена выше, не дублируем
       } else {
-        contextParts.push(`PARENT[${index}]:${parent.data.response || ''}`);
+        // Response родителя - НОРМАЛИЗОВАН
+        contextParts.push(`PARENT[${index}]:${normalizeForHash(parent.data.response)}`);
       }
-      contextParts.push(`PARENT_PROMPT[${index}]:${parent.data.prompt || ''}`);
+      // Prompt родителя - НОРМАЛИЗОВАН
+      contextParts.push(`PARENT_PROMPT[${index}]:${normalizeForHash(parent.data.prompt)}`);
     }
   });
   
-  // 5. Собираем контекст от ДАЛЬНИХ ПРЕДКОВ (summary)
+  // 5. Собираем контекст от ДАЛЬНИХ ПРЕДКОВ (summary) - НОРМАЛИЗОВАН
   // BFS для сбора всех предков кроме прямых родителей
   const visited = new Set<string>([nodeId, ...directParentIds]);
   const queue = [...directParentIds];
@@ -213,12 +243,13 @@ const computeContextHash = (
       
       const grandparent = nodes.find((n) => n.id === grandparentId);
       if (grandparent) {
-        // Для дальних предков берём summary (или сокращённый response)
+        // Для дальних предков берём summary (или сокращённый response) - НОРМАЛИЗОВАН
         const summaryContent = grandparent.data.summary 
           || (grandparent.data.response?.slice(0, 300) + '...')
           || '';
-        contextParts.push(`ANCESTOR[${ancestorIndex}]:${summaryContent}`);
-        contextParts.push(`ANCESTOR_PROMPT[${ancestorIndex}]:${grandparent.data.prompt || ''}`);
+        contextParts.push(`ANCESTOR[${ancestorIndex}]:${normalizeForHash(summaryContent)}`);
+        // Prompt предка - НОРМАЛИЗОВАН
+        contextParts.push(`ANCESTOR_PROMPT[${ancestorIndex}]:${normalizeForHash(grandparent.data.prompt)}`);
         ancestorIndex++;
         
         // Добавляем в очередь для дальнейшего обхода
@@ -279,6 +310,19 @@ const initialNodes: NeuroNode[] = [
 ];
 
 const initialEdges: NeuroEdge[] = [];
+
+// =============================================================================
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
+// =============================================================================
+
+/**
+ * Уровни для пакетной регенерации
+ * Хранится в модуле, чтобы быть доступным между вызовами onBatchNodeComplete
+ * 
+ * Формат: [[nodeId1, nodeId2], [nodeId3], ...] - массив уровней
+ * На каждом уровне ноды независимы и могут генерироваться параллельно
+ */
+let batchLevels: string[][] = [];
 
 // =============================================================================
 // ZUSTAND STORE
@@ -350,6 +394,19 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
       
       /** ID карточки для центрирования после перехода на другой холст (из поиска) */
       searchTargetNodeId: null,
+      
+      // =========================================================================
+      // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
+      // =========================================================================
+      
+      /** Флаг: идёт ли пакетная регенерация */
+      isBatchRegenerating: false,
+      
+      /** Прогресс пакетной регенерации */
+      batchRegenerationProgress: null,
+      
+      /** Флаг отмены пакетной регенерации */
+      batchRegenerationCancelled: false,
 
     // =========================================================================
     // ЭКШЕНЫ: УПРАВЛЕНИЕ НОДАМИ
@@ -404,6 +461,10 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
      * При изменении response ноды - проверяем все ноды, которые цитируют эту ноду,
      * и помечаем их как isQuoteInvalidated = true если цитата больше не соответствует.
      * 
+     * УСТАРЕВАНИЕ ПОТОМКОВ:
+     * При изменении response ноды - все потомки помечаются как stale,
+     * потому что их контекст изменился (LLM недетерминированная).
+     * 
      * @param nodeId - ID ноды для обновления
      * @param data - частичные данные для merge
      */
@@ -412,15 +473,17 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
       const { nodes: oldNodes } = get();
       const oldNode = oldNodes.find((n) => n.id === nodeId);
       const oldPrompt = oldNode?.data.prompt;
+      const oldResponse = oldNode?.data.response;
+      
+      // Флаг: изменился ли response (определяем до set)
+      const newResponse = data.response;
+      const responseChanged = newResponse !== undefined && newResponse !== oldResponse;
       
       set((state) => {
         // Находим индекс ноды
         const nodeIndex = state.nodes.findIndex((n) => n.id === nodeId);
         
         if (nodeIndex !== -1) {
-          const oldResponse = state.nodes[nodeIndex].data.response;
-          const newResponse = data.response;
-          
           // КРИТИЧНО: Создаём новый объект data для правильного отслеживания изменений!
           // Immer автоматически создаст новую ссылку на nodes[nodeIndex]
           state.nodes[nodeIndex].data = {
@@ -433,7 +496,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           // ИНВАЛИДАЦИЯ ЦИТАТ
           // Если изменился response - проверяем все ноды с цитатами из этой ноды
           // =================================================================
-          if (newResponse !== undefined && newResponse !== oldResponse) {
+          if (responseChanged) {
             // Находим все ноды, которые цитируют эту ноду
             state.nodes.forEach((node, idx) => {
               if (node.data.quoteSourceNodeId === nodeId && node.data.quote) {
@@ -459,6 +522,22 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
         }
       });
+      
+      // =======================================================================
+      // УСТАРЕВАНИЕ ПОТОМКОВ ПРИ ИЗМЕНЕНИИ RESPONSE
+      // Если response изменился - все потомки должны быть помечены как stale,
+      // потому что LLM недетерминированная и каждый новый ответ уникален
+      // =======================================================================
+      if (responseChanged) {
+        const { markChildrenStale } = get();
+        markChildrenStale(nodeId);
+        
+        console.log(
+          '[updateNodeData] Response изменился для ноды:',
+          nodeId,
+          '- все потомки помечены как stale'
+        );
+      }
       
       // =======================================================================
       // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
@@ -1593,6 +1672,330 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
         });
         
         console.log('[checkAllStaleNodes] Снят stale для', nodesToClear.length, 'нод:', nodesToClear);
+      }
+    },
+
+    // =========================================================================
+    // ЭКШЕНЫ: ПАКЕТНАЯ РЕГЕНЕРАЦИЯ УСТАРЕВШИХ КАРТОЧЕК
+    // =========================================================================
+    
+    /**
+     * Получить количество устаревших (stale) карточек
+     * 
+     * @returns количество карточек с isStale === true
+     */
+    getStaleNodesCount: (): number => {
+      const { nodes } = get();
+      return nodes.filter((n) => n.data.isStale && n.data.response).length;
+    },
+    
+    /**
+     * Запустить пакетную регенерацию всех устаревших карточек
+     * 
+     * АЛГОРИТМ:
+     * 1. Собрать все stale ноды (только те, у которых есть response - иначе нечего регенерировать)
+     * 2. Построить граф зависимостей: для каждой stale ноды найти stale-предков
+     * 3. Топологическая сортировка по уровням:
+     *    - Уровень 0: stale ноды без stale-предков (корни)
+     *    - Уровень 1: stale ноды, у которых ВСЕ stale-предки на уровне 0
+     *    - и т.д.
+     * 4. На каждом уровне запустить генерацию ПАРАЛЛЕЛЬНО (через pendingRegenerate)
+     * 5. Ждать завершения всего уровня (onBatchNodeComplete отслеживает)
+     * 6. Переходить к следующему уровню
+     */
+    regenerateStaleNodes: () => {
+      const { nodes, edges, isBatchRegenerating } = get();
+      
+      // Если уже идёт регенерация - выходим
+      if (isBatchRegenerating) {
+        console.log('[regenerateStaleNodes] Регенерация уже идёт');
+        return;
+      }
+      
+      // 1. Собираем все stale ноды с ответом (нечего регенерировать без ответа)
+      const staleNodes = nodes.filter((n) => n.data.isStale && n.data.response);
+      
+      if (staleNodes.length === 0) {
+        console.log('[regenerateStaleNodes] Нет устаревших карточек');
+        return;
+      }
+      
+      console.log('[regenerateStaleNodes] Найдено устаревших карточек:', staleNodes.length);
+      
+      // Множество ID stale нод для быстрого поиска
+      const staleNodeIds = new Set(staleNodes.map((n) => n.id));
+      
+      // 2. Строим граф зависимостей: для каждой stale ноды находим её stale-предков
+      // staleParents[nodeId] = [id1, id2, ...] - массив stale родителей
+      const staleParents: Map<string, string[]> = new Map();
+      
+      /**
+       * Вспомогательная функция: получить всех прямых родителей ноды
+       */
+      const getDirectParents = (nodeId: string): string[] => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return [];
+        
+        // Приоритет 1: parentIds (массив родителей)
+        if (node.data.parentIds && node.data.parentIds.length > 0) {
+          return node.data.parentIds;
+        }
+        
+        // Приоритет 2: Входящие связи
+        const incomingEdges = edges.filter((e) => e.target === nodeId);
+        if (incomingEdges.length > 0) {
+          return incomingEdges.map((e) => e.source);
+        }
+        
+        // Приоритет 3: parentId
+        if (node.data.parentId) {
+          return [node.data.parentId];
+        }
+        
+        return [];
+      };
+      
+      /**
+       * Рекурсивно находим ВСЕХ stale-предков ноды
+       * (не только прямых родителей, но и дедушек и т.д.)
+       */
+      const findAllStaleAncestors = (nodeId: string, visited: Set<string> = new Set()): string[] => {
+        const staleAncestors: string[] = [];
+        const directParents = getDirectParents(nodeId);
+        
+        for (const parentId of directParents) {
+          if (visited.has(parentId)) continue;
+          visited.add(parentId);
+          
+          // Если родитель stale - добавляем его
+          if (staleNodeIds.has(parentId)) {
+            staleAncestors.push(parentId);
+          }
+          
+          // Рекурсивно ищем stale-предков родителя
+          const ancestorsOfParent = findAllStaleAncestors(parentId, visited);
+          staleAncestors.push(...ancestorsOfParent);
+        }
+        
+        return staleAncestors;
+      };
+      
+      // Заполняем staleParents для каждой stale ноды
+      for (const node of staleNodes) {
+        const ancestors = findAllStaleAncestors(node.id);
+        staleParents.set(node.id, ancestors);
+      }
+      
+      // 3. Топологическая сортировка по уровням
+      // Используем алгоритм Кана (Kahn's algorithm) для определения уровней
+      const levels: string[][] = [];
+      const processed = new Set<string>();
+      
+      while (processed.size < staleNodes.length) {
+        // Находим ноды для текущего уровня:
+        // те, у которых ВСЕ stale-предки уже обработаны
+        const currentLevel: string[] = [];
+        
+        for (const node of staleNodes) {
+          if (processed.has(node.id)) continue;
+          
+          const ancestors = staleParents.get(node.id) || [];
+          const allAncestorsProcessed = ancestors.every((ancestorId) => processed.has(ancestorId));
+          
+          if (allAncestorsProcessed) {
+            currentLevel.push(node.id);
+          }
+        }
+        
+        // Защита от бесконечного цикла (циклические зависимости)
+        if (currentLevel.length === 0 && processed.size < staleNodes.length) {
+          console.error('[regenerateStaleNodes] Обнаружен цикл в зависимостях!');
+          break;
+        }
+        
+        // Добавляем уровень и помечаем как обработанные
+        levels.push(currentLevel);
+        currentLevel.forEach((id) => processed.add(id));
+      }
+      
+      console.log('[regenerateStaleNodes] Уровни регенерации:', levels);
+      
+      // 4. Запускаем регенерацию
+      // Устанавливаем начальное состояние
+      set((state) => {
+        state.isBatchRegenerating = true;
+        state.batchRegenerationCancelled = false;
+        state.batchRegenerationProgress = {
+          total: staleNodes.length,
+          completed: 0,
+          currentLevel: 0,
+          currentLevelNodeIds: levels[0] || [],
+        };
+      });
+      
+      // Запускаем первый уровень
+      // Для каждой ноды устанавливаем pendingRegenerate = true
+      // NeuroNode при монтировании/обновлении увидит этот флаг и запустит генерацию
+      if (levels.length > 0) {
+        const firstLevel = levels[0];
+        
+        // Сохраняем уровни в closure для последующих вызовов onBatchNodeComplete
+        // ВАЖНО: До set(), чтобы были доступны при обработке
+        batchLevels = levels;
+        
+        set((state) => {
+          console.log('[regenerateStaleNodes] Устанавливаем pendingRegenerate для уровня 0:', firstLevel);
+          
+          firstLevel.forEach((nodeId) => {
+            const nodeIndex = state.nodes.findIndex((n) => n.id === nodeId);
+            if (nodeIndex !== -1) {
+              console.log('[regenerateStaleNodes] Устанавливаем pendingRegenerate для ноды:', nodeId);
+              state.nodes[nodeIndex].data = {
+                ...state.nodes[nodeIndex].data,
+                pendingRegenerate: true,
+                updatedAt: Date.now(),
+              };
+            } else {
+              console.error('[regenerateStaleNodes] Нода не найдена:', nodeId);
+            }
+          });
+        });
+        
+        console.log('[regenerateStaleNodes] Запущен уровень 0:', firstLevel);
+      }
+    },
+    
+    /**
+     * Отменить текущую пакетную регенерацию
+     * 
+     * Принудительно сбрасывает все флаги и состояние регенерации.
+     * Карточки, которые уже начали генерацию, завершатся,
+     * но новые уровни не будут запускаться.
+     */
+    cancelBatchRegeneration: () => {
+      // Принудительно сбрасываем ВСЁ состояние регенерации
+      set((state) => {
+        state.batchRegenerationCancelled = true;
+        state.isBatchRegenerating = false;
+        state.batchRegenerationProgress = null;
+        
+        // Сбрасываем pendingRegenerate у всех карточек которые ещё не начали
+        state.nodes.forEach((node, idx) => {
+          if (node.data.pendingRegenerate) {
+            state.nodes[idx].data = {
+              ...state.nodes[idx].data,
+              pendingRegenerate: false,
+              updatedAt: Date.now(),
+            };
+          }
+        });
+      });
+      
+      // Очищаем уровни
+      batchLevels = [];
+      
+      console.log('[cancelBatchRegeneration] Регенерация отменена');
+    },
+    
+    /**
+     * Обработать завершение генерации одной ноды в пакетном режиме
+     * 
+     * Логика:
+     * 1. Увеличить completed
+     * 2. Убрать nodeId из currentLevelNodeIds
+     * 3. Если currentLevelNodeIds пустой - перейти к следующему уровню
+     * 4. Если cancelled - остановить
+     * 5. Если все уровни завершены - сбросить состояние
+     * 
+     * @param nodeId - ID завершившей генерацию ноды
+     */
+    onBatchNodeComplete: (nodeId: string) => {
+      const { isBatchRegenerating, batchRegenerationProgress, batchRegenerationCancelled } = get();
+      
+      // Если регенерация не идёт - игнорируем
+      if (!isBatchRegenerating || !batchRegenerationProgress) {
+        return;
+      }
+      
+      // Проверяем что нода из текущего уровня
+      if (!batchRegenerationProgress.currentLevelNodeIds.includes(nodeId)) {
+        return;
+      }
+      
+      console.log('[onBatchNodeComplete] Завершена нода:', nodeId);
+      
+      // Обновляем прогресс
+      const newCurrentLevelNodeIds = batchRegenerationProgress.currentLevelNodeIds.filter(
+        (id) => id !== nodeId
+      );
+      const newCompleted = batchRegenerationProgress.completed + 1;
+      
+      // Проверяем: уровень завершён?
+      if (newCurrentLevelNodeIds.length === 0) {
+        // Уровень завершён
+        const nextLevelIndex = batchRegenerationProgress.currentLevel + 1;
+        
+        // Проверяем отмену
+        if (batchRegenerationCancelled) {
+          console.log('[onBatchNodeComplete] Регенерация отменена после уровня', batchRegenerationProgress.currentLevel);
+          
+          set((state) => {
+            state.isBatchRegenerating = false;
+            state.batchRegenerationProgress = null;
+            state.batchRegenerationCancelled = false;
+          });
+          return;
+        }
+        
+        // Проверяем: есть ещё уровни?
+        if (nextLevelIndex >= batchLevels.length) {
+          // Все уровни завершены!
+          console.log('[onBatchNodeComplete] Пакетная регенерация завершена!');
+          
+          set((state) => {
+            state.isBatchRegenerating = false;
+            state.batchRegenerationProgress = null;
+          });
+          return;
+        }
+        
+        // Переходим к следующему уровню
+        const nextLevel = batchLevels[nextLevelIndex];
+        
+        console.log('[onBatchNodeComplete] Переход к уровню', nextLevelIndex, ':', nextLevel);
+        
+        set((state) => {
+          // Обновляем прогресс
+          state.batchRegenerationProgress = {
+            total: batchRegenerationProgress.total,
+            completed: newCompleted,
+            currentLevel: nextLevelIndex,
+            currentLevelNodeIds: nextLevel,
+          };
+          
+          // Запускаем генерацию для следующего уровня
+          nextLevel.forEach((nId) => {
+            const nodeIndex = state.nodes.findIndex((n) => n.id === nId);
+            if (nodeIndex !== -1) {
+              state.nodes[nodeIndex].data = {
+                ...state.nodes[nodeIndex].data,
+                pendingRegenerate: true,
+                updatedAt: Date.now(),
+              };
+            }
+          });
+        });
+      } else {
+        // Уровень ещё не завершён - просто обновляем прогресс
+        set((state) => {
+          if (state.batchRegenerationProgress) {
+            state.batchRegenerationProgress = {
+              ...state.batchRegenerationProgress,
+              completed: newCompleted,
+              currentLevelNodeIds: newCurrentLevelNodeIds,
+            };
+          }
+        });
       }
     },
 

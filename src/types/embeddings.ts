@@ -28,7 +28,7 @@ export interface EmbeddingRecord {
   /** ID холста, на котором находится нода */
   canvasId: string;
   
-  /** Вектор эмбеддинга (1536 измерений для text-embedding-3-small) */
+  /** Вектор эмбеддинга (размерность зависит от модели) */
   embedding: number[];
   
   /** Оригинальный промпт карточки (для отображения в результатах) */
@@ -162,13 +162,23 @@ export interface SearchState {
 // =============================================================================
 
 /**
- * Модель эмбеддингов по умолчанию
- * text-embedding-3-small - быстрая, качественная, экономичная
+ * Модель эмбеддингов по умолчанию (legacy, для обратной совместимости)
+ * Используйте API_PROVIDERS[provider].defaultEmbeddingsModel вместо этого
+ * @deprecated Используйте useSettingsStore().embeddingsModel
  */
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
 /**
- * Размерность вектора для text-embedding-3-small
+ * Размерность вектора (справочное значение)
+ * ВАЖНО: Разные модели имеют разную размерность!
+ * - text-embedding-3-small: 1536
+ * - text-embedding-3-large: 3072
+ * - intfloat/multilingual-e5-large: 1024
+ * - baai/bge-large-en-v1.5: 1024
+ * - baai/bge-base-en-v1.5: 768
+ * 
+ * Проверка размерности убрана - каждая модель возвращает свою размерность
+ * @deprecated Не используйте для валидации - размерность зависит от модели
  */
 export const EMBEDDING_DIMENSION = 1536;
 

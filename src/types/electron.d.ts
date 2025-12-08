@@ -51,6 +51,19 @@ interface ElectronAPI {
   isElectron: () => Promise<boolean>;
   
   /**
+   * Проверяет наличие обновлений приложения
+   * При наличии обновлений показывает диалог с предложением скачать
+   * При отсутствии обновлений показывает сообщение "Версия программы актуальная"
+   * 
+   * @returns Promise<boolean> - true если проверка запущена успешно
+   * 
+   * @example
+   * const success = await window.electronAPI?.checkForUpdates();
+   * // Диалог результата покажется автоматически
+   */
+  checkForUpdates: () => Promise<boolean>;
+  
+  /**
    * Текущая платформа операционной системы
    * 
    * @returns 'win32' | 'darwin' | 'linux'

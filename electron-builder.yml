@@ -20,7 +20,7 @@ copyright: Copyright © 2024 NeuroCanvas Team
 # Директории
 directories:
   # Куда складывать собранные файлы
-  output: dist
+  output: release
   # Куда складывать промежуточные файлы сборки
   buildResources: electron/resources
 
@@ -54,9 +54,17 @@ files:
 
 # Дополнительные ресурсы (копируются в resources/)
 extraResources:
-  # Standalone сервер Next.js
+  # Standalone сервер Next.js (основные файлы)
   - from: ".next/standalone"
     to: "standalone"
+    filter:
+      - "**/*"
+      - "!node_modules"
+      - "!node_modules/**/*"
+      - "!data/**/*"  # Исключаем папку data с пользовательскими данными и API ключами
+  # Node modules для standalone (копируем отдельно для надёжности)
+  - from: ".next/standalone/node_modules"
+    to: "standalone/node_modules"
     filter:
       - "**/*"
   # Статичные файлы Next.js (CSS, JS)
@@ -76,8 +84,7 @@ extraResources:
 
 win:
   # Иконка для Windows (256x256 .ico)
-  # Закомментировано пока нет файла - будет использована дефолтная
-  # icon: electron/icon.ico
+  icon: electron/icon.ico
   
   # Отключаем подпись кода (не нужна для бесплатного распространения)
   signAndEditExecutable: false
@@ -96,6 +103,10 @@ win:
 
 # Настройки NSIS установщика
 nsis:
+  # Имя файла установщика (важно для автообновлений!)
+  # Формат: NeuroCanvas-Setup-1.0.4.exe
+  artifactName: "${productName}-Setup-${version}.exe"
+  
   # Установка для одного пользователя (без прав администратора)
   oneClick: false
   
@@ -172,3 +183,20 @@ asar: true
 # Файлы которые не нужно паковать в asar (нативные модули)
 asarUnpack:
   - "**/*.node"
+
+# -----------------------------------------------------------------------------
+# АВТООБНОВЛЕНИЯ ЧЕРЕЗ GITHUB RELEASES
+# -----------------------------------------------------------------------------
+
+# Публикация обновлений через GitHub Releases
+# При сборке electron-builder автоматически создаст файл latest.yml
+# который содержит информацию о версии для electron-updater
+publish:
+  # Провайдер: GitHub Releases (бесплатно)
+  provider: github
+  # Владелец репозитория (ваш GitHub username)
+  owner: Alexandrisius
+  # Название репозитория
+  repo: secondbrain
+  # Тип релиза: release (стабильные), draft (черновик), prerelease (бета)
+  releaseType: release

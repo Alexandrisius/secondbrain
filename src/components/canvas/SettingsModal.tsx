@@ -10,7 +10,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe } from 'lucide-react';
+import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -24,16 +24,29 @@ import {
   useSettingsStore, 
   selectApiKey,
   selectSetApiKey,
+  selectApiProvider,
+  selectSetApiProvider,
+  selectApiBaseUrl,
+  selectSetApiBaseUrl,
+  selectEmbeddingsBaseUrl,
+  selectSetEmbeddingsBaseUrl,
   selectModel,
   selectSetModel,
   selectUseSummarization, 
   selectSetUseSummarization,
   selectLanguage,
   selectSetLanguage,
+  selectCorporateMode,
+  selectSetCorporateMode,
+  selectEmbeddingsModel,
+  selectSetEmbeddingsModel,
   selectResetSettings,
+  API_PROVIDERS,
   type Language,
+  type ApiProvider,
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
+import { clearAllEmbeddings, getEmbeddingsCount } from '@/lib/db/embeddings';
 
 // =============================================================================
 // КОНСТАНТЫ
@@ -222,6 +235,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Флаг для показа/скрытия API ключа
   const [showApiKey, setShowApiKey] = useState(false);
   
+  // Состояние для предупреждения о смене модели эмбеддингов
+  const [pendingEmbeddingsModel, setPendingEmbeddingsModel] = useState<string | null>(null);
+  
+  // Флаг очистки индекса эмбеддингов
+  const [isClearingEmbeddings, setIsClearingEmbeddings] = useState(false);
+  
+  // Количество проиндексированных карточек
+  const [embeddingsCount, setEmbeddingsCount] = useState(0);
+  
   // ===========================================================================
   // STORE
   // ===========================================================================
@@ -229,13 +251,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Получаем текущие настройки и методы их изменения
   const apiKey = useSettingsStore(selectApiKey);
   const setApiKey = useSettingsStore(selectSetApiKey);
+  const apiProvider = useSettingsStore(selectApiProvider);
+  const setApiProvider = useSettingsStore(selectSetApiProvider);
+  const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
+  const setApiBaseUrl = useSettingsStore(selectSetApiBaseUrl);
+  const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
+  const setEmbeddingsBaseUrl = useSettingsStore(selectSetEmbeddingsBaseUrl);
   const model = useSettingsStore(selectModel);
   const setModel = useSettingsStore(selectSetModel);
   const useSummarization = useSettingsStore(selectUseSummarization);
   const setUseSummarization = useSettingsStore(selectSetUseSummarization);
   const language = useSettingsStore(selectLanguage);
   const setLanguage = useSettingsStore(selectSetLanguage);
+  const corporateMode = useSettingsStore(selectCorporateMode);
+  const setCorporateMode = useSettingsStore(selectSetCorporateMode);
+  const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
+  const setEmbeddingsModel = useSettingsStore(selectSetEmbeddingsModel);
   const resetSettings = useSettingsStore(selectResetSettings);
+  
+  // ===========================================================================
+  // ЭФФЕКТЫ
+  // ===========================================================================
+  
+  // Загрузка количества проиндексированных карточек при открытии
+  React.useEffect(() => {
+    if (isOpen) {
+      getEmbeddingsCount().then(setEmbeddingsCount).catch(() => setEmbeddingsCount(0));
+    }
+  }, [isOpen]);
   
   // ===========================================================================
   // ОБРАБОТЧИКИ
@@ -246,6 +289,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
    */
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setApiKey(e.target.value);
+  };
+  
+  /**
+   * Обработка изменения API провайдера
+   */
+  const handleProviderChange = (provider: ApiProvider) => {
+    setApiProvider(provider);
+  };
+  
+  /**
+   * Обработка изменения базового URL
+   */
+  const handleApiBaseUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setApiBaseUrl(e.target.value);
+  };
+  
+  /**
+   * Обработка изменения URL эмбеддингов
+   */
+  const handleEmbeddingsBaseUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmbeddingsBaseUrl(e.target.value);
   };
   
   /**
@@ -274,6 +338,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
    */
   const handleLanguageChange = (newLanguage: Language) => {
     setLanguage(newLanguage);
+  };
+  
+  /**
+   * Переключение корпоративного режима
+   */
+  const handleToggleCorporateMode = () => {
+    setCorporateMode(!corporateMode);
+  };
+  
+  /**
+   * Обработка изменения модели эмбеддингов
+   * Показывает предупреждение если есть проиндексированные карточки
+   */
+  const handleEmbeddingsModelChange = (newModel: string) => {
+    if (newModel === embeddingsModel) return;
+    
+    // Если есть проиндексированные карточки - показываем предупреждение
+    if (embeddingsCount > 0) {
+      setPendingEmbeddingsModel(newModel);
+    } else {
+      // Если нет индексированных карточек - просто меняем модель
+      setEmbeddingsModel(newModel);
+    }
+  };
+  
+  /**
+   * Подтверждение смены модели эмбеддингов
+   * Очищает индекс и применяет новую модель
+   */
+  const handleConfirmEmbeddingsModelChange = async () => {
+    if (!pendingEmbeddingsModel) return;
+    
+    setIsClearingEmbeddings(true);
+    
+    try {
+      // Очищаем все эмбеддинги
+      await clearAllEmbeddings();
+      
+      // Применяем новую модель
+      setEmbeddingsModel(pendingEmbeddingsModel);
+      
+      // Обновляем счётчик
+      setEmbeddingsCount(0);
+      
+      // Закрываем диалог подтверждения
+      setPendingEmbeddingsModel(null);
+    } catch (error) {
+      console.error('[SettingsModal] Ошибка очистки эмбеддингов:', error);
+    } finally {
+      setIsClearingEmbeddings(false);
+    }
+  };
+  
+  /**
+   * Отмена смены модели эмбеддингов
+   */
+  const handleCancelEmbeddingsModelChange = () => {
+    setPendingEmbeddingsModel(null);
   };
   
   /**
@@ -356,6 +478,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {t.settings.apiSection}
           </div>
           
+          {/* Выбор API провайдера */}
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Server className="w-4 h-4 text-indigo-500" />
+                {t.settings.apiProvider}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.apiProviderDescription}
+              </p>
+              
+              {/* Сетка кнопок выбора провайдера */}
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.entries(API_PROVIDERS) as [ApiProvider, typeof API_PROVIDERS[ApiProvider]][]).map(([key, config]) => (
+                  <button
+                    key={key}
+                    onClick={() => handleProviderChange(key)}
+                    className={`
+                      flex flex-col items-start p-3 rounded-lg border transition-all duration-200 text-left
+                      ${apiProvider === key 
+                        ? 'bg-primary/10 border-primary shadow-sm' 
+                        : 'bg-background hover:bg-accent hover:border-primary/50 border-border'
+                      }
+                    `}
+                  >
+                    <span className={`font-medium text-sm ${apiProvider === key ? 'text-primary' : ''}`}>
+                      {config.name}
+                    </span>
+                    {/* Локализованное описание провайдера без обрезки */}
+                    <span className="text-xs text-muted-foreground">
+                      {t.settings.providers[key as keyof typeof t.settings.providers]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          
           {/* Поле ввода API ключа */}
           <div className="rounded-lg border p-4 space-y-3">
             <div className="space-y-2">
@@ -401,6 +561,67 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
           </div>
+          
+          {/* Custom URL поля - показываем только для custom провайдера */}
+          {apiProvider === 'custom' && (
+            <div className="rounded-lg border p-4 space-y-4 border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Link className="w-4 h-4 text-amber-600" />
+                  {t.settings.customApiUrl}
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  {t.settings.customApiUrlDescription}
+                </p>
+                <Input
+                  type="text"
+                  value={apiBaseUrl}
+                  onChange={handleApiBaseUrlChange}
+                  placeholder="http://localhost:1234/v1"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Link className="w-4 h-4 text-amber-600" />
+                  {t.settings.customEmbeddingsUrl}
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  {t.settings.customEmbeddingsUrlDescription}
+                </p>
+                <Input
+                  type="text"
+                  value={embeddingsBaseUrl}
+                  onChange={handleEmbeddingsBaseUrlChange}
+                  placeholder="http://localhost:1234/v1"
+                />
+              </div>
+            </div>
+          )}
+          
+          {/* Информация о текущих URL (для не-custom провайдеров) */}
+          {apiProvider !== 'custom' && (
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Link className="w-3 h-3" />
+                <span className="font-medium">{t.settings.currentApiUrl}:</span>
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">{apiBaseUrl}</code>
+              </div>
+              {API_PROVIDERS[apiProvider].supportsEmbeddings && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                  <Link className="w-3 h-3" />
+                  <span className="font-medium">{t.settings.currentEmbeddingsUrl}:</span>
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{embeddingsBaseUrl}</code>
+                </div>
+              )}
+              {!API_PROVIDERS[apiProvider].supportsEmbeddings && (
+                <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  <Info className="w-3 h-3" />
+                  <span>{t.settings.noEmbeddingsSupport}</span>
+                </div>
+              )}
+            </div>
+          )}
           
           {/* Выбор модели */}
           <div className="rounded-lg border p-4 space-y-3">
@@ -468,6 +689,111 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
             </div>
+          </div>
+          
+          {/* =============================================================== */}
+          {/* СЕКЦИЯ: СЕМАНТИЧЕСКИЙ ПОИСК (ЭМБЕДДИНГИ) */}
+          {/* =============================================================== */}
+          
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            <Search className="w-4 h-4" />
+            {t.settings.embeddingsSection}
+          </div>
+          
+          {/* Выбор модели эмбеддингов */}
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Search className="w-4 h-4 text-cyan-500" />
+                {t.settings.embeddingsModel}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.embeddingsModelDescription}
+              </p>
+              
+              {/* Провайдер не поддерживает эмбеддинги */}
+              {!API_PROVIDERS[apiProvider].supportsEmbeddings ? (
+                <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{t.settings.noEmbeddingsSupport}</span>
+                </div>
+              ) : (
+                <>
+                  {/* Выпадающий список моделей эмбеддингов */}
+                  <select
+                    value={embeddingsModel}
+                    onChange={(e) => handleEmbeddingsModelChange(e.target.value)}
+                    className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    {API_PROVIDERS[apiProvider].embeddingsModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name} ({model.dimension}d) - {model.description}
+                      </option>
+                    ))}
+                  </select>
+                  
+                  {/* Информация о текущей модели */}
+                  {(() => {
+                    const currentModel = API_PROVIDERS[apiProvider].embeddingsModels.find(
+                      (m) => m.id === embeddingsModel
+                    );
+                    return currentModel ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded bg-muted/50">
+                        <Info className="w-3 h-3" />
+                        <span>
+                          {t.settings.embeddingsDimension}: {currentModel.dimension} | 
+                          {t.settings.indexedCards}: {embeddingsCount}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+                </>
+              )}
+            </div>
+            
+            {/* Диалог подтверждения смены модели */}
+            {pendingEmbeddingsModel && (
+              <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 space-y-3">
+                <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
+                  <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-medium">{t.settings.embeddingsModelChangeWarning}</p>
+                    <p className="text-sm opacity-90">
+                      {t.settings.embeddingsModelChangeDescription.replace('{count}', String(embeddingsCount))}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelEmbeddingsModelChange}
+                    disabled={isClearingEmbeddings}
+                  >
+                    {t.common.cancel}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleConfirmEmbeddingsModelChange}
+                    disabled={isClearingEmbeddings}
+                  >
+                    {isClearingEmbeddings ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {t.settings.clearingIndex}
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        {t.settings.clearAndChange}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
           
           {/* =============================================================== */}
@@ -545,6 +871,91 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 )}
               </div>
             </div>
+          </div>
+          
+          {/* =============================================================== */}
+          {/* СЕКЦИЯ: КОРПОРАТИВНАЯ СЕТЬ */}
+          {/* =============================================================== */}
+          
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            <Building2 className="w-4 h-4" />
+            {t.settings.corporateSection}
+          </div>
+          
+          {/* Настройка корпоративного режима */}
+          <div className="rounded-lg border p-4 space-y-3 border-amber-500/30 bg-amber-50/30 dark:bg-amber-950/10">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1 flex-1">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-500" />
+                  <span className="font-medium">{t.settings.corporateMode}</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t.settings.corporateModeDescription}
+                </p>
+              </div>
+              
+              {/* Кастомный toggle switch */}
+              <button
+                onClick={handleToggleCorporateMode}
+                className={`
+                  relative inline-flex h-6 w-11 items-center rounded-full
+                  transition-colors duration-200 ease-in-out
+                  focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
+                  ${corporateMode 
+                    ? 'bg-amber-500' 
+                    : 'bg-gray-300 dark:bg-gray-600'
+                  }
+                `}
+                role="switch"
+                aria-checked={corporateMode}
+                aria-label={t.settings.toggleCorporateMode}
+              >
+                <span
+                  className={`
+                    inline-block h-4 w-4 transform rounded-full bg-white shadow-lg
+                    transition-transform duration-200 ease-in-out
+                    ${corporateMode ? 'translate-x-6' : 'translate-x-1'}
+                  `}
+                />
+              </button>
+            </div>
+            
+            {/* Информационный блок о текущем режиме */}
+            <div 
+              className={`
+                flex items-start gap-2 p-3 rounded-md text-sm
+                ${corporateMode 
+                  ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200' 
+                  : 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200'
+                }
+              `}
+            >
+              <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <div>
+                {corporateMode ? (
+                  <>
+                    <span className="font-medium">{t.settings.corporateModeEnabled}</span>
+                    <br />
+                    {t.settings.corporateModeEnabledDescription}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium">{t.settings.corporateModeDisabled}</span>
+                    <br />
+                    {t.settings.corporateModeDisabledDescription}
+                  </>
+                )}
+              </div>
+            </div>
+            
+            {/* Предупреждение о безопасности (показывается когда режим включён) */}
+            {corporateMode && (
+              <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800/50">
+                <ShieldAlert className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>{t.settings.corporateModeWarning}</span>
+              </div>
+            )}
           </div>
         </div>
         

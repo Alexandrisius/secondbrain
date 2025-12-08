@@ -9,11 +9,14 @@
  * - Поддержка иконок, разделителей, состояния danger
  * - Glassmorphism эффект
  * - Закрытие при клике вне области
+ * - React Portal для рендеринга вне DOM-иерархии (избегает overflow clipping)
+ * - Поддержка preferLeft для открытия меню слева от точки клика
  */
 
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -57,6 +60,10 @@ interface ContextMenuProps {
   onClose: () => void;
   /** Минимальная ширина меню */
   minWidth?: number;
+  /** Предпочтительное открытие слева от точки клика (для кнопок у правого края) */
+  preferLeft?: boolean;
+  /** Предпочтительное открытие сверху от точки клика */
+  preferTop?: boolean;
 }
 
 // =============================================================================
@@ -89,6 +96,8 @@ export function ContextMenu({
   onSelect,
   onClose,
   minWidth = DEFAULT_MIN_WIDTH,
+  preferLeft = false,
+  preferTop = false,
 }: ContextMenuProps) {
   // ===========================================================================
   // СОСТОЯНИЕ
@@ -107,9 +116,19 @@ export function ContextMenu({
   const [isAnimating, setIsAnimating] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   
+  /** Флаг монтирования на клиенте (для Portal) */
+  const [isMounted, setIsMounted] = useState(false);
+  
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
+  
+  /**
+   * Устанавливаем флаг монтирования для Portal (SSR совместимость)
+   */
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
   
   /**
    * Управление анимацией появления/скрытия
@@ -146,6 +165,7 @@ export function ContextMenu({
   
   /**
    * Автопозиционирование меню относительно viewport (корректировка после рендера)
+   * Учитывает preferLeft и preferTop для правильного отображения у границ сайдбара
    */
   useEffect(() => {
     if (!isOpen || !menuRef.current) return;
@@ -158,6 +178,16 @@ export function ContextMenu({
       const rect = menu.getBoundingClientRect();
       
       let { x, y } = position;
+      
+      // Если предпочтительно открытие слева - сразу смещаем меню влево от точки клика
+      if (preferLeft) {
+        x = x - rect.width;
+      }
+      
+      // Если предпочтительно открытие сверху - сразу смещаем меню вверх от точки клика
+      if (preferTop) {
+        y = y - rect.height;
+      }
       
       // Корректируем по горизонтали - если меню выходит за правый край
       if (x + rect.width > window.innerWidth - VIEWPORT_PADDING) {
@@ -181,7 +211,7 @@ export function ContextMenu({
     });
     
     return () => cancelAnimationFrame(timer);
-  }, [isOpen, position]);
+  }, [isOpen, position, preferLeft, preferTop]);
   
   /**
    * Закрытие при клике вне меню
@@ -291,14 +321,15 @@ export function ContextMenu({
   // РЕНДЕР
   // ===========================================================================
   
-  // Не рендерим если меню полностью скрыто
-  if (!isVisible) return null;
+  // Не рендерим если меню полностью скрыто или компонент не смонтирован (SSR)
+  if (!isVisible || !isMounted) return null;
   
-  return (
+  // Контент меню (рендерится через Portal в body)
+  const menuContent = (
     <div
       ref={menuRef}
       className={cn(
-        // Позиционирование
+        // Позиционирование - fixed для отвязки от родительских overflow
         'fixed z-[9999]',
         // Glassmorphism эффект
         'bg-[#1e1e2e]/95 backdrop-blur-xl',
@@ -309,7 +340,11 @@ export function ContextMenu({
         'rounded-xl overflow-hidden',
         // Анимация
         'transition-all duration-150 ease-out',
-        'origin-top-left',
+        // Origin зависит от направления открытия
+        preferLeft && preferTop && 'origin-bottom-right',
+        preferLeft && !preferTop && 'origin-top-right',
+        !preferLeft && preferTop && 'origin-bottom-left',
+        !preferLeft && !preferTop && 'origin-top-left',
         // Состояния анимации
         isAnimating && !isOpen && 'opacity-0 scale-95 pointer-events-none',
         isAnimating && isOpen && 'opacity-0 scale-95',
@@ -394,6 +429,9 @@ export function ContextMenu({
       </div>
     </div>
   );
+  
+  // Используем Portal для рендеринга в body - избегаем overflow clipping родителей
+  return createPortal(menuContent, document.body);
 }
 
 // =============================================================================

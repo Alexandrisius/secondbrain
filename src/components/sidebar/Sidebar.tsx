@@ -31,6 +31,16 @@ import { SearchInput } from './SearchInput';
 import { cn } from '@/lib/utils';
 
 // =============================================================================
+// КОНСТАНТЫ ВЕРСИИ
+// =============================================================================
+
+/**
+ * Версия приложения по умолчанию (fallback для веб-версии)
+ * Обновляется вместе с package.json
+ */
+const DEFAULT_VERSION = '1.0.1';
+
+// =============================================================================
 // КОНСТАНТЫ
 // =============================================================================
 
@@ -134,6 +144,9 @@ export function Sidebar() {
   // Ref для сайдбара
   const sidebarRef = useRef<HTMLElement>(null);
   
+  // Версия приложения (получается динамически из Electron или fallback)
+  const [appVersion, setAppVersion] = useState(DEFAULT_VERSION);
+  
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
@@ -143,6 +156,29 @@ export function Sidebar() {
    */
   useEffect(() => {
     setSidebarWidth(loadSavedWidth());
+  }, []);
+  
+  /**
+   * Получаем версию приложения из Electron API
+   * В веб-версии используется DEFAULT_VERSION как fallback
+   */
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        // Проверяем, запущено ли в Electron
+        if (typeof window !== 'undefined' && window.electronAPI) {
+          const version = await window.electronAPI.getAppVersion();
+          if (version) {
+            setAppVersion(version);
+          }
+        }
+      } catch (error) {
+        console.error('[Sidebar] Ошибка получения версии:', error);
+        // Оставляем DEFAULT_VERSION
+      }
+    };
+    
+    fetchVersion();
   }, []);
   
   /**
@@ -517,7 +553,8 @@ export function Sidebar() {
           'bg-gradient-to-t from-[#181825]/50 to-transparent',
         )}>
           <div className="text-[10px] text-[#6c7086]/60 text-center font-medium tracking-wide">
-            {t.sidebar.version}
+            {/* Динамическая версия: подставляем appVersion в шаблон */}
+            {t.sidebar.version.replace('{version}', appVersion)}
           </div>
         </footer>
       )}

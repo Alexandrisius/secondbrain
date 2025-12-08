@@ -1,48 +1,19 @@
 {
-  "folders": [
-    {
-      "id": "folder-1765115519096-x0a14s4",
-      "name": "Климович",
-      "parentId": null,
-      "order": 0,
-      "isExpanded": true,
-      "createdAt": 1765115519096,
-      "updatedAt": 1765115525405
-    },
-    {
-      "id": "folder-1765115531524-plgszfi",
-      "name": "Заметки",
-      "parentId": null,
-      "order": 1,
-      "isExpanded": true,
-      "createdAt": 1765115531524,
-      "updatedAt": 1765115536491
-    }
-  ],
+  "folders": [],
   "canvases": [
     {
-      "id": "canvas-migrated-1765115432115",
-      "name": "Главный",
-      "folderId": "folder-1765115519096-x0a14s4",
+      "id": "canvas-1765215791822-nej70w0",
+      "name": "Главный холст",
+      "folderId": null,
       "order": 0,
-      "createdAt": 1765115432118,
-      "updatedAt": 1765140869361,
-      "nodesCount": 0
-    },
-    {
-      "id": "canvas-1765115539330-sp6fk2r",
-      "name": "Добыча железа в древности",
-      "folderId": "folder-1765115531524-plgszfi",
-      "order": 0,
-      "createdAt": 1765115539330,
-      "updatedAt": 1765141073342,
-      "nodesCount": 6
+      "createdAt": 1765215791822,
+      "updatedAt": 1765225528834,
+      "nodesCount": 7
     }
   ],
   "recent": [
-    "canvas-1765115539330-sp6fk2r",
-    "canvas-migrated-1765115432115"
+    "canvas-1765215791822-nej70w0"
   ],
-  "activeCanvasId": "canvas-1765115539330-sp6fk2r",
+  "activeCanvasId": "canvas-1765215791822-nej70w0",
   "version": 1
 }

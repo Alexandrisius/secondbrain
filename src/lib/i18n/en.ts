@@ -39,12 +39,27 @@ export const en: TranslationKeys = {
     
     // API Section
     apiSection: 'API Settings',
+    
+    // Provider
+    apiProvider: 'API Provider',
+    apiProviderDescription: 'Select an API provider. All providers use OpenAI-compatible format.',
+    
+    // API Key
     apiKey: 'API Key',
-    apiKeyDescription: 'Enter your API key from vsellm.ru to access LLM models.',
+    apiKeyDescription: 'Enter the API key from your selected provider.',
     apiKeyPlaceholder: 'sk-...',
     apiKeyRequired: 'API key is required for the application to work. Generation is impossible without it.',
     showKey: 'Show key',
     hideKey: 'Hide key',
+    
+    // Custom URL
+    customApiUrl: 'Chat API URL',
+    customApiUrlDescription: 'Base URL for OpenAI-compatible API (without /chat/completions).',
+    customEmbeddingsUrl: 'Embeddings API URL',
+    customEmbeddingsUrlDescription: 'URL for embeddings API (leave empty if not used).',
+    currentApiUrl: 'Chat API',
+    currentEmbeddingsUrl: 'Embeddings API',
+    noEmbeddingsSupport: 'This provider does not support embeddings (semantic search unavailable)',
     
     // Model
     model: 'Model',
@@ -72,6 +87,38 @@ export const en: TranslationKeys = {
     
     // Reset
     resetSettings: 'Reset Settings',
+    
+    // Corporate mode
+    corporateSection: 'Corporate Network',
+    corporateMode: 'Corporate Mode',
+    corporateModeDescription: 'Disables SSL certificate verification. Enable if you work in a corporate network with SSL inspection (DLP, proxy).',
+    corporateModeEnabled: 'Mode enabled:',
+    corporateModeEnabledDescription: 'SSL verification disabled. Use only in trusted corporate networks!',
+    corporateModeDisabled: 'Mode disabled:',
+    corporateModeDisabledDescription: 'Full SSL certificate verification (recommended).',
+    corporateModeWarning: '⚠️ Warning: disabling SSL verification reduces security. Do not use in public networks (cafes, airports)!',
+    toggleCorporateMode: 'Toggle corporate mode',
+    
+    // Provider descriptions
+    providers: {
+      openai: 'Official OpenAI API (GPT-4, GPT-3.5)',
+      openrouter: 'Model aggregator (GPT, Claude, Llama, etc.)',
+      vsellm: 'Russian proxy with RUB payments',
+      groq: 'Ultra-fast inference (Llama, Mixtral)',
+      together: 'Open-source models (Llama, Mistral, Qwen)',
+      custom: 'Any OpenAI-compatible API',
+    },
+    
+    // Embeddings section
+    embeddingsSection: 'Semantic Search',
+    embeddingsModel: 'Embeddings Model',
+    embeddingsModelDescription: 'Model for text vectorization in semantic search. Different providers support different models.',
+    embeddingsDimension: 'Dimension',
+    indexedCards: 'Indexed',
+    embeddingsModelChangeWarning: 'Reindexing required!',
+    embeddingsModelChangeDescription: 'When changing the model, you need to clear the current index ({count} cards) and reindex, as different models create incompatible vectors.',
+    clearAndChange: 'Clear and change',
+    clearingIndex: 'Clearing index...',
   },
   
   // ===========================================================================
@@ -88,7 +135,7 @@ export const en: TranslationKeys = {
     expandPanel: 'Expand panel',
     collapsePanel: 'Collapse panel',
     resizePanel: 'Resize width (double-click to reset)',
-    version: 'NeuroCanvas v0.2',
+    version: 'NeuroCanvas v{version}',
     
     // Search
     searchPlaceholder: 'Search canvases...',
@@ -178,6 +225,12 @@ export const en: TranslationKeys = {
     
     // Errors
     apiKeyMissing: 'API key not specified. Please add it in settings.',
+    
+    // Stop generation
+    stopGeneration: 'Stop generation',
+    
+    // Resize
+    resizeCard: 'Resize card width',
   },
   
   // ===========================================================================
@@ -242,6 +295,24 @@ export const en: TranslationKeys = {
     
     // Hotkey
     hotkeyHint: 'Ctrl+P to search',
+  },
+  
+  // ===========================================================================
+  // BATCH REGENERATION
+  // ===========================================================================
+  batchRegenerate: {
+    /** Button without counter (when no stale nodes) */
+    button: 'Update stale',
+    /** Button with counter */
+    buttonWithCount: 'Update {count}',
+    /** Progress */
+    progress: 'Updating {completed}/{total}...',
+    /** Cancel */
+    cancel: 'Cancel',
+    /** No stale */
+    noStale: 'No stale cards',
+    /** Button tooltip */
+    tooltip: 'Regenerate all stale cards in order from ancestors to descendants',
   },
   
   // ===========================================================================

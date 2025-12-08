@@ -18,6 +18,10 @@
 
 # electron-builder output
 /dist/
+/release/
+
+# user data (создаётся автоматически при первом запуске)
+/data/
 
 # misc
 .DS_Store
@@ -29,6 +33,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
 .env*.local
 
 # vercel

@@ -360,13 +360,14 @@ export function CanvasItem({ canvas, level, animationDelay = 0 }: CanvasItemProp
         )}
       </div>
       
-      {/* Контекстное меню */}
+      {/* Контекстное меню - preferLeft чтобы не вылезало за границы сайдбара */}
       <ContextMenu
         isOpen={contextMenu.isOpen}
         position={contextMenu.position}
         items={contextMenuItems}
         onSelect={handleContextMenuSelect}
         onClose={contextMenu.close}
+        preferLeft={true}
       />
     </>
   );

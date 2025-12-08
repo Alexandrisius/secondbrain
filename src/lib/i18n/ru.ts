@@ -37,12 +37,27 @@ export const ru = {
     
     // Секция API
     apiSection: 'Настройки API',
+    
+    // Провайдер
+    apiProvider: 'API Провайдер',
+    apiProviderDescription: 'Выберите провайдера API. Все провайдеры используют OpenAI-совместимый формат.',
+    
+    // API ключ
     apiKey: 'API ключ',
-    apiKeyDescription: 'Введите ваш API ключ от vsellm.ru для доступа к LLM моделям.',
+    apiKeyDescription: 'Введите API ключ от выбранного провайдера.',
     apiKeyPlaceholder: 'sk-...',
     apiKeyRequired: 'API ключ обязателен для работы приложения. Без него генерация ответов невозможна.',
     showKey: 'Показать ключ',
     hideKey: 'Скрыть ключ',
+    
+    // Custom URL
+    customApiUrl: 'URL Chat API',
+    customApiUrlDescription: 'Базовый URL для OpenAI-совместимого API (без /chat/completions).',
+    customEmbeddingsUrl: 'URL Embeddings API',
+    customEmbeddingsUrlDescription: 'URL для API эмбеддингов (оставьте пустым если не используется).',
+    currentApiUrl: 'Chat API',
+    currentEmbeddingsUrl: 'Embeddings API',
+    noEmbeddingsSupport: 'Этот провайдер не поддерживает эмбеддинги (семантический поиск недоступен)',
     
     // Модель
     model: 'Модель',
@@ -70,6 +85,38 @@ export const ru = {
     
     // Сброс
     resetSettings: 'Сбросить настройки',
+    
+    // Корпоративный режим
+    corporateSection: 'Корпоративная сеть',
+    corporateMode: 'Корпоративный режим',
+    corporateModeDescription: 'Отключает проверку SSL сертификатов. Включите, если работаете в корпоративной сети с SSL-инспекцией (DLP, прокси).',
+    corporateModeEnabled: 'Режим включён:',
+    corporateModeEnabledDescription: 'Проверка SSL отключена. Используйте только в доверенных корпоративных сетях!',
+    corporateModeDisabled: 'Режим выключен:',
+    corporateModeDisabledDescription: 'Полная проверка SSL сертификатов (рекомендуется).',
+    corporateModeWarning: '⚠️ Внимание: отключение проверки SSL снижает безопасность. Не используйте в публичных сетях (кафе, аэропорты)!',
+    toggleCorporateMode: 'Переключить корпоративный режим',
+    
+    // Описания провайдеров
+    providers: {
+      openai: 'Официальный API OpenAI (GPT-4, GPT-3.5)',
+      openrouter: 'Агрегатор моделей (GPT, Claude, Llama и др.)',
+      vsellm: 'Российский прокси с оплатой в рублях',
+      groq: 'Сверхбыстрый inference (Llama, Mixtral)',
+      together: 'Open-source модели (Llama, Mistral, Qwen)',
+      custom: 'Любой OpenAI-совместимый API',
+    },
+    
+    // Секция эмбеддингов
+    embeddingsSection: 'Семантический поиск',
+    embeddingsModel: 'Модель эмбеддингов',
+    embeddingsModelDescription: 'Модель для векторизации текста при семантическом поиске. Разные провайдеры поддерживают разные модели.',
+    embeddingsDimension: 'Размерность',
+    indexedCards: 'Проиндексировано',
+    embeddingsModelChangeWarning: 'Требуется переиндексация!',
+    embeddingsModelChangeDescription: 'При смене модели необходимо очистить текущий индекс ({count} карточек) и переиндексировать заново, так как разные модели создают несовместимые векторы.',
+    clearAndChange: 'Очистить и сменить',
+    clearingIndex: 'Очистка индекса...',
   },
   
   // ===========================================================================
@@ -86,7 +133,7 @@ export const ru = {
     expandPanel: 'Развернуть панель',
     collapsePanel: 'Свернуть панель',
     resizePanel: 'Изменить ширину (двойной клик - сброс)',
-    version: 'NeuroCanvas v0.2',
+    version: 'NeuroCanvas v{version}',
     
     // Поиск
     searchPlaceholder: 'Поиск холстов...',
@@ -176,6 +223,12 @@ export const ru = {
     
     // Ошибки
     apiKeyMissing: 'API ключ не указан. Пожалуйста, добавьте его в настройках.',
+    
+    // Остановка генерации
+    stopGeneration: 'Остановить генерацию',
+    
+    // Resize
+    resizeCard: 'Изменить ширину карточки',
   },
   
   // ===========================================================================
@@ -240,6 +293,24 @@ export const ru = {
     
     // Хоткей
     hotkeyHint: 'Ctrl+P для поиска',
+  },
+  
+  // ===========================================================================
+  // ПАКЕТНАЯ РЕГЕНЕРАЦИЯ
+  // ===========================================================================
+  batchRegenerate: {
+    /** Кнопка без счётчика (когда stale нод нет) */
+    button: 'Обновить устаревшие',
+    /** Кнопка со счётчиком */
+    buttonWithCount: 'Обновить {count}',
+    /** Прогресс */
+    progress: 'Обновление {completed}/{total}...',
+    /** Отмена */
+    cancel: 'Отменить',
+    /** Нет устаревших */
+    noStale: 'Нет устаревших карточек',
+    /** Tooltip кнопки */
+    tooltip: 'Регенерировать все устаревшие карточки по порядку от предков к потомкам',
   },
   
   // ===========================================================================

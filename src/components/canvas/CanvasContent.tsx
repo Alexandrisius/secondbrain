@@ -9,7 +9,7 @@
 
 'use client';
 
-import React, { useCallback, useRef, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
@@ -23,7 +23,7 @@ import {
   type NodeTypes,
   BackgroundVariant,
 } from '@xyflow/react';
-import { Save } from 'lucide-react';
+import { Save, RefreshCw, X, Loader2 } from 'lucide-react';
 import { useCanvasStore, markInitialDataLoaded } from '@/store/useCanvasStore';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { NeuroNode } from './NeuroNode';
@@ -226,6 +226,30 @@ export function CanvasContent() {
    * Вызывается по пробелу при выделенной карточке
    */
   const toggleNodeAnswerExpanded = useCanvasStore((s) => s.toggleNodeAnswerExpanded);
+  
+  // ===========================================================================
+  // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
+  // ===========================================================================
+  
+  /**
+   * Флаг: идёт ли пакетная регенерация
+   */
+  const isBatchRegenerating = useCanvasStore((s) => s.isBatchRegenerating);
+  
+  /**
+   * Прогресс пакетной регенерации
+   */
+  const batchRegenerationProgress = useCanvasStore((s) => s.batchRegenerationProgress);
+  
+  /**
+   * Запустить пакетную регенерацию
+   */
+  const regenerateStaleNodes = useCanvasStore((s) => s.regenerateStaleNodes);
+  
+  /**
+   * Отменить пакетную регенерацию
+   */
+  const cancelBatchRegeneration = useCanvasStore((s) => s.cancelBatchRegeneration);
   
   // ===========================================================================
   // СОСТОЯНИЕ ПЕРСИСТЕНТНОСТИ
@@ -941,6 +965,18 @@ export function CanvasContent() {
   // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Форматирование времени
   // ===========================================================================
   
+  // ===========================================================================
+  // ВЫЧИСЛЕНИЕ КОЛИЧЕСТВА УСТАРЕВШИХ КАРТОЧЕК
+  // ===========================================================================
+  
+  /**
+   * Количество устаревших (stale) карточек
+   * Пересчитывается при изменении nodes
+   */
+  const staleNodesCount = useMemo(() => {
+    return nodes.filter((n) => n.data.isStale && n.data.response).length;
+  }, [nodes]);
+
   /**
    * Форматирует timestamp в читаемое время
    * @param timestamp - временная метка в мс
@@ -1247,7 +1283,45 @@ export function CanvasContent() {
       />
 
       {/* ----- ИНДИКАТОР СОХРАНЕНИЯ И КНОПКА РУЧНОГО СОХРАНЕНИЯ ----- */}
-      <div className="absolute top-4 left-4 z-50 pointer-events-auto">
+      <div className="absolute top-4 left-4 z-50 pointer-events-auto flex items-center gap-2">
+        {/* Кнопка пакетной регенерации (показывается только если есть stale ноды или идёт регенерация) */}
+        {(staleNodesCount > 0 || isBatchRegenerating) && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">
+            {isBatchRegenerating ? (
+              // Режим регенерации: прогресс + кнопка отмены
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
+                <span className="text-xs text-orange-600 dark:text-orange-400 font-medium">
+                  {batchRegenerationProgress 
+                    ? `${batchRegenerationProgress.completed}/${batchRegenerationProgress.total}`
+                    : t.common.loading
+                  }
+                </span>
+                <button
+                  onClick={cancelBatchRegeneration}
+                  className="ml-1 p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  title={t.batchRegenerate.cancel}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </>
+            ) : (
+              // Режим ожидания: кнопка запуска
+              <button
+                onClick={regenerateStaleNodes}
+                className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 transition-colors"
+                title={t.batchRegenerate.tooltip}
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span className="text-xs font-medium">
+                  {t.batchRegenerate.buttonWithCount.replace('{count}', String(staleNodesCount))}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+        
+        {/* Индикатор сохранения */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">
           {/* Иконка статуса */}
           {isSaving ? (

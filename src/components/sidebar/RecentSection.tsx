@@ -367,7 +367,7 @@ function RecentItem({ canvas, isActive, onOpen, locale, animationDelay, t }: Rec
         </div>
       </button>
       
-      {/* Контекстное меню */}
+      {/* Контекстное меню - preferLeft чтобы не вылезало за границы сайдбара */}
       <ContextMenu
         isOpen={contextMenu.isOpen}
         position={contextMenu.position}
@@ -375,6 +375,7 @@ function RecentItem({ canvas, isActive, onOpen, locale, animationDelay, t }: Rec
         onSelect={handleContextMenuSelect}
         onClose={contextMenu.close}
         minWidth={160}
+        preferLeft={true}
       />
     </>
   );

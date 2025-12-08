@@ -6,33 +6,22 @@
  * - GET /api/workspace - загрузка структуры workspace (папки, метаданные холстов)
  * - POST /api/workspace - сохранение структуры workspace
  * 
- * Данные хранятся в файле data/index.json
+ * Данные хранятся в пользовательской папке:
+ * - Electron: %APPDATA%\NeuroCanvas\data\index.json
+ * - Dev режим: ./data/index.json
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
-import path from 'path';
 import type { WorkspaceIndex, Folder, CanvasMeta } from '@/types/workspace';
 import { WORKSPACE_VERSION } from '@/types/workspace';
-
-// =============================================================================
-// КОНСТАНТЫ
-// =============================================================================
-
-/**
- * Путь к директории с данными
- */
-const DATA_DIR = path.join(process.cwd(), 'data');
-
-/**
- * Путь к директории с файлами холстов
- */
-const CANVASES_DIR = path.join(DATA_DIR, 'canvases');
-
-/**
- * Путь к индексному файлу workspace
- */
-const INDEX_FILE = path.join(DATA_DIR, 'index.json');
+import { 
+  getDataDirectory, 
+  getCanvasesDirectory, 
+  getIndexFilePath,
+  getCanvasFilePath,
+  logPathsInfo 
+} from '@/lib/paths';
 
 // =============================================================================
 // НАЧАЛЬНЫЕ ДАННЫЕ
@@ -79,6 +68,7 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
   } catch {
     // Директория не существует - создаём
     await fs.mkdir(dirPath, { recursive: true });
+    console.log('[Workspace API] Создана директория:', dirPath);
   }
 }
 
@@ -88,18 +78,21 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
  * @returns Данные workspace
  */
 async function readWorkspaceIndex(): Promise<WorkspaceIndex> {
+  const indexFile = getIndexFilePath();
+  
   try {
     // Проверяем существование файла
-    await fs.access(INDEX_FILE);
+    await fs.access(indexFile);
     
     // Читаем и парсим JSON
-    const content = await fs.readFile(INDEX_FILE, 'utf-8');
+    const content = await fs.readFile(indexFile, 'utf-8');
     const data = JSON.parse(content) as WorkspaceIndex;
     
     return data;
   } catch {
     // Файл не существует или невалидный JSON
     console.log('[Workspace API] Индексный файл не найден, создаём новый workspace');
+    console.log('[Workspace API] Ожидаемый путь:', indexFile);
     return createDefaultWorkspace();
   }
 }
@@ -109,13 +102,19 @@ async function readWorkspaceIndex(): Promise<WorkspaceIndex> {
  * @param data - данные для записи
  */
 async function writeWorkspaceIndex(data: WorkspaceIndex): Promise<void> {
+  const dataDir = getDataDirectory();
+  const canvasesDir = getCanvasesDirectory();
+  const indexFile = getIndexFilePath();
+  
   // Убеждаемся что директории существуют
-  await ensureDirectoryExists(DATA_DIR);
-  await ensureDirectoryExists(CANVASES_DIR);
+  await ensureDirectoryExists(dataDir);
+  await ensureDirectoryExists(canvasesDir);
   
   // Записываем с форматированием для удобства отладки
   const content = JSON.stringify(data, null, 2);
-  await fs.writeFile(INDEX_FILE, content, 'utf-8');
+  await fs.writeFile(indexFile, content, 'utf-8');
+  
+  console.log('[Workspace API] Сохранено в:', indexFile);
 }
 
 /**
@@ -123,7 +122,8 @@ async function writeWorkspaceIndex(data: WorkspaceIndex): Promise<void> {
  * @param canvasId - ID холста
  */
 async function createCanvasFile(canvasId: string): Promise<void> {
-  await ensureDirectoryExists(CANVASES_DIR);
+  const canvasesDir = getCanvasesDirectory();
+  await ensureDirectoryExists(canvasesDir);
   
   // Начальные данные для нового холста (одна пустая нода)
   const initialData = {
@@ -154,8 +154,10 @@ async function createCanvasFile(canvasId: string): Promise<void> {
     lastSaved: Date.now(),
   };
   
-  const filePath = path.join(CANVASES_DIR, `${canvasId}.json`);
+  const filePath = getCanvasFilePath(canvasId);
   await fs.writeFile(filePath, JSON.stringify(initialData, null, 2), 'utf-8');
+  
+  console.log('[Workspace API] Создан файл холста:', filePath);
 }
 
 // =============================================================================
@@ -170,6 +172,9 @@ async function createCanvasFile(canvasId: string): Promise<void> {
  */
 export async function GET(): Promise<NextResponse> {
   try {
+    // Логируем пути при первом запросе (для отладки)
+    logPathsInfo();
+    
     const data = await readWorkspaceIndex();
     
     console.log(
@@ -329,4 +334,3 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 }
-

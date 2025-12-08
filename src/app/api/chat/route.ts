@@ -3,22 +3,47 @@
  * @description API Route для проксирования запросов к внешнему LLM API
  * 
  * Этот endpoint принимает запросы в формате OpenAI и перенаправляет их
- * к внешнему API провайдеру (vsellm.ru). Поддерживает streaming responses.
+ * к выбранному пользователем API провайдеру. Поддерживает streaming responses.
  * 
- * API ключ и модель передаются из клиента через тело запроса.
+ * Поддерживаются любые OpenAI-совместимые API:
+ * - OpenAI (api.openai.com)
+ * - OpenRouter (openrouter.ai)
+ * - vsellm.ru
+ * - Groq
+ * - Together AI
+ * - Любой custom OpenAI-compatible API (LM Studio, Ollama, etc.)
+ * 
+ * API ключ, модель и базовый URL передаются из клиента через тело запроса.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+
+// =============================================================================
+// NEXT.JS ROUTE КОНФИГУРАЦИЯ (для streaming)
+// =============================================================================
+
+/**
+ * Принудительно отключаем кеширование - каждый запрос к LLM уникален
+ * Это гарантирует что Next.js не будет кешировать streaming ответы
+ */
+export const dynamic = 'force-dynamic';
+
+/**
+ * Используем Node.js runtime для лучшей поддержки streaming
+ * Edge runtime тоже поддерживает streaming, но Node.js более совместим
+ * с различными API провайдерами и SSL настройками
+ */
+export const runtime = 'nodejs';
 
 // =============================================================================
 // КОНФИГУРАЦИЯ
 // =============================================================================
 
 /**
- * URL внешнего API провайдера
- * Используем vsellm.ru - прокси для доступа к различным LLM
+ * URL внешнего API провайдера по умолчанию
+ * Используется если baseUrl не передан в запросе (для обратной совместимости)
  */
-const API_BASE_URL = 'https://api.vsellm.ru/v1/chat/completions';
+const DEFAULT_API_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Модель по умолчанию
@@ -53,12 +78,19 @@ interface ChatRequestBody {
   context?: string;
   /** API ключ для авторизации */
   apiKey?: string;
+  /** Базовый URL API провайдера (например "https://api.openai.com/v1") */
+  apiBaseUrl?: string;
   /** Название модели (например "openai/gpt-4o") */
   model?: string;
   /** Температура генерации */
   temperature?: number;
   /** Максимальное количество токенов */
   maxTokens?: number;
+  /** 
+   * Корпоративный режим - отключает проверку SSL сертификатов
+   * Используется для работы в корпоративных сетях с SSL-инспекцией
+   */
+  corporateMode?: boolean;
 }
 
 // =============================================================================
@@ -107,6 +139,12 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Используем baseUrl из запроса или URL по умолчанию
+    const apiBaseUrl = body.apiBaseUrl || DEFAULT_API_BASE_URL;
+    
+    // Формируем полный URL для chat/completions
+    const apiUrl = `${apiBaseUrl}/chat/completions`;
+    
     // Используем модель из запроса или модель по умолчанию
     const model = body.model || DEFAULT_MODEL;
     
@@ -131,12 +169,23 @@ export async function POST(request: NextRequest) {
     // ЗАПРОС К LM STUDIO
     // =========================================================================
     
+    // Корпоративный режим: отключаем проверку SSL сертификатов
+    // Это необходимо для работы в корпоративных сетях с SSL-инспекцией (DLP, прокси)
+    // ВНИМАНИЕ: это снижает безопасность, использовать только в доверенных сетях!
+    const originalTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    if (body.corporateMode) {
+      console.log('[Chat API] Корпоративный режим: отключаем проверку SSL');
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    }
+    
     // Создаём AbortController для таймаута
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     
     try {
-      const response = await fetch(API_BASE_URL, {
+      console.log(`[Chat API] Запрос к ${apiUrl}, модель: ${model}, corporateMode: ${body.corporateMode || false}`);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -192,47 +241,41 @@ export async function POST(request: NextRequest) {
       // STREAMING RESPONSE
       // =========================================================================
       
-      // Создаём readable stream для передачи данных клиенту
-      const stream = new ReadableStream({
-        async start(streamController) {
-          const reader = response.body!.getReader();
-          const decoder = new TextDecoder();
-          
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              
-              if (done) {
-                // Отправляем маркер завершения
-                streamController.enqueue(
-                  new TextEncoder().encode('data: [DONE]\n\n')
-                );
-                streamController.close();
-                break;
-              }
-              
-              // Передаём chunk как есть (LM Studio уже отдаёт в SSE формате)
-              const chunk = decoder.decode(value, { stream: true });
-              streamController.enqueue(new TextEncoder().encode(chunk));
-            }
-          } catch (error) {
-            console.error('Streaming error:', error);
-            streamController.error(error);
-          }
-        },
-      });
+      // ВАЖНО: Проксируем stream напрямую от внешнего API!
+      // Это критично для реального streaming - не создаём промежуточный ReadableStream,
+      // а передаём response.body напрямую клиенту.
+      // 
+      // Внешний API уже отдаёт данные в SSE формате (data: {...}\n\n),
+      // мы просто передаём их клиенту как есть без буферизации.
       
       // Возвращаем streaming response с правильными заголовками
-      return new Response(stream, {
+      // ВАЖНО: Эти headers критичны для корректного streaming!
+      return new Response(response.body, {
         headers: {
+          // SSE (Server-Sent Events) формат
           'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
+          // Отключаем кеширование на всех уровнях
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          // Поддерживаем соединение открытым
           'Connection': 'keep-alive',
+          // Отключаем буферизацию в nginx и других reverse proxy
+          'X-Accel-Buffering': 'no',
+          // Отключаем сжатие - оно может буферизировать чанки
+          'Content-Encoding': 'none',
         },
       });
       
     } catch (fetchError) {
       clearTimeout(timeoutId);
+      
+      // Восстанавливаем настройку SSL после ошибки
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
       
       // Обработка ошибки таймаута
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
@@ -255,7 +298,30 @@ export async function POST(request: NextRequest) {
         );
       }
       
+      // Обработка SSL ошибок (корпоративные сети)
+      if (fetchError instanceof Error && 
+          (fetchError.message.includes('certificate') || 
+           fetchError.message.includes('SSL') ||
+           fetchError.message.includes('CERT'))) {
+        return NextResponse.json(
+          { 
+            error: 'Ошибка SSL сертификата',
+            details: 'Включите "Корпоративный режим" в настройках, если работаете в корпоративной сети с SSL-инспекцией',
+          },
+          { status: 495 } // SSL Certificate Error
+        );
+      }
+      
       throw fetchError;
+    } finally {
+      // Гарантированно восстанавливаем настройку SSL
+      if (body.corporateMode) {
+        if (originalTlsReject !== undefined) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+        } else {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+      }
     }
     
   } catch (error) {

@@ -7,32 +7,20 @@
  * - POST /api/canvas/[id] - сохранение данных холста
  * - DELETE /api/canvas/[id] - удаление холста
  * 
- * Данные хранятся в файлах data/canvases/[id].json
+ * Данные хранятся в пользовательской папке:
+ * - Electron: %APPDATA%\NeuroCanvas\data\canvases\
+ * - Dev режим: ./data/canvases/
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
-import path from 'path';
 import type { WorkspaceIndex } from '@/types/workspace';
-
-// =============================================================================
-// КОНСТАНТЫ
-// =============================================================================
-
-/**
- * Путь к директории с данными
- */
-const DATA_DIR = path.join(process.cwd(), 'data');
-
-/**
- * Путь к директории с файлами холстов
- */
-const CANVASES_DIR = path.join(DATA_DIR, 'canvases');
-
-/**
- * Путь к индексному файлу workspace
- */
-const INDEX_FILE = path.join(DATA_DIR, 'index.json');
+import { 
+  getDataDirectory, 
+  getCanvasesDirectory, 
+  getCanvasFilePath,
+  getIndexFilePath 
+} from '@/lib/paths';
 
 // =============================================================================
 // ТИПЫ
@@ -72,16 +60,8 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
     await fs.access(dirPath);
   } catch {
     await fs.mkdir(dirPath, { recursive: true });
+    console.log('[Canvas API] Создана директория:', dirPath);
   }
-}
-
-/**
- * Получает путь к файлу холста
- * @param canvasId - ID холста
- * @returns Путь к файлу
- */
-function getCanvasFilePath(canvasId: string): string {
-  return path.join(CANVASES_DIR, `${canvasId}.json`);
 }
 
 /**
@@ -97,6 +77,7 @@ async function readCanvasData(canvasId: string): Promise<CanvasData | null> {
     const content = await fs.readFile(filePath, 'utf-8');
     return JSON.parse(content) as CanvasData;
   } catch {
+    console.log('[Canvas API] Файл холста не найден:', filePath);
     return null;
   }
 }
@@ -107,11 +88,14 @@ async function readCanvasData(canvasId: string): Promise<CanvasData | null> {
  * @param data - данные для записи
  */
 async function writeCanvasData(canvasId: string, data: CanvasData): Promise<void> {
-  await ensureDirectoryExists(CANVASES_DIR);
+  const canvasesDir = getCanvasesDirectory();
+  await ensureDirectoryExists(canvasesDir);
   
   const filePath = getCanvasFilePath(canvasId);
   const content = JSON.stringify(data, null, 2);
   await fs.writeFile(filePath, content, 'utf-8');
+  
+  console.log('[Canvas API] Сохранён холст:', filePath);
 }
 
 /**
@@ -124,6 +108,7 @@ async function deleteCanvasFile(canvasId: string): Promise<void> {
   try {
     await fs.access(filePath);
     await fs.unlink(filePath);
+    console.log('[Canvas API] Удалён файл:', filePath);
   } catch {
     // Файл не существует - ничего не делаем
   }
@@ -134,9 +119,11 @@ async function deleteCanvasFile(canvasId: string): Promise<void> {
  * @returns Данные workspace
  */
 async function readWorkspaceIndex(): Promise<WorkspaceIndex | null> {
+  const indexFile = getIndexFilePath();
+  
   try {
-    await fs.access(INDEX_FILE);
-    const content = await fs.readFile(INDEX_FILE, 'utf-8');
+    await fs.access(indexFile);
+    const content = await fs.readFile(indexFile, 'utf-8');
     return JSON.parse(content) as WorkspaceIndex;
   } catch {
     return null;
@@ -148,8 +135,12 @@ async function readWorkspaceIndex(): Promise<WorkspaceIndex | null> {
  * @param data - данные для записи
  */
 async function writeWorkspaceIndex(data: WorkspaceIndex): Promise<void> {
+  const dataDir = getDataDirectory();
+  await ensureDirectoryExists(dataDir);
+  
+  const indexFile = getIndexFilePath();
   const content = JSON.stringify(data, null, 2);
-  await fs.writeFile(INDEX_FILE, content, 'utf-8');
+  await fs.writeFile(indexFile, content, 'utf-8');
 }
 
 /**
@@ -439,4 +430,3 @@ export async function DELETE(
     );
   }
 }
-

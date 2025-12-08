@@ -30,7 +30,7 @@ import {
   Sparkles, Zap, Hash, Type 
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
-import { useSettingsStore } from '@/store/useSettingsStore';
+import { useSettingsStore, API_PROVIDERS } from '@/store/useSettingsStore';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { 
@@ -80,6 +80,10 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
   
   const { t } = useTranslation();
   const apiKey = useSettingsStore((s) => s.apiKey);
+  const apiProvider = useSettingsStore((s) => s.apiProvider);
+  const embeddingsBaseUrl = useSettingsStore((s) => s.embeddingsBaseUrl);
+  const embeddingsModel = useSettingsStore((s) => s.embeddingsModel);
+  const corporateMode = useSettingsStore((s) => s.corporateMode);
   const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
   const canvases = useWorkspaceStore((s) => s.canvases);
   const nodes = useCanvasStore((s) => s.nodes);
@@ -165,18 +169,31 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       console.error('[SearchBar] Ошибка синхронизации эмбеддингов:', error);
     }
     
+    // Проверяем поддержку эмбеддингов для текущего провайдера
+    const providerConfig = API_PROVIDERS[apiProvider];
+    const supportsEmbeddings = providerConfig?.supportsEmbeddings ?? false;
+    
     // Создаём движок с функцией получения эмбеддинга
     const engine = new HybridSearchEngine(
       {}, // Параметры по умолчанию
       async (queryText: string) => {
         // Функция для получения эмбеддинга запроса
-        if (!apiKey) return null;
+        // Если провайдер не поддерживает эмбеддинги - возвращаем null
+        if (!apiKey || !supportsEmbeddings) return null;
         
         try {
           const response = await fetch('/api/embeddings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: queryText, apiKey }),
+            body: JSON.stringify({ 
+              text: queryText, 
+              apiKey,
+              embeddingsBaseUrl,
+              // Модель эмбеддингов из настроек
+              model: embeddingsModel,
+              // Корпоративный режим: отключает проверку SSL
+              corporateMode,
+            }),
           });
           
           if (!response.ok) return null;
@@ -233,7 +250,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     console.log(`[SearchBar] Проиндексировано ${documents.length} документов`);
     
     return engine;
-  }, [apiKey, activeCanvasId, searchAllCanvases, nodes]);
+  }, [apiKey, apiProvider, embeddingsBaseUrl, embeddingsModel, corporateMode, activeCanvasId, searchAllCanvases, nodes]);
   
   // ===========================================================================
   // ЭФФЕКТЫ
@@ -508,6 +525,13 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
   const handleReindex = async () => {
     if (!apiKey || !activeCanvasId || isReindexing) return;
     
+    // Проверяем поддержку эмбеддингов
+    const providerConfig = API_PROVIDERS[apiProvider];
+    if (!providerConfig?.supportsEmbeddings) {
+      console.warn('[SearchBar] Провайдер не поддерживает эмбеддинги');
+      return;
+    }
+    
     setIsReindexing(true);
     setReindexProgress({ current: 0, total: 0 });
     
@@ -516,9 +540,12 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         activeCanvasId,
         nodes,
         apiKey,
+        embeddingsBaseUrl,
         (current, total) => {
           setReindexProgress({ current, total });
-        }
+        },
+        corporateMode,
+        embeddingsModel // Передаём модель эмбеддингов
       );
       
       const newIndexedCount = await countIndexedCards(searchAllCanvases ? null : activeCanvasId);

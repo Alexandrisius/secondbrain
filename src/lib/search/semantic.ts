@@ -107,12 +107,18 @@ export function similarityToPercent(similarity: number): number {
  * Получить эмбеддинг для поискового запроса через API
  * 
  * @param query - Текст запроса
- * @param apiKey - API ключ для vsellm.ru
+ * @param apiKey - API ключ для авторизации
+ * @param embeddingsBaseUrl - Базовый URL для API эмбеддингов (опционально)
+ * @param corporateMode - Корпоративный режим: отключает проверку SSL (опционально)
+ * @param embeddingsModel - Модель эмбеддингов (опционально)
  * @returns Вектор эмбеддинга или null при ошибке
  */
 export async function getQueryEmbedding(
   query: string,
-  apiKey: string
+  apiKey: string,
+  embeddingsBaseUrl?: string,
+  corporateMode?: boolean,
+  embeddingsModel?: string
 ): Promise<number[] | null> {
   try {
     const response = await fetch('/api/embeddings', {
@@ -123,6 +129,11 @@ export async function getQueryEmbedding(
       body: JSON.stringify({
         text: query,
         apiKey: apiKey,
+        embeddingsBaseUrl: embeddingsBaseUrl,
+        // Модель эмбеддингов из настроек
+        model: embeddingsModel,
+        // Корпоративный режим для корпоративных сетей с SSL-инспекцией
+        corporateMode: corporateMode,
       }),
     });
     
@@ -153,11 +164,15 @@ export async function getQueryEmbedding(
  * 
  * @param params - Параметры поиска
  * @param apiKey - API ключ для получения эмбеддинга запроса
+ * @param embeddingsBaseUrl - Базовый URL для API эмбеддингов (опционально)
+ * @param corporateMode - Корпоративный режим: отключает проверку SSL (опционально)
  * @returns Массив результатов поиска, отсортированных по релевантности
  */
 export async function searchSimilar(
   params: SearchParams,
-  apiKey: string
+  apiKey: string,
+  embeddingsBaseUrl?: string,
+  corporateMode?: boolean
 ): Promise<SearchResult[]> {
   const {
     query,
@@ -177,7 +192,7 @@ export async function searchSimilar(
   // ШАГ 1: Получить эмбеддинг запроса
   // =========================================================================
   
-  const queryEmbedding = await getQueryEmbedding(query, apiKey);
+  const queryEmbedding = await getQueryEmbedding(query, apiKey, embeddingsBaseUrl, corporateMode);
   
   if (!queryEmbedding) {
     console.error('[searchSimilar] Не удалось получить эмбеддинг запроса');
@@ -329,6 +344,9 @@ export async function quickTextSearch(
  * @param prompt - Текст промпта
  * @param response - Текст ответа
  * @param apiKey - API ключ
+ * @param embeddingsBaseUrl - Базовый URL для API эмбеддингов (опционально)
+ * @param corporateMode - Корпоративный режим: отключает проверку SSL (опционально)
+ * @param embeddingsModel - Модель эмбеддингов (опционально)
  * @returns true если успешно сохранено
  */
 export async function generateAndSaveEmbedding(
@@ -336,7 +354,10 @@ export async function generateAndSaveEmbedding(
   canvasId: string,
   prompt: string,
   response: string,
-  apiKey: string
+  apiKey: string,
+  embeddingsBaseUrl?: string,
+  corporateMode?: boolean,
+  embeddingsModel?: string
 ): Promise<boolean> {
   try {
     // Проверяем что есть данные для индексации
@@ -352,6 +373,8 @@ export async function generateAndSaveEmbedding(
     console.log(
       '[generateAndSaveEmbedding] Генерация эмбеддинга для ноды',
       nodeId,
+      'модель:',
+      embeddingsModel,
       'длина текста:',
       fullText.length
     );
@@ -365,6 +388,11 @@ export async function generateAndSaveEmbedding(
       body: JSON.stringify({
         text: fullText,
         apiKey: apiKey,
+        embeddingsBaseUrl: embeddingsBaseUrl,
+        // Модель эмбеддингов из настроек
+        model: embeddingsModel,
+        // Корпоративный режим для корпоративных сетей с SSL-инспекцией
+        corporateMode: corporateMode,
       }),
     });
     
@@ -415,14 +443,20 @@ interface NodeForIndexing {
  * @param canvasId - ID холста
  * @param nodes - Массив нод холста
  * @param apiKey - API ключ
+ * @param embeddingsBaseUrl - Базовый URL для API эмбеддингов (опционально)
  * @param onProgress - Callback для отслеживания прогресса
+ * @param corporateMode - Корпоративный режим: отключает проверку SSL (опционально)
+ * @param embeddingsModel - Модель эмбеддингов (опционально)
  * @returns Количество успешно проиндексированных карточек
  */
 export async function reindexCanvasCards(
   canvasId: string,
   nodes: NodeForIndexing[],
   apiKey: string,
-  onProgress?: (current: number, total: number) => void
+  embeddingsBaseUrl?: string,
+  onProgress?: (current: number, total: number) => void,
+  corporateMode?: boolean,
+  embeddingsModel?: string
 ): Promise<number> {
   // Фильтруем карточки с ответами (только их имеет смысл индексировать)
   const cardsToIndex = nodes.filter((node) => node.data.response);
@@ -432,7 +466,7 @@ export async function reindexCanvasCards(
     return 0;
   }
   
-  console.log(`[reindexCanvasCards] Начало индексации ${cardsToIndex.length} карточек`);
+  console.log(`[reindexCanvasCards] Начало индексации ${cardsToIndex.length} карточек, модель: ${embeddingsModel}`);
   
   let successCount = 0;
   
@@ -450,7 +484,10 @@ export async function reindexCanvasCards(
       canvasId,
       node.data.prompt,
       node.data.response || '',
-      apiKey
+      apiKey,
+      embeddingsBaseUrl,
+      corporateMode,
+      embeddingsModel
     );
     
     if (success) {

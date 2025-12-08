@@ -61,6 +61,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: () => ipcRenderer.invoke('is-electron'),
   
   /**
+   * Проверяет наличие обновлений приложения
+   * При наличии обновлений показывает диалог, при отсутствии - сообщение "Версия актуальная"
+   * 
+   * @returns {Promise<boolean>} - true если проверка запущена успешно
+   * 
+   * @example
+   * const success = await window.electronAPI.checkForUpdates();
+   * // Диалог покажется автоматически
+   */
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  
+  /**
    * Информация о платформе
    * Используется для адаптации горячих клавиш и UI
    * 
