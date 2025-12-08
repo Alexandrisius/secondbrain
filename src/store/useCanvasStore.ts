@@ -6,11 +6,17 @@
  * ПЕРСИСТЕНТНОСТЬ:
  * Данные автоматически сохраняются в JSON файл через API при каждом изменении.
  * Используется debounce (1 сек) для оптимизации количества запросов.
+ * 
+ * UNDO/REDO:
+ * Система истории реализована через zundo middleware.
+ * Поддерживает до 50 шагов истории с группировкой быстрых изменений (debounce 500ms).
+ * При undo/redo автоматически синхронизируются поисковые индексы.
  */
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { subscribeWithSelector } from 'zustand/middleware';
+import { temporal, type TemporalState } from 'zundo';
 import {
   applyNodeChanges,
   applyEdgeChanges,
@@ -31,6 +37,27 @@ import type {
 
 import { deleteEmbedding, syncEmbeddingsWithCanvas } from '@/lib/db/embeddings';
 import { getGlobalHybridEngine } from '@/lib/search';
+
+// =============================================================================
+// КОНСТАНТЫ ДЛЯ UNDO/REDO
+// =============================================================================
+
+/**
+ * Максимальное количество шагов в истории undo
+ */
+const HISTORY_LIMIT = 50;
+
+/**
+ * Задержка для группировки быстрых изменений в один шаг истории (мс)
+ * Например, быстрый ввод текста группируется в один шаг
+ */
+const HISTORY_DEBOUNCE = 500;
+
+/**
+ * Флаг: идёт ли операция undo/redo
+ * Используется для предотвращения удаления индексов при восстановлении состояния
+ */
+let isUndoRedoOperation = false;
 
 // =============================================================================
 // ТИПЫ ДЛЯ ПЕРСИСТЕНТНОСТИ
@@ -69,6 +96,21 @@ export interface CanvasStoreWithPersistence extends CanvasStore {
   setCurrentCanvasId: (canvasId: string | null) => void;
   /** Установить ID карточки для центрирования после загрузки холста */
   setSearchTargetNodeId: (nodeId: string | null) => void;
+}
+
+// =============================================================================
+// ТИПЫ ДЛЯ UNDO/REDO
+// =============================================================================
+
+/**
+ * Состояние, которое отслеживается историей undo/redo
+ * Включает только данные карточек и связей (без UI-состояний)
+ */
+export interface HistoryState {
+  /** Массив нод (карточек) */
+  nodes: NeuroNode[];
+  /** Массив связей между нодами */
+  edges: NeuroEdge[];
 }
 
 // =============================================================================
@@ -293,6 +335,239 @@ const createDefaultNodeData = (parentId?: string): NeuroNodeData => ({
 });
 
 // =============================================================================
+// ФУНКЦИИ ДЛЯ СИНХРОНИЗАЦИИ ИНДЕКСОВ ПРИ UNDO/REDO
+// =============================================================================
+
+/**
+ * Таймер для debounce синхронизации stale при undo/redo
+ */
+let staleCheckDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Задержка для проверки stale после undo/redo (мс)
+ */
+const STALE_CHECK_DEBOUNCE = 500;
+
+/**
+ * Синхронизировать поисковые индексы после операции undo/redo
+ * 
+ * Сравнивает предыдущее и текущее состояние:
+ * - Для удалённых карточек: удаляет из индексов
+ * - Для восстановленных карточек: добавляет в индексы (если есть response)
+ * 
+ * ВАЖНО: Эта функция вызывается с debounce для батчинга множественных операций
+ * 
+ * @param prevNodes - предыдущий массив нод
+ * @param currentNodes - текущий массив нод
+ */
+const syncIndexesAfterHistoryChange = (
+  prevNodes: NeuroNode[],
+  currentNodes: NeuroNode[]
+): void => {
+  // Создаём Set для быстрого поиска
+  const prevNodeIds = new Set(prevNodes.map((n) => n.id));
+  const currentNodeIds = new Set(currentNodes.map((n) => n.id));
+  
+  // Находим удалённые ноды (были в prev, нет в current)
+  const removedNodeIds = prevNodes
+    .filter((n) => !currentNodeIds.has(n.id))
+    .map((n) => n.id);
+  
+  // Находим восстановленные ноды (не было в prev, есть в current)
+  const restoredNodes = currentNodes.filter((n) => !prevNodeIds.has(n.id));
+  
+  // Получаем гибридный движок
+  const hybridEngine = getGlobalHybridEngine();
+  
+  // Удаляем из индексов удалённые ноды
+  for (const nodeId of removedNodeIds) {
+    // Удаляем из гибридного индекса (синхронно)
+    try {
+      const removed = hybridEngine.removeDocument(nodeId);
+      if (removed) {
+        console.log('[syncIndexes] Удалён документ из поискового индекса:', nodeId);
+      }
+    } catch (error) {
+      console.error('[syncIndexes] Ошибка удаления из поискового индекса:', error);
+    }
+    
+    // Удаляем эмбеддинг (асинхронно, fire-and-forget)
+    deleteEmbedding(nodeId).catch((error) => {
+      console.error('[syncIndexes] Ошибка удаления эмбеддинга:', error);
+    });
+  }
+  
+  // Добавляем в гибридный индекс восстановленные ноды (если есть response)
+  for (const node of restoredNodes) {
+    if (node.data.response) {
+      try {
+        hybridEngine.addDocument({
+          id: node.id,
+          text: `${node.data.prompt} ${node.data.response}`,
+          title: node.data.prompt,
+          preview: node.data.response.slice(0, 200),
+        });
+        console.log('[syncIndexes] Добавлен документ в поисковый индекс:', node.id);
+      } catch (error) {
+        console.error('[syncIndexes] Ошибка добавления в поисковый индекс:', error);
+      }
+    }
+  }
+  
+  if (removedNodeIds.length > 0 || restoredNodes.length > 0) {
+    console.log(
+      '[syncIndexes] Синхронизация завершена:',
+      `удалено ${removedNodeIds.length}, восстановлено ${restoredNodes.length}`
+    );
+  }
+};
+
+/**
+ * Запланировать проверку stale после undo/redo с debounce
+ * 
+ * Предотвращает множественные вызовы checkAllStaleNodes
+ * при быстрых последовательных операциях undo/redo
+ */
+const scheduleStaleCheck = (): void => {
+  // Отменяем предыдущий таймер
+  if (staleCheckDebounceTimer) {
+    clearTimeout(staleCheckDebounceTimer);
+  }
+  
+  // Планируем новую проверку
+  staleCheckDebounceTimer = setTimeout(() => {
+    const { checkAllStaleNodes } = useCanvasStore.getState();
+    checkAllStaleNodes();
+    console.log('[scheduleStaleCheck] Выполнена проверка stale после undo/redo');
+  }, STALE_CHECK_DEBOUNCE);
+};
+
+/**
+ * Поля ноды, которые НЕ должны влиять на историю undo/redo
+ * Это временные UI-поля, которые меняются при взаимодействии
+ */
+const HISTORY_IGNORED_NODE_FIELDS = ['selected', 'dragging', 'measured', 'resizing'] as const;
+
+/**
+ * Поля data ноды, которые НЕ должны влиять на историю undo/redo
+ * 
+ * ИГНОРИРУЮТСЯ (не вызывают запись в undo):
+ * - response, summary - генерация LLM (нельзя откатить)
+ * - isGenerating, isSummarizing - состояния процесса генерации
+ * - isStale, lastContextHash, isQuoteInvalidated - автоматически вычисляемые
+ * - isAnswerExpanded - UI состояние раскрытия ответа
+ * - isQuoteModeActive, quoteModeInitiatedByNodeId, pendingRegenerate - UI режим цитирования
+ * - quoteOriginalResponse - технический снимок для валидации цитаты
+ * 
+ * ОТСЛЕЖИВАЮТСЯ (вызывают запись в undo):
+ * - prompt - текст промпта (пользовательский ввод)
+ * - quote, quoteSourceNodeId - выбор цитаты (пользовательское действие)
+ * - mode - режим отображения карточки
+ * - parentNodeId - структура связей
+ * 
+ * СТРУКТУРНЫЕ ИЗМЕНЕНИЯ (отслеживаются отдельно):
+ * - Добавление/удаление нод (по количеству и ID)
+ * - Добавление/удаление связей (edges)
+ * - Перемещение нод (position) - в корне ноды
+ */
+const HISTORY_IGNORED_DATA_FIELDS = [
+  // Генерация LLM - не откатываемые операции
+  'response',
+  'summary',
+  // Состояния процессов генерации
+  'isGenerating',
+  'isSummarizing',
+  // Автоматически вычисляемые поля
+  'isStale',
+  'lastContextHash',
+  'isQuoteInvalidated',
+  'updatedAt', // Метка времени последнего обновления
+  'createdAt', // Метка времени создания
+  // UI состояния
+  'isAnswerExpanded',
+  'isQuoteModeActive',
+  'quoteModeInitiatedByNodeId',
+  'pendingRegenerate',
+  'mode', // Режим отображения карточки (автоматически меняется при генерации)
+  // Технические поля
+  'quoteOriginalResponse',
+] as const;
+
+/**
+ * Очистить ноду от UI-полей для сохранения в историю
+ * 
+ * @param node - исходная нода
+ * @returns нода без UI-полей
+ */
+const cleanNodeForHistory = (node: NeuroNode): NeuroNode => {
+  // Создаём копию без игнорируемых полей верхнего уровня
+  const cleanedNode: Record<string, unknown> = {};
+  
+  for (const key of Object.keys(node)) {
+    if (!HISTORY_IGNORED_NODE_FIELDS.includes(key as typeof HISTORY_IGNORED_NODE_FIELDS[number])) {
+      if (key === 'data') {
+        // Очищаем data от игнорируемых полей
+        const cleanedData: Record<string, unknown> = {};
+        for (const dataKey of Object.keys(node.data)) {
+          if (!HISTORY_IGNORED_DATA_FIELDS.includes(dataKey as typeof HISTORY_IGNORED_DATA_FIELDS[number])) {
+            cleanedData[dataKey] = node.data[dataKey as keyof typeof node.data];
+          }
+        }
+        cleanedNode[key] = cleanedData;
+      } else {
+        cleanedNode[key] = node[key as keyof typeof node];
+      }
+    }
+  }
+  
+  return cleanedNode as NeuroNode;
+};
+
+/**
+ * Сравнение состояний для истории
+ * Возвращает true если состояния эквивалентны (не нужно создавать новую запись в истории)
+ * 
+ * @param pastState - предыдущее состояние
+ * @param currentState - текущее состояние
+ * @returns true если состояния эквивалентны
+ */
+const areStatesEqual = (
+  pastState: HistoryState,
+  currentState: HistoryState
+): boolean => {
+  // Быстрая проверка по количеству
+  if (pastState.nodes.length !== currentState.nodes.length) return false;
+  if (pastState.edges.length !== currentState.edges.length) return false;
+  
+  // Проверка edges (простое сравнение по ID)
+  const pastEdgeIds = new Set(pastState.edges.map((e) => e.id));
+  const currentEdgeIds = new Set(currentState.edges.map((e) => e.id));
+  
+  for (const id of pastEdgeIds) {
+    if (!currentEdgeIds.has(id)) return false;
+  }
+  for (const id of currentEdgeIds) {
+    if (!pastEdgeIds.has(id)) return false;
+  }
+  
+  // Проверка nodes (без UI-полей)
+  const pastNodesMap = new Map(pastState.nodes.map((n) => [n.id, n]));
+  
+  for (const currentNode of currentState.nodes) {
+    const pastNode = pastNodesMap.get(currentNode.id);
+    if (!pastNode) return false;
+    
+    // Сравниваем очищенные от UI-полей ноды
+    const cleanedPast = JSON.stringify(cleanNodeForHistory(pastNode));
+    const cleanedCurrent = JSON.stringify(cleanNodeForHistory(currentNode));
+    
+    if (cleanedPast !== cleanedCurrent) return false;
+  }
+  
+  return true;
+};
+
+// =============================================================================
 // НАЧАЛЬНОЕ СОСТОЯНИЕ
 // =============================================================================
 
@@ -325,8 +600,100 @@ const initialEdges: NeuroEdge[] = [];
 let batchLevels: string[][] = [];
 
 // =============================================================================
-// ZUSTAND STORE
+// ZUSTAND STORE С ПОДДЕРЖКОЙ UNDO/REDO
 // =============================================================================
+
+/**
+ * Debounce с pause/resume для точного контроля истории
+ * 
+ * Проблема: при drag карточки генерируется много событий, и нам нужно
+ * записать только одно изменение (исходное → финальное).
+ * 
+ * Решение:
+ * 1. При первом изменении в серии - ставим историю на ПАУЗУ
+ * 2. Во время drag - изменения происходят, но в историю НЕ записываются
+ * 3. После паузы (delay) - СНИМАЕМ паузу и вызываем handleSet
+ * 4. Zundo запишет финальное состояние, сохранив исходное как предыдущее
+ * 
+ * Это позволяет создать ровно 1 запись в истории за одно перемещение.
+ */
+let historyPauseTimeout: ReturnType<typeof setTimeout> | null = null;
+let isHistoryPausedForDrag = false;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let pendingState: HistoryState | null = null; // Используется для отладки
+let pendingHandleSet: (() => void) | null = null;
+
+/**
+ * Создаёт обёртку над handleSet с логикой debounce через pause/resume
+ * 
+ * @param handleSet - Функция zundo для записи состояния в историю
+ * @param delay - Задержка в мс перед записью в историю
+ * @returns Функция-обёртка
+ * 
+ * NOTE: Используем any для совместимости с zundo v2.3.0, где сигнатура handleSet
+ * отличается от документации. Логика работает корректно.
+ */
+const setupHistoryPauseDebounce = (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handleSet: any,
+  delay: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (...args: any[]) => {
+    const state = args[2] as HistoryState; // currentState is 3rd argument in zundo v2
+    
+    // Сохраняем последнее состояние и аргументы
+    pendingState = state;
+    pendingHandleSet = () => handleSet(...args);
+    
+    // При первом изменении в серии - ставим на паузу
+    if (!isHistoryPausedForDrag) {
+      try {
+        useCanvasStore.temporal.getState().pause();
+        isHistoryPausedForDrag = true;
+      } catch (e) {
+        console.error('[History] Ошибка паузы:', e);
+      }
+    }
+    
+    // Сбрасываем таймер
+    if (historyPauseTimeout) {
+      clearTimeout(historyPauseTimeout);
+    }
+    
+    // Планируем снятие паузы и запись
+    historyPauseTimeout = setTimeout(() => {
+      if (isHistoryPausedForDrag) {
+        try {
+          // Снимаем паузу
+          useCanvasStore.temporal.getState().resume();
+          isHistoryPausedForDrag = false;
+          
+          // Записываем финальное состояние
+          if (pendingHandleSet) {
+            pendingHandleSet();
+          }
+        } catch (e) {
+          console.error('[History] Ошибка resume:', e);
+        }
+      }
+      historyPauseTimeout = null;
+      pendingState = null;
+      pendingHandleSet = null;
+    }, delay);
+  };
+};
+
+/**
+ * Предыдущее состояние для синхронизации индексов
+ * Хранится в модуле для доступа из onSave callback
+ * 
+ * @note Переменная присваивается в onSave callback и сбрасывается при загрузке/очистке.
+ *       Используется для отслеживания изменений при будущих расширениях.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let previousHistoryState: HistoryState | null = null;
 
 /**
  * Основной store для управления холстом NeuroCanvas
@@ -339,8 +706,14 @@ let batchLevels: string[][] = [];
  * - loadFromFile() - загружает данные при старте
  * - saveToFile() - сохраняет вручную
  * - Автосохранение через subscribe (debounce 1 сек)
+ * 
+ * UNDO/REDO:
+ * - temporal middleware отслеживает изменения nodes и edges
+ * - Используется debounce 500ms для группировки быстрых изменений
+ * - При undo/redo синхронизируются поисковые индексы
  */
 export const useCanvasStore = create<CanvasStoreWithPersistence>()(
+  temporal(
   subscribeWithSelector(
     immer((set, get) => ({
       // =========================================================================
@@ -656,7 +1029,16 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
       // =========================================================================
       // ОЧИСТКА ПОИСКОВЫХ ИНДЕКСОВ
       // Удаляем данные карточки из всех поисковых индексов
+      // 
+      // ВАЖНО: При операциях undo/redo НЕ удаляем из индексов!
+      // Синхронизация индексов происходит отдельно через syncIndexesAfterHistoryChange
       // =========================================================================
+      
+      // Пропускаем удаление из индексов если идёт операция undo/redo
+      if (isUndoRedoOperation) {
+        console.log('[removeNode] Пропуск удаления из индексов (undo/redo операция)');
+        return;
+      }
       
       // 1. Удаляем эмбеддинг из IndexedDB (асинхронно, fire-and-forget)
       // Это необходимо для корректной работы семантического поиска
@@ -704,7 +1086,13 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
     onNodesChange: (changes: NodeChange<NeuroNode>[]) => {
       // =========================================================================
       // ОБРАБОТКА УДАЛЕНИЙ: Очищаем поисковые индексы для удаляемых нод
+      // 
+      // ВАЖНО: При операциях undo/redo НЕ удаляем из индексов!
+      // Синхронизация индексов происходит отдельно через syncIndexesAfterHistoryChange
       // =========================================================================
+      
+      // Пропускаем удаление из индексов если идёт операция undo/redo
+      if (!isUndoRedoOperation) {
       const removedNodeIds: string[] = [];
       
       for (const change of changes) {
@@ -732,6 +1120,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             }
           } catch (error) {
             console.error('[onNodesChange] Ошибка удаления из поискового индекса:', error);
+            }
           }
         }
       }
@@ -2027,6 +2416,18 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
         return;
       }
       
+      // =====================================================================
+      // ПАУЗА ИСТОРИИ UNDO/REDO
+      // Ставим на паузу ПЕРЕД загрузкой, чтобы рендеринг карточек
+      // не записывался в историю как действие
+      // =====================================================================
+      try {
+        useCanvasStore.temporal.getState().pause();
+        console.log('[Canvas Store] История поставлена на паузу');
+      } catch (error) {
+        console.error('[Canvas Store] Ошибка паузы истории:', error);
+      }
+      
       // Устанавливаем флаг загрузки и обновляем currentCanvasId
       set((state) => {
         state.isLoading = true;
@@ -2065,6 +2466,24 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
         console.log(`[Canvas Store] Загружен холст ${targetCanvasId}: ${loadedNodes.length} нод`);
         
         // =====================================================================
+        // ОЧИСТКА И ВОЗОБНОВЛЕНИЕ ИСТОРИИ UNDO/REDO
+        // Очищаем историю и возобновляем запись после загрузки
+        // =====================================================================
+        try {
+          useCanvasStore.temporal.getState().clear();
+          previousHistoryState = null;
+          // Небольшая задержка перед возобновлением, чтобы React успел отрендерить
+          setTimeout(() => {
+            useCanvasStore.temporal.getState().resume();
+            console.log('[Canvas Store] История очищена и возобновлена');
+          }, 100);
+        } catch (error) {
+          console.error('[Canvas Store] Ошибка очистки истории:', error);
+          // Всё равно возобновляем историю при ошибке
+          useCanvasStore.temporal.getState().resume();
+        }
+        
+        // =====================================================================
         // СИНХРОНИЗАЦИЯ ПОИСКОВЫХ ИНДЕКСОВ
         // Удаляем эмбеддинги для карточек, которых больше нет на холсте
         // Это предотвращает появление "призраков" в поиске
@@ -2080,6 +2499,13 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           state.isLoading = false;
           state.persistError = 'Не удалось загрузить данные холста';
         });
+        
+        // Возобновляем историю при ошибке загрузки
+        try {
+          useCanvasStore.temporal.getState().resume();
+        } catch (resumeError) {
+          console.error('[Canvas Store] Ошибка возобновления истории:', resumeError);
+        }
       }
     },
 
@@ -2145,8 +2571,59 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
         state.persistError = null;
       });
     },
-  })))
-);
+  }))),
+  // ===========================================================================
+  // ОПЦИИ TEMPORAL MIDDLEWARE (UNDO/REDO)
+  // ===========================================================================
+  {
+    /**
+     * Максимальное количество шагов в истории
+     */
+    limit: HISTORY_LIMIT,
+    
+    /**
+     * Выбираем только nodes и edges для отслеживания
+     * ВАЖНО: Сохраняем ПОЛНЫЕ ноды (включая response), чтобы при undo/redo
+     * восстанавливалось полное состояние карточек.
+     * Фильтрация полей происходит только в areStatesEqual для сравнения.
+     * 
+     * КРИТИЧНО: Используем глубокое копирование чтобы избежать проблем с immer proxy!
+     * Без этого при undo позиции карточек не восстанавливаются корректно.
+     */
+    partialize: (state): HistoryState => ({
+      nodes: JSON.parse(JSON.stringify(state.nodes)),
+      edges: JSON.parse(JSON.stringify(state.edges)),
+    }),
+    
+    /**
+     * Функция сравнения состояний
+     * Возвращает true если состояния эквивалентны (не создавать новую запись)
+     */
+    equality: areStatesEqual,
+    
+    /**
+     * Callback при сохранении состояния в историю
+     * Используется для синхронизации поисковых индексов
+     */
+    onSave: (pastState) => {
+      // Сохраняем предыдущее состояние для последующей синхронизации
+      previousHistoryState = pastState as HistoryState;
+    },
+    
+    /**
+     * Модификация handleSet для группировки быстрых изменений
+     * 
+     * Pause/Resume стратегия:
+     * - При первом изменении в серии - ставим на паузу
+     * - Во время серии изменений - ничего не записывается
+     * - После паузы (delay) - снимаем паузу и записываем финальное состояние
+     * 
+     * Создаёт ровно 1 запись в истории за одно перемещение.
+     */
+    handleSet: (handleSet) => 
+      setupHistoryPauseDebounce(handleSet, HISTORY_DEBOUNCE),
+  }
+));
 
 // =============================================================================
 // СЕЛЕКТОРЫ (для оптимизации подписок)
@@ -2490,4 +2967,154 @@ export const markInitialDataLoaded = () => {
  */
 export const resetInitialDataFlag = () => {
   hasLoadedInitialData = false;
+};
+
+// =============================================================================
+// ЭКСПОРТ TEMPORAL STORE (UNDO/REDO)
+// =============================================================================
+
+/**
+ * Получить temporal store (историю состояний) напрямую
+ * 
+ * Возвращает объект с методами:
+ * - undo(): void - отменить последнее изменение
+ * - redo(): void - повторить отменённое изменение
+ * - clear(): void - очистить историю
+ * - pastStates: HistoryState[] - предыдущие состояния
+ * - futureStates: HistoryState[] - отменённые состояния для redo
+ * 
+ * @note Для React-компонентов используйте performUndo/performRedo функции,
+ *       которые также синхронизируют поисковые индексы.
+ */
+export const getTemporalStore = (): TemporalState<HistoryState> => {
+  return useCanvasStore.temporal.getState();
+};
+
+/**
+ * Выполнить операцию Undo (отмена)
+ * 
+ * Восстанавливает предыдущее состояние и синхронизирует поисковые индексы.
+ * Блокирует удаление индексов во время операции.
+ */
+export const performUndo = (): void => {
+  const temporalStore = useCanvasStore.temporal.getState();
+  
+  // Проверяем есть ли что отменять
+  if (temporalStore.pastStates.length === 0) {
+    console.log('[performUndo] Нет состояний для отмены');
+    return;
+  }
+  
+  // Сохраняем текущее состояние для синхронизации индексов
+  const currentState = useCanvasStore.getState();
+  const prevNodes = [...currentState.nodes];
+  
+  // Устанавливаем флаг операции undo/redo
+  isUndoRedoOperation = true;
+  
+  try {
+    // Выполняем undo
+    temporalStore.undo();
+    
+    // Синхронизируем индексы
+    const newState = useCanvasStore.getState();
+    syncIndexesAfterHistoryChange(prevNodes, newState.nodes);
+    
+    // Планируем проверку stale
+    scheduleStaleCheck();
+    
+    console.log('[performUndo] Отмена выполнена успешно');
+  } finally {
+    // Сбрасываем флаг
+    isUndoRedoOperation = false;
+  }
+};
+
+/**
+ * Выполнить операцию Redo (повтор)
+ * 
+ * Восстанавливает следующее состояние и синхронизирует поисковые индексы.
+ * Блокирует удаление индексов во время операции.
+ */
+export const performRedo = (): void => {
+  const temporalStore = useCanvasStore.temporal.getState();
+  
+  // Проверяем есть ли что повторять
+  if (temporalStore.futureStates.length === 0) {
+    console.log('[performRedo] Нет состояний для повтора');
+    return;
+  }
+  
+  // Сохраняем текущее состояние для синхронизации индексов
+  const currentState = useCanvasStore.getState();
+  const prevNodes = [...currentState.nodes];
+  
+  // Устанавливаем флаг операции undo/redo
+  isUndoRedoOperation = true;
+  
+  try {
+    // Выполняем redo
+    temporalStore.redo();
+    
+    // Синхронизируем индексы
+    const newState = useCanvasStore.getState();
+    syncIndexesAfterHistoryChange(prevNodes, newState.nodes);
+    
+    // Планируем проверку stale
+    scheduleStaleCheck();
+    
+    console.log('[performRedo] Повтор выполнен успешно');
+  } finally {
+    // Сбрасываем флаг
+    isUndoRedoOperation = false;
+  }
+};
+
+/**
+ * Очистить историю состояний
+ * 
+ * Сбрасывает pastStates и futureStates.
+ * Используется при смене холста или загрузке нового файла.
+ */
+export const clearHistory = (): void => {
+  const temporalStore = useCanvasStore.temporal.getState();
+  temporalStore.clear();
+  previousHistoryState = null;
+  console.log('[clearHistory] История очищена');
+};
+
+/**
+ * Проверить возможность выполнения Undo
+ */
+export const canUndo = (): boolean => {
+  return useCanvasStore.temporal.getState().pastStates.length > 0;
+};
+
+/**
+ * Проверить возможность выполнения Redo
+ */
+export const canRedo = (): boolean => {
+  return useCanvasStore.temporal.getState().futureStates.length > 0;
+};
+
+/**
+ * Получить количество шагов в истории для Undo
+ */
+export const getUndoCount = (): number => {
+  return useCanvasStore.temporal.getState().pastStates.length;
+};
+
+/**
+ * Получить количество шагов в истории для Redo
+ */
+export const getRedoCount = (): number => {
+  return useCanvasStore.temporal.getState().futureStates.length;
+};
+
+/**
+ * Проверить идёт ли операция undo/redo
+ * Используется в removeNode для предотвращения удаления индексов
+ */
+export const isHistoryOperation = (): boolean => {
+  return isUndoRedoOperation;
 };

@@ -23,8 +23,17 @@ import {
   type NodeTypes,
   BackgroundVariant,
 } from '@xyflow/react';
-import { Save, RefreshCw, X, Loader2 } from 'lucide-react';
-import { useCanvasStore, markInitialDataLoaded } from '@/store/useCanvasStore';
+import { Save, RefreshCw, X, Loader2, Undo2, Redo2 } from 'lucide-react';
+import { 
+  useCanvasStore, 
+  markInitialDataLoaded,
+  performUndo,
+  performRedo,
+  canUndo,
+  canRedo,
+  getUndoCount,
+  getRedoCount,
+} from '@/store/useCanvasStore';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { NeuroNode } from './NeuroNode';
 import { SettingsModal, SettingsButton } from './SettingsModal';
@@ -194,6 +203,22 @@ export function CanvasContent() {
    * Используется для определения направления выделения
    */
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  // ===========================================================================
+  // СОСТОЯНИЕ UNDO/REDO
+  // ===========================================================================
+  
+  /**
+   * Количество доступных шагов для Undo
+   * Обновляется при изменениях в истории
+   */
+  const [undoSteps, setUndoSteps] = useState(0);
+  
+  /**
+   * Количество доступных шагов для Redo
+   * Обновляется при изменениях в истории
+   */
+  const [redoSteps, setRedoSteps] = useState(0);
 
   // ===========================================================================
   // ZUSTAND STORE
@@ -916,6 +941,98 @@ export function CanvasContent() {
   }, []);
 
   // ===========================================================================
+  // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК CTRL+Z / CTRL+Y (UNDO/REDO)
+  // ===========================================================================
+  
+  /**
+   * Глобальный обработчик Ctrl+Z / Cmd+Z для Undo
+   * и Ctrl+Y / Cmd+Y или Ctrl+Shift+Z / Cmd+Shift+Z для Redo
+   * 
+   * ВАЖНО:
+   * - Работает только когда фокус НЕ в текстовом поле
+   * - Используем event.code для независимости от раскладки
+   */
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Проверяем что не редактируем текст
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTextInput = 
+        activeElement?.tagName === 'INPUT' ||
+        activeElement?.tagName === 'TEXTAREA' ||
+        activeElement?.isContentEditable === true;
+      
+      // Если фокус в текстовом поле - пропускаем (браузер сам обработает undo/redo)
+      if (isTextInput) {
+        return;
+      }
+      
+      // Проверяем модификаторы (Ctrl или Cmd)
+      const isMod = event.ctrlKey || event.metaKey;
+      if (!isMod) return;
+      
+      // =======================================================================
+      // UNDO: Ctrl+Z / Cmd+Z
+      // =======================================================================
+      if (event.code === 'KeyZ' && !event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        if (canUndo()) {
+          performUndo();
+          // Обновляем состояние после операции
+          setUndoSteps(getUndoCount());
+          setRedoSteps(getRedoCount());
+          console.log('[CanvasContent] Ctrl+Z: Undo выполнен');
+        }
+        return;
+      }
+      
+      // =======================================================================
+      // REDO: Ctrl+Y / Cmd+Y или Ctrl+Shift+Z / Cmd+Shift+Z
+      // =======================================================================
+      if (event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        if (canRedo()) {
+          performRedo();
+          // Обновляем состояние после операции
+          setUndoSteps(getUndoCount());
+          setRedoSteps(getRedoCount());
+          console.log('[CanvasContent] Ctrl+Y/Ctrl+Shift+Z: Redo выполнен');
+        }
+        return;
+      }
+    };
+    
+    // Используем capture phase для перехвата до других обработчиков
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
+  
+  // ===========================================================================
+  // ОБНОВЛЕНИЕ СОСТОЯНИЯ UNDO/REDO ПРИ ИЗМЕНЕНИЯХ
+  // ===========================================================================
+  
+  /**
+   * Подписка на изменения в store для обновления счётчиков undo/redo
+   * Используем интервал для периодической проверки (простой и надёжный способ)
+   */
+  useEffect(() => {
+    // Начальное обновление
+    setUndoSteps(getUndoCount());
+    setRedoSteps(getRedoCount());
+    
+    // Периодическое обновление каждые 500ms
+    const interval = setInterval(() => {
+      setUndoSteps(getUndoCount());
+      setRedoSteps(getRedoCount());
+    }, 500);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДВОЙНОГО КЛИКА
   // ===========================================================================
   
@@ -1282,8 +1399,64 @@ export function CanvasContent() {
         onSelectResult={handleSearchResultSelect}
       />
 
-      {/* ----- ИНДИКАТОР СОХРАНЕНИЯ И КНОПКА РУЧНОГО СОХРАНЕНИЯ ----- */}
+      {/* ----- ИНДИКАТОР СОХРАНЕНИЯ, UNDO/REDO И КНОПКА РУЧНОГО СОХРАНЕНИЯ ----- */}
       <div className="absolute top-4 left-4 z-50 pointer-events-auto flex items-center gap-2">
+        {/* Кнопки Undo/Redo */}
+        <div className="flex items-center gap-1 px-2 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">
+          {/* Кнопка Undo */}
+          <button
+            onClick={() => {
+              if (canUndo()) {
+                performUndo();
+                setUndoSteps(getUndoCount());
+                setRedoSteps(getRedoCount());
+              }
+            }}
+            disabled={undoSteps === 0}
+            className={`
+              p-1.5 rounded-md transition-all duration-200 flex items-center gap-1
+              ${undoSteps > 0
+                ? 'text-foreground hover:bg-accent cursor-pointer'
+                : 'text-muted-foreground/40 cursor-not-allowed'
+              }
+            `}
+            title={`${t.canvas.undo || 'Undo'} (Ctrl+Z)${undoSteps > 0 ? ` · ${undoSteps}` : ''}`}
+          >
+            <Undo2 className="w-4 h-4" />
+            {undoSteps > 0 && (
+              <span className="text-xs font-medium min-w-[1ch]">{undoSteps}</span>
+            )}
+          </button>
+          
+          {/* Разделитель */}
+          <div className="w-px h-4 bg-border" />
+          
+          {/* Кнопка Redo */}
+          <button
+            onClick={() => {
+              if (canRedo()) {
+                performRedo();
+                setUndoSteps(getUndoCount());
+                setRedoSteps(getRedoCount());
+              }
+            }}
+            disabled={redoSteps === 0}
+            className={`
+              p-1.5 rounded-md transition-all duration-200 flex items-center gap-1
+              ${redoSteps > 0
+                ? 'text-foreground hover:bg-accent cursor-pointer'
+                : 'text-muted-foreground/40 cursor-not-allowed'
+              }
+            `}
+            title={`${t.canvas.redo || 'Redo'} (Ctrl+Y)${redoSteps > 0 ? ` · ${redoSteps}` : ''}`}
+          >
+            <Redo2 className="w-4 h-4" />
+            {redoSteps > 0 && (
+              <span className="text-xs font-medium min-w-[1ch]">{redoSteps}</span>
+            )}
+          </button>
+        </div>
+        
         {/* Кнопка пакетной регенерации (показывается только если есть stale ноды или идёт регенерация) */}
         {(staleNodesCount > 0 || isBatchRegenerating) && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">

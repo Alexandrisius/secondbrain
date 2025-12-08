@@ -183,6 +183,14 @@ export const en: TranslationKeys = {
     // Settings button
     openSettings: 'Open settings',
     settings: 'Settings',
+    
+    // Undo/Redo
+    undo: 'Undo',
+    redo: 'Redo',
+    undoTooltip: 'Undo last action',
+    redoTooltip: 'Redo undone action',
+    noUndoAvailable: 'Nothing to undo',
+    noRedoAvailable: 'Nothing to redo',
   },
   
   // ===========================================================================

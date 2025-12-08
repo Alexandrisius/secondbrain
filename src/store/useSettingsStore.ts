@@ -564,10 +564,11 @@ export const useSettingsStore = create<SettingsStore>()(
         
         // Миграция с версии 4 на версию 5: добавляем корпоративный режим
         if (version < 5) {
+          const provider = (state.apiProvider || DEFAULT_PROVIDER) as ApiProvider;
           return {
             ...state,
             corporateMode: false,
-            embeddingsModel: API_PROVIDERS[state.apiProvider || DEFAULT_PROVIDER].defaultEmbeddingsModel,
+            embeddingsModel: API_PROVIDERS[provider].defaultEmbeddingsModel,
           };
         }
         
