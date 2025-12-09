@@ -26,80 +26,80 @@ export type NodeMode = 'input' | 'result';
 export interface NeuroNodeData {
   /** Текст промпта, введённый пользователем */
   prompt: string;
-  
+
   /** Ответ от AI (null если ещё не сгенерирован) */
   response: string | null;
-  
+
   /**
    * Краткая суть ответа (2-3 предложения)
    * Используется для передачи контекста внукам, правнукам и т.д.
    * Не отображается в UI, только для внутреннего использования
    */
   summary: string | null;
-  
+
   /** Флаг: идёт ли сейчас генерация основного ответа */
   isGenerating: boolean;
-  
+
   /** Флаг: идёт ли сейчас генерация summary */
   isSummarizing: boolean;
-  
+
   /** Флаг: устарели ли данные (родитель был изменён или удалён) */
   isStale: boolean;
-  
+
   /** Флаг: раскрыта ли ответная часть карточки (слайдер) */
   isAnswerExpanded: boolean;
-  
+
   // =============================================================================
   // ПОЛЯ ДЛЯ ЦИТИРОВАНИЯ
   // =============================================================================
-  
+
   /**
    * Текст цитаты из родительской ноды
    * null если это не цитатная карточка (обычная дочерняя карточка)
    */
   quote: string | null;
-  
+
   /**
    * ID ноды-источника цитаты
    * Указывает на ноду, из ответа которой была взята цитата
    */
   quoteSourceNodeId: string | null;
-  
+
   /**
    * Исходный response ноды-источника на момент создания цитаты
    * Используется для сравнения и определения изменений
    * Если response изменился - цитата становится неактуальной
    */
   quoteOriginalResponse: string | null;
-  
+
   /**
    * Флаг: цитата стала неактуальной
    * true если исходный текст response изменился после создания цитаты
    * Такие карточки подсвечиваются красным и требуют повторного выделения цитаты
    */
   isQuoteInvalidated: boolean;
-  
+
   /**
    * Флаг: активен ли режим цитирования в этой карточке
    * Используется для активации режима цитирования из дочерней карточки
    * когда пользователь нажимает "Выделить новую цитату"
    */
   isQuoteModeActive?: boolean;
-  
+
   /**
    * ID дочерней карточки, которая инициировала режим цитирования
    * Когда пользователь выделит новую цитату, она будет обновлена в этой карточке
    * null если режим цитирования был инициирован локально (для создания новой карточки)
    */
   quoteModeInitiatedByNodeId?: string | null;
-  
+
   /**
    * Флаг: требуется ли перегенерация ответа
    * Устанавливается в true после обновления цитаты в дочерней карточке
    * Компонент NeuroNode автоматически запускает генерацию при этом флаге
    */
   pendingRegenerate?: boolean;
-  
+
   /**
    * Хэш контекста на момент последней генерации ответа
    * 
@@ -109,29 +109,35 @@ export interface NeuroNodeData {
    * - Это позволяет "откатить" изменения без потери актуальности карточки
    */
   lastContextHash: string | null;
-  
+
+  /**
+   * Список ID нод, которые пользователь вручную исключил из контекста
+   * Эти ноды НЕ будут участвовать в формировании контекста для LLM
+   */
+  excludedContextNodeIds?: string[];
+
   /** Текущий режим отображения ноды */
   mode: NodeMode;
-  
+
   /** ID родительской ноды (для отслеживания зависимостей) */
   parentId?: string;
-  
+
   /**
    * Массив ID родительских нод (для карточек с несколькими родителями)
    * Используется когда карточка создаётся от нескольких выделенных карточек через Tab
    * Если указан - имеет приоритет над parentId при построении контекста
    */
   parentIds?: string[];
-  
+
   /** Ширина карточки (для resize) */
   width?: number;
-  
+
   /** Временная метка создания */
   createdAt: number;
-  
+
   /** Временная метка последнего обновления */
   updatedAt: number;
-  
+
   /**
    * Index signature для совместимости с React Flow
    * React Flow требует чтобы data имел тип Record<string, unknown>
@@ -165,36 +171,36 @@ export type NeuroEdge = Edge;
 export interface CanvasState {
   /** Массив всех нод на холсте */
   nodes: NeuroNode[];
-  
+
   /** Массив всех связей между нодами */
   edges: NeuroEdge[];
-  
+
   /** ID текущей выбранной ноды (для операций) */
   selectedNodeId: string | null;
-  
+
   /**
    * ID ноды, которая ожидает фокус на textarea
    * Используется для автофокуса при создании новой карточки через Tab
    * После фокусировки сбрасывается в null
    */
   pendingFocusNodeId: string | null;
-  
+
   /**
    * ID ноды, на которую нужно центрировать холст
    * Используется после создания новой карточки
    * После центрирования сбрасывается в null
    */
   pendingCenterNodeId: string | null;
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
   // ===========================================================================
-  
+
   /**
    * Флаг: идёт ли пакетная регенерация устаревших карточек
    */
   isBatchRegenerating: boolean;
-  
+
   /**
    * Прогресс пакетной регенерации
    */
@@ -208,7 +214,7 @@ export interface CanvasState {
     /** ID карточек на текущем уровне (ожидают завершения) */
     currentLevelNodeIds: string[];
   } | null;
-  
+
   /**
    * Флаг для отмены пакетной регенерации
    * Проверяется перед переходом к следующему уровню
@@ -231,58 +237,58 @@ export interface CanvasActions {
    * @returns ID созданной ноды
    */
   addNode: (position: { x: number; y: number }, parentId?: string) => string;
-  
+
   /**
    * Обновить данные существующей ноды
    * @param nodeId - ID ноды для обновления
    * @param data - частичные данные для обновления
    */
   updateNodeData: (nodeId: string, data: Partial<NeuroNodeData>) => void;
-  
+
   /**
    * Установить флаг "устаревшей" ноды
    * @param nodeId - ID ноды
    * @param isStale - новое значение флага
    */
   setNodeStale: (nodeId: string, isStale: boolean) => void;
-  
+
   /**
    * Пометить всех потомков ноды как устаревшие
    * Используется при редактировании промпта родителя
    * @param nodeId - ID родительской ноды
    */
   markChildrenStale: (nodeId: string) => void;
-  
+
   /**
    * Удалить ноду с холста
    * @param nodeId - ID ноды для удаления
    */
   removeNode: (nodeId: string) => void;
-  
+
   /**
    * Установить выбранную ноду
    * @param nodeId - ID ноды или null для сброса выбора
    */
   setSelectedNode: (nodeId: string | null) => void;
-  
+
   /**
    * Callback для React Flow: обработка изменений нод
    * (перемещение, выделение и т.д.)
    */
   onNodesChange: (changes: import('@xyflow/react').NodeChange<NeuroNode>[]) => void;
-  
+
   /**
    * Callback для React Flow: обработка изменений связей
    * (создание, удаление связей)
    */
   onEdgesChange: (changes: import('@xyflow/react').EdgeChange<NeuroEdge>[]) => void;
-  
+
   /**
    * Callback для React Flow: обработка создания новой связи
    * (соединение двух нод)
    */
   onConnect: (connection: import('@xyflow/react').Connection) => void;
-  
+
   /**
    * Создать связанную ноду справа от указанной
    * Используется для быстрого создания карточки по Tab
@@ -291,7 +297,7 @@ export interface CanvasActions {
    * @returns ID созданной ноды
    */
   createLinkedNodeRight: (nodeId: string) => string | null;
-  
+
   /**
    * Создать ноду от нескольких родителей
    * 
@@ -306,18 +312,18 @@ export interface CanvasActions {
    * @returns ID созданной ноды или null если родители не найдены
    */
   createNodeFromMultipleParents: (nodeIds: string[]) => string | null;
-  
+
   /**
    * Установить ID ноды для отложенного фокуса
    * @param nodeId - ID ноды или null для сброса
    */
   setPendingFocusNodeId: (nodeId: string | null) => void;
-  
+
   /**
    * Сбросить pendingFocusNodeId (вызывается после успешного фокуса)
    */
   clearPendingFocus: () => void;
-  
+
   /**
    * Создать "сестринскую" ноду (от того же родителя)
    * Используется для альтернативных веток размышления (Ctrl+Enter)
@@ -326,28 +332,33 @@ export interface CanvasActions {
    * @returns ID созданной ноды или null
    */
   createSiblingNode: (nodeId: string) => string | null;
-  
+
   /**
    * Установить ID ноды для центрирования холста
    * @param nodeId - ID ноды или null для сброса
    */
   setPendingCenterNodeId: (nodeId: string | null) => void;
-  
+
   /**
    * Сбросить pendingCenterNodeId (вызывается после центрирования)
    */
   clearPendingCenter: () => void;
-  
+
   /**
    * Переключить раскрытие/сворачивание ответной части карточки
    * @param nodeId - ID ноды для переключения
    */
   toggleNodeAnswerExpanded: (nodeId: string) => void;
-  
+
+  /**
+   * Переключить раскрытие/сворачивание ответной части для ВСЕХ выделенных карточек
+   */
+  toggleSelectedNodesAnswerExpanded: () => void;
+
   // =============================================================================
   // ЭКШЕНЫ ДЛЯ ЦИТИРОВАНИЯ
   // =============================================================================
-  
+
   /**
    * Создать карточку на основе цитаты из ответа
    * 
@@ -362,7 +373,7 @@ export interface CanvasActions {
    * @returns ID созданной ноды или null если исходная нода не найдена
    */
   createQuoteNode: (sourceNodeId: string, quoteText: string) => string | null;
-  
+
   /**
    * Сбросить инвалидацию цитаты
    * 
@@ -372,7 +383,7 @@ export interface CanvasActions {
    * @param nodeId - ID ноды для сброса
    */
   clearQuoteInvalidation: (nodeId: string) => void;
-  
+
   /**
    * Обновить цитату в существующей карточке
    * 
@@ -385,12 +396,12 @@ export interface CanvasActions {
    * @param originalResponse - текущий response источника
    */
   updateQuote: (
-    nodeId: string, 
-    quoteText: string, 
-    sourceNodeId: string, 
+    nodeId: string,
+    quoteText: string,
+    sourceNodeId: string,
     originalResponse: string
   ) => void;
-  
+
   /**
    * Инициировать режим выбора цитаты в родительской карточке
    * 
@@ -400,7 +411,7 @@ export interface CanvasActions {
    * @param quoteNodeId - ID дочерней карточки с инвалидированной цитатой
    */
   initiateQuoteSelectionInParent: (quoteNodeId: string) => void;
-  
+
   /**
    * Сбросить режим цитирования в ноде
    * 
@@ -409,11 +420,11 @@ export interface CanvasActions {
    * @param nodeId - ID ноды для сброса
    */
   clearQuoteModeActive: (nodeId: string) => void;
-  
+
   // =============================================================================
   // ЭКШЕНЫ ДЛЯ АВТОМАТИЧЕСКОГО СНЯТИЯ STALE (CONTEXT HASH)
   // =============================================================================
-  
+
   /**
    * Вычислить и сохранить хэш контекста для ноды
    * 
@@ -423,7 +434,7 @@ export interface CanvasActions {
    * @param nodeId - ID ноды для которой сохранить хэш
    */
   saveContextHash: (nodeId: string) => void;
-  
+
   /**
    * Получить текущий хэш контекста для ноды (без сохранения)
    * 
@@ -431,7 +442,7 @@ export interface CanvasActions {
    * @returns хэш-строка или null
    */
   getContextHash: (nodeId: string) => string | null;
-  
+
   /**
    * Проверить и снять stale если контекст вернулся к эталонному
    * 
@@ -440,25 +451,25 @@ export interface CanvasActions {
    * @param nodeId - ID ноды для начала проверки
    */
   checkAndClearStale: (nodeId: string) => void;
-  
+
   /**
    * Проверить и снять stale для ВСЕХ stale нод на холсте
    * 
    * Используется после массовых изменений
    */
   checkAllStaleNodes: () => void;
-  
+
   // =============================================================================
   // ЭКШЕНЫ ДЛЯ ПАКЕТНОЙ РЕГЕНЕРАЦИИ УСТАРЕВШИХ КАРТОЧЕК
   // =============================================================================
-  
+
   /**
    * Получить количество устаревших (stale) карточек
    * 
    * @returns количество карточек с isStale === true
    */
   getStaleNodesCount: () => number;
-  
+
   /**
    * Запустить пакетную регенерацию всех устаревших карточек
    * 
@@ -470,12 +481,12 @@ export interface CanvasActions {
    * 5. Дождаться завершения уровня перед переходом к следующему
    */
   regenerateStaleNodes: () => void;
-  
+
   /**
    * Отменить текущую пакетную регенерацию
    */
   cancelBatchRegeneration: () => void;
-  
+
   /**
    * Обработать завершение генерации одной ноды в пакетном режиме
    * Вызывается из NeuroNode при завершении генерации
@@ -504,13 +515,13 @@ export type CanvasStore = CanvasState & CanvasActions;
 export interface ChatRequest {
   /** Сообщения в формате OpenAI */
   messages: ChatMessage[];
-  
+
   /** Контекст от родительских нод (опционально) */
   context?: string;
-  
+
   /** API ключ для авторизации */
   apiKey?: string;
-  
+
   /** Название модели (например "openai/gpt-4o") */
   model?: string;
 }
@@ -521,7 +532,7 @@ export interface ChatRequest {
 export interface ChatMessage {
   /** Роль отправителя */
   role: 'system' | 'user' | 'assistant';
-  
+
   /** Содержимое сообщения */
   content: string;
 }
@@ -532,13 +543,13 @@ export interface ChatMessage {
 export interface LLMApiConfig {
   /** API ключ для авторизации */
   apiKey: string;
-  
+
   /** Название модели (например "openai/gpt-4o") */
   model: string;
-  
+
   /** Температура генерации (0-2) */
   temperature?: number;
-  
+
   /** Максимальное количество токенов */
   maxTokens?: number;
 }
@@ -553,10 +564,10 @@ export interface LLMApiConfig {
 export interface SummarizeRequest {
   /** Текст для суммаризации */
   text: string;
-  
+
   /** API ключ для авторизации */
   apiKey?: string;
-  
+
   /** Название модели (например "openai/gpt-4o") */
   model?: string;
 }
@@ -599,16 +610,16 @@ export type ContextType = 'full' | 'quote' | 'summary';
 export interface ContextBlock {
   /** ID ноды-источника контекста */
   nodeId: string;
-  
+
   /** Вопрос (prompt) из ноды-источника */
   prompt: string;
-  
+
   /** Тип контекста (full/quote/summary) */
   type: ContextType;
-  
+
   /** Содержимое контекста (response, quote или summary) */
   content: string;
-  
+
   /** 
    * Уровень в иерархии:
    * - 0 = прямой родитель
@@ -617,7 +628,7 @@ export interface ContextBlock {
    * - и т.д.
    */
   level: number;
-  
+
   /** Локализованное название уровня (например, "Родительская карточка", "Дедушка") */
   levelName: string;
 }
@@ -631,10 +642,10 @@ export interface ContextBlock {
 export interface ContextConnection {
   /** ID родительской ноды (source) */
   sourceNodeId: string;
-  
+
   /** ID дочерней ноды (target) */
   targetNodeId: string;
-  
+
   /** 
    * Тип контекста для этой связи
    * Определяется автоматически:

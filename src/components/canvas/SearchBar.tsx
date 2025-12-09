@@ -25,16 +25,16 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { 
-  Search, X, Globe, FileText, Loader2, RefreshCw, 
-  Sparkles, Zap, Hash, Type 
+import {
+  Search, X, Globe, FileText, Loader2, RefreshCw,
+  Sparkles, Zap, Hash, Type
 } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
 import { useSettingsStore, API_PROVIDERS } from '@/store/useSettingsStore';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
-import { 
-  HybridSearchEngine, 
+import {
+  HybridSearchEngine,
   type HybridSearchResult,
   type HybridDocument,
 } from '@/lib/search';
@@ -48,10 +48,10 @@ import { getAllEmbeddings, getEmbeddingsByCanvas, syncAllEmbeddings, syncEmbeddi
 interface SearchBarProps {
   /** Флаг видимости (управляется извне для Ctrl+P) */
   isOpen: boolean;
-  
+
   /** Callback закрытия */
   onClose: () => void;
-  
+
   /** Callback при выборе результата (для центрирования) */
   onSelectResult: (nodeId: string, canvasId: string) => void;
 }
@@ -77,7 +77,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
   // ===========================================================================
   // ХУКИ
   // ===========================================================================
-  
+
   const { t } = useTranslation();
   const apiKey = useSettingsStore((s) => s.apiKey);
   const apiProvider = useSettingsStore((s) => s.apiProvider);
@@ -87,69 +87,70 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
   const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
   const canvases = useWorkspaceStore((s) => s.canvases);
   const nodes = useCanvasStore((s) => s.nodes);
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ
   // ===========================================================================
-  
+
   /** Поисковый запрос */
   const [query, setQuery] = useState('');
-  
+
   /** Результаты поиска */
   const [results, setResults] = useState<HybridSearchResult[]>([]);
-  
+
   /** Флаг загрузки (быстрый поиск) */
   const [isQuickSearching, setIsQuickSearching] = useState(false);
-  
+
   /** Флаг загрузки (полный поиск с семантикой) */
   const [isFullSearching, setIsFullSearching] = useState(false);
-  
+
   /** Ошибка поиска */
   const [error, setError] = useState<string | null>(null);
-  
+
   /** Режим поиска: true = все холсты, false = текущий */
   const [searchAllCanvases, setSearchAllCanvases] = useState(false);
-  
+
   /** Количество проиндексированных карточек */
   const [indexedCount, setIndexedCount] = useState(0);
-  
+
   /** Индекс выбранного результата для навигации клавишами */
   const [selectedIndex, setSelectedIndex] = useState(0);
-  
+
   /** Флаг переиндексации */
   const [isReindexing, setIsReindexing] = useState(false);
-  
+
   /** Прогресс переиндексации */
   const [reindexProgress, setReindexProgress] = useState({ current: 0, total: 0 });
-  
+
   /** Количество карточек на холсте */
   const [totalCards, setTotalCards] = useState(0);
-  
+
   /** Режим поиска: 'quick' (без семантики) или 'full' (с семантикой) */
   const [searchMode, setSearchMode] = useState<'quick' | 'full'>('quick');
-  
-  
+
+
   // ===========================================================================
   // REFS
   // ===========================================================================
-  
+
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const quickDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const fullDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   /** Гибридный поисковый движок */
   const searchEngineRef = useRef<HybridSearchEngine | null>(null);
-  
+
   // ===========================================================================
   // ИНИЦИАЛИЗАЦИЯ ПОИСКОВОГО ДВИЖКА
   // ===========================================================================
-  
+
   /**
    * Создать и проиндексировать поисковый движок
    */
   const initSearchEngine = useCallback(async () => {
     console.log('[SearchBar] Инициализация гибридного поиска...');
-    
+
     // =========================================================================
     // СИНХРОНИЗАЦИЯ ЭМБЕДДИНГОВ
     // Удаляем "призраки" - эмбеддинги для удалённых карточек
@@ -168,11 +169,11 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     } catch (error) {
       console.error('[SearchBar] Ошибка синхронизации эмбеддингов:', error);
     }
-    
+
     // Проверяем поддержку эмбеддингов для текущего провайдера
     const providerConfig = API_PROVIDERS[apiProvider];
     const supportsEmbeddings = providerConfig?.supportsEmbeddings ?? false;
-    
+
     // Создаём движок с функцией получения эмбеддинга
     const engine = new HybridSearchEngine(
       {}, // Параметры по умолчанию
@@ -180,13 +181,13 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         // Функция для получения эмбеддинга запроса
         // Если провайдер не поддерживает эмбеддинги - возвращаем null
         if (!apiKey || !supportsEmbeddings) return null;
-        
+
         try {
           const response = await fetch('/api/embeddings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              text: queryText, 
+            body: JSON.stringify({
+              text: queryText,
               apiKey,
               embeddingsBaseUrl,
               // Модель эмбеддингов из настроек
@@ -195,9 +196,9 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               corporateMode,
             }),
           });
-          
+
           if (!response.ok) return null;
-          
+
           const data = await response.json();
           return data.embedding;
         } catch {
@@ -205,17 +206,17 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         }
       }
     );
-    
+
     // Загружаем эмбеддинги из IndexedDB (уже синхронизированные)
-    const embeddings = searchAllCanvases 
+    const embeddings = searchAllCanvases
       ? await getAllEmbeddings()
-      : activeCanvasId 
+      : activeCanvasId
         ? await getEmbeddingsByCanvas(activeCanvasId)
         : [];
-    
+
     // Индексируем документы
     const documents: HybridDocument[] = [];
-    
+
     for (const emb of embeddings) {
       documents.push({
         id: emb.nodeId,
@@ -226,11 +227,11 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         embedding: emb.embedding,
       });
     }
-    
+
     // Добавляем также карточки из текущего холста, которые ещё не проиндексированы
     // (чтобы можно было искать по ним через BM25)
     const indexedIds = new Set(documents.map(d => d.id));
-    
+
     for (const node of nodes) {
       if (!indexedIds.has(node.id) && node.data.response) {
         documents.push({
@@ -243,19 +244,19 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         });
       }
     }
-    
+
     engine.addDocuments(documents);
     searchEngineRef.current = engine;
-    
+
     console.log(`[SearchBar] Проиндексировано ${documents.length} документов`);
-    
+
     return engine;
   }, [apiKey, apiProvider, embeddingsBaseUrl, embeddingsModel, corporateMode, activeCanvasId, searchAllCanvases, nodes]);
-  
+
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
-  
+
   /**
    * Фокус на input при открытии и инициализация движка
    */
@@ -265,12 +266,12 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         inputRef.current.focus();
         inputRef.current.select();
       }
-      
+
       // Инициализируем поисковый движок
       initSearchEngine();
     }
   }, [isOpen, initSearchEngine]);
-  
+
   /**
    * Переинициализация при смене режима (все холсты / текущий)
    */
@@ -279,7 +280,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       initSearchEngine();
     }
   }, [searchAllCanvases, isOpen, initSearchEngine]);
-  
+
   /**
    * Автоматический перезапуск поиска при смене режима
    */
@@ -288,7 +289,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     // Проверяем, что режим действительно изменился (а не это первый рендер)
     if (prevSearchAllCanvasesRef.current !== searchAllCanvases && isOpen) {
       prevSearchAllCanvasesRef.current = searchAllCanvases;
-      
+
       // Перезапускаем поиск если есть запрос
       if (query.length >= MIN_QUERY_LENGTH && searchEngineRef.current) {
         // Небольшая задержка чтобы индекс успел обновиться
@@ -298,7 +299,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
             try {
               const canvasFilter = searchAllCanvases ? undefined : (activeCanvasId || undefined);
               const searchResults = searchEngineRef.current.quickSearch(query, MAX_RESULTS);
-              const filtered = canvasFilter 
+              const filtered = canvasFilter
                 ? searchResults.filter(r => r.canvasId === canvasFilter)
                 : searchResults;
               setResults(filtered);
@@ -315,7 +316,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       }
     }
   }, [searchAllCanvases, isOpen, query, activeCanvasId, t.search.noResults]);
-  
+
   /**
    * Сброс состояния при закрытии
    */
@@ -332,7 +333,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
-  
+
   /**
    * Загрузка количества проиндексированных карточек
    */
@@ -341,25 +342,56 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       const loadCounts = async () => {
         const indexed = await countIndexedCards(searchAllCanvases ? null : activeCanvasId);
         setIndexedCount(indexed);
-        
+
         const cardsWithResponse = nodes.filter((n) => n.data.response).length;
         setTotalCards(cardsWithResponse);
       };
       loadCounts();
     }
   }, [isOpen, searchAllCanvases, activeCanvasId, nodes]);
-  
+
   /**
    * Сброс выбранного индекса при изменении результатов
    */
+  /* Сброс выбранного индекса при изменении результатов */
   useEffect(() => {
     setSelectedIndex(0);
+    // Сброс скролла при новых результатах
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
   }, [results]);
-  
+
+  /**
+   * Автоскролл к выбранному элементу
+   */
+  useEffect(() => {
+    if (!listRef.current || results.length === 0) return;
+
+    const list = listRef.current;
+    const selectedItem = list.children[0]?.children[selectedIndex] as HTMLElement;
+
+    if (selectedItem) {
+      const listTop = list.scrollTop;
+      const listBottom = listTop + list.clientHeight;
+      const itemTop = selectedItem.offsetTop;
+      const itemBottom = itemTop + selectedItem.offsetHeight;
+
+      // Если элемент выше видимой области
+      if (itemTop < listTop) {
+        list.scrollTo({ top: itemTop, behavior: 'smooth' });
+      }
+      // Если элемент ниже видимой области
+      else if (itemBottom > listBottom) {
+        list.scrollTo({ top: itemBottom - list.clientHeight, behavior: 'smooth' });
+      }
+    }
+  }, [selectedIndex, results]);
+
   // ===========================================================================
   // ОБРАБОТЧИКИ ПОИСКА
   // ===========================================================================
-  
+
   /**
    * Быстрый поиск (BM25 + Exact, без семантики)
    */
@@ -367,30 +399,30 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     if (quickDebounceRef.current) {
       clearTimeout(quickDebounceRef.current);
     }
-    
+
     if (!searchQuery.trim() || searchQuery.length < MIN_QUERY_LENGTH) {
       setResults([]);
       setError(null);
       return;
     }
-    
+
     quickDebounceRef.current = setTimeout(() => {
       if (!searchEngineRef.current) return;
-      
+
       setIsQuickSearching(true);
-      
+
       try {
         const canvasFilter = searchAllCanvases ? undefined : (activeCanvasId || undefined);
         const searchResults = searchEngineRef.current.quickSearch(searchQuery, MAX_RESULTS);
-        
+
         // Фильтруем по холсту если нужно
-        const filtered = canvasFilter 
+        const filtered = canvasFilter
           ? searchResults.filter(r => r.canvasId === canvasFilter)
           : searchResults;
-        
+
         setResults(filtered);
         setSearchMode('quick');
-        
+
         if (filtered.length === 0 && searchQuery.length >= MIN_QUERY_LENGTH) {
           setError(t.search.noResults);
         } else {
@@ -403,7 +435,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       }
     }, QUICK_SEARCH_DEBOUNCE);
   }, [activeCanvasId, searchAllCanvases, t]);
-  
+
   /**
    * Полный гибридный поиск (с семантикой)
    */
@@ -411,36 +443,36 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     if (fullDebounceRef.current) {
       clearTimeout(fullDebounceRef.current);
     }
-    
+
     if (!searchQuery.trim() || searchQuery.length < MIN_QUERY_LENGTH) {
       return;
     }
-    
+
     if (!apiKey) {
       setError(t.node.apiKeyMissing);
       return;
     }
-    
+
     setIsFullSearching(true);
     setError(null);
-    
+
     try {
       if (!searchEngineRef.current) {
         await initSearchEngine();
       }
-      
+
       if (!searchEngineRef.current) return;
-      
+
       const canvasFilter = searchAllCanvases ? undefined : (activeCanvasId || undefined);
       const searchResults = await searchEngineRef.current.search(
-        searchQuery, 
+        searchQuery,
         MAX_RESULTS,
         canvasFilter
       );
-      
+
       setResults(searchResults);
       setSearchMode('full');
-      
+
       if (searchResults.length === 0) {
         setError(t.search.noResults);
       }
@@ -451,7 +483,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       setIsFullSearching(false);
     }
   }, [apiKey, activeCanvasId, searchAllCanvases, t, initSearchEngine]);
-  
+
   /**
    * Обработчик изменения запроса
    */
@@ -460,7 +492,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     setQuery(newQuery);
     performQuickSearch(newQuery);
   };
-  
+
   /**
    * Обработчик выбора результата
    */
@@ -470,7 +502,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     }
     onClose();
   };
-  
+
   /**
    * Обработчик клавиш
    */
@@ -480,19 +512,19 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         e.preventDefault();
         onClose();
         break;
-        
+
       case 'ArrowDown':
         e.preventDefault();
         setSelectedIndex((prev) =>
           prev < results.length - 1 ? prev + 1 : prev
         );
         break;
-        
+
       case 'ArrowUp':
         e.preventDefault();
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
         break;
-        
+
       case 'Enter':
         e.preventDefault();
         if (results[selectedIndex]) {
@@ -502,7 +534,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
           performFullSearch(query);
         }
         break;
-        
+
       case 'Tab':
         e.preventDefault();
         // Переключаем режим - поиск перезапустится автоматически через useEffect
@@ -510,7 +542,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         break;
     }
   };
-  
+
   /**
    * Получить название холста по ID
    */
@@ -518,23 +550,23 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     const canvas = canvases.find((c) => c.id === canvasId);
     return canvas?.name || canvasId;
   };
-  
+
   /**
    * Переиндексация всех карточек текущего холста
    */
   const handleReindex = async () => {
     if (!apiKey || !activeCanvasId || isReindexing) return;
-    
+
     // Проверяем поддержку эмбеддингов
     const providerConfig = API_PROVIDERS[apiProvider];
     if (!providerConfig?.supportsEmbeddings) {
       console.warn('[SearchBar] Провайдер не поддерживает эмбеддинги');
       return;
     }
-    
+
     setIsReindexing(true);
     setReindexProgress({ current: 0, total: 0 });
-    
+
     try {
       const count = await reindexCanvasCards(
         activeCanvasId,
@@ -547,13 +579,13 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         corporateMode,
         embeddingsModel // Передаём модель эмбеддингов
       );
-      
+
       const newIndexedCount = await countIndexedCards(searchAllCanvases ? null : activeCanvasId);
       setIndexedCount(newIndexedCount);
-      
+
       // Переинициализируем движок с новыми эмбеддингами
       await initSearchEngine();
-      
+
       console.log(`[SearchBar] Переиндексировано ${count} карточек`);
     } catch (err) {
       console.error('[SearchBar] Ошибка переиндексации:', err);
@@ -563,21 +595,21 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       setReindexProgress({ current: 0, total: 0 });
     }
   };
-  
+
   // ===========================================================================
   // ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ
   // ===========================================================================
-  
+
   /**
    * Бейдж метода поиска
    */
-  const MethodBadge = ({ 
-    type, 
-    score, 
-    rank 
-  }: { 
-    type: 'bm25' | 'semantic' | 'fuzzy' | 'exact'; 
-    score: number; 
+  const MethodBadge = ({
+    type,
+    score,
+    rank
+  }: {
+    type: 'bm25' | 'semantic' | 'fuzzy' | 'exact';
+    score: number;
     rank: number;
   }) => {
     const config = {
@@ -586,11 +618,11 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       fuzzy: { icon: Type, label: 'Fuzzy', color: 'bg-orange-500/20 text-orange-600 dark:text-orange-400' },
       exact: { icon: Zap, label: 'Exact', color: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' },
     };
-    
+
     const { icon: Icon, label, color } = config[type];
-    
+
     return (
-      <span 
+      <span
         className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium ${color}`}
         title={`${label}: rank #${rank}, score ${(score * 100).toFixed(0)}%`}
       >
@@ -599,15 +631,15 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       </span>
     );
   };
-  
+
   // ===========================================================================
   // РЕНДЕР
   // ===========================================================================
-  
+
   if (!isOpen) return null;
-  
+
   const isSearching = isQuickSearching || isFullSearching;
-  
+
   return (
     <>
       {/* ----- ОВЕРЛЕЙ ----- */}
@@ -615,11 +647,11 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
         className="fixed inset-0 z-[100] bg-black/20 backdrop-blur-sm"
         onClick={onClose}
       />
-      
+
       {/* ----- ПОИСКОВЫЙ КОНТЕЙНЕР ----- */}
       <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[101] w-full max-w-2xl px-4">
         <div className="bg-background border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-200">
-          
+
           {/* ----- ПОЛЕ ВВОДА ----- */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
             {/* Иконка поиска / лоадер */}
@@ -628,7 +660,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
             ) : (
               <Search className="w-5 h-5 text-muted-foreground" />
             )}
-            
+
             {/* Input */}
             <input
               ref={inputRef}
@@ -641,7 +673,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               autoComplete="off"
               spellCheck={false}
             />
-            
+
             {/* Кнопка полного поиска с AI */}
             {query.length >= MIN_QUERY_LENGTH && !isFullSearching && (
               <button
@@ -654,7 +686,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                 AI
               </button>
             )}
-            
+
             {/* Переключатель режима */}
             <button
               onClick={() => setSearchAllCanvases((prev) => !prev)}
@@ -675,7 +707,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               )}
               <span>{searchAllCanvases ? t.search.all : t.search.current}</span>
             </button>
-            
+
             {/* Кнопка закрытия */}
             <button
               onClick={onClose}
@@ -685,7 +717,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               <X className="w-5 h-5" />
             </button>
           </div>
-          
+
           {/* ----- ИНДИКАТОР РЕЖИМА ПОИСКА ----- */}
           {searchMode === 'full' && results.length > 0 && (
             <div className="px-4 py-1.5 bg-purple-500/5 border-b border-purple-500/10 flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400">
@@ -693,16 +725,19 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               <span>Гибридный поиск: BM25 + AI Semantic + Fuzzy + Exact Match</span>
             </div>
           )}
-          
+
           {/* ----- РЕЗУЛЬТАТЫ ----- */}
-          <div className="max-h-96 overflow-y-auto">
+          <div
+            ref={listRef}
+            className="max-h-96 overflow-y-auto scroll-smooth relative"
+          >
             {/* Ошибка */}
             {error && !isSearching && results.length === 0 && (
               <div className="px-4 py-8 text-center">
                 <p className="text-sm text-muted-foreground">{error}</p>
               </div>
             )}
-            
+
             {/* Пустой запрос */}
             {!query && !error && (
               <div className="px-4 py-6 text-center">
@@ -721,7 +756,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                 <p className="text-xs text-muted-foreground/60 mt-1">
                   {t.search.indexedCards.replace('{count}', String(indexedCount))}
                 </p>
-                
+
                 {/* Кнопка переиндексации */}
                 {totalCards > 0 && indexedCount < totalCards && !isReindexing && (
                   <button
@@ -733,7 +768,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                     {t.search.reindex} ({totalCards - indexedCount})
                   </button>
                 )}
-                
+
                 {/* Прогресс переиндексации */}
                 {isReindexing && (
                   <div className="mt-4">
@@ -744,12 +779,12 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                       </span>
                     </div>
                     <div className="mt-2 w-48 mx-auto h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div 
+                      <div
                         className="h-full bg-primary transition-all duration-200"
-                        style={{ 
-                          width: reindexProgress.total > 0 
-                            ? `${(reindexProgress.current / reindexProgress.total) * 100}%` 
-                            : '0%' 
+                        style={{
+                          width: reindexProgress.total > 0
+                            ? `${(reindexProgress.current / reindexProgress.total) * 100}%`
+                            : '0%'
                         }}
                       />
                     </div>
@@ -757,7 +792,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                 )}
               </div>
             )}
-            
+
             {/* Список результатов */}
             {results.length > 0 && (
               <ul className="py-2">
@@ -765,76 +800,78 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
                   <li key={result.id}>
                     <button
                       onClick={() => handleSelectResult(result)}
-                      onMouseEnter={() => setSelectedIndex(index)}
+                      onMouseMove={() => setSelectedIndex(index)}
                       className={`
-                        w-full px-4 py-3 text-left transition-colors duration-100
+                        w-full px-4 py-3 text-left transition-colors duration-100 flex items-center gap-2 border-l-4
                         ${index === selectedIndex
-                          ? 'bg-accent/50'
-                          : 'hover:bg-accent/30'
+                          ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-500'
+                          : 'hover:bg-accent/30 border-transparent'
                         }
                       `}
                     >
                       {/* Заголовок */}
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-medium text-foreground line-clamp-1 flex-1">
-                          {result.title || t.search.untitled}
-                        </span>
-                        
-                        {/* Скор релевантности */}
-                        <span
-                          className={`
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-medium text-foreground line-clamp-1 flex-1">
+                            {result.title || t.search.untitled}
+                          </span>
+
+                          {/* Скор релевантности */}
+                          <span
+                            className={`
                             text-xs font-semibold px-1.5 py-0.5 rounded
                             ${result.normalizedScore >= 0.7
-                              ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-                              : result.normalizedScore >= 0.4
-                                ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                                : 'bg-muted text-muted-foreground'
-                            }
+                                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                                : result.normalizedScore >= 0.4
+                                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                                  : 'bg-muted text-muted-foreground'
+                              }
                           `}
-                        >
-                          {Math.round(result.normalizedScore * 100)}%
-                        </span>
+                          >
+                            {Math.round(result.normalizedScore * 100)}%
+                          </span>
+                        </div>
+
+                        {/* Превью ответа */}
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {result.preview || t.search.noResponse}
+                        </p>
                       </div>
-                      
-                      {/* Превью ответа */}
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {result.preview || t.search.noResponse}
-                      </p>
-                      
+
                       {/* Детали методов поиска */}
                       {searchMode === 'full' && (
                         <div className="flex items-center gap-1 mt-1.5">
                           {result.breakdown.bm25 && (
-                            <MethodBadge 
-                              type="bm25" 
-                              score={result.breakdown.bm25.score} 
-                              rank={result.breakdown.bm25.rank} 
+                            <MethodBadge
+                              type="bm25"
+                              score={result.breakdown.bm25.score}
+                              rank={result.breakdown.bm25.rank}
                             />
                           )}
                           {result.breakdown.semantic && (
-                            <MethodBadge 
-                              type="semantic" 
-                              score={result.breakdown.semantic.score} 
-                              rank={result.breakdown.semantic.rank} 
+                            <MethodBadge
+                              type="semantic"
+                              score={result.breakdown.semantic.score}
+                              rank={result.breakdown.semantic.rank}
                             />
                           )}
                           {result.breakdown.fuzzy && (
-                            <MethodBadge 
-                              type="fuzzy" 
-                              score={result.breakdown.fuzzy.score} 
-                              rank={result.breakdown.fuzzy.rank} 
+                            <MethodBadge
+                              type="fuzzy"
+                              score={result.breakdown.fuzzy.score}
+                              rank={result.breakdown.fuzzy.rank}
                             />
                           )}
                           {result.breakdown.exact && (
-                            <MethodBadge 
-                              type="exact" 
-                              score={result.breakdown.exact.score} 
-                              rank={result.breakdown.exact.rank} 
+                            <MethodBadge
+                              type="exact"
+                              score={result.breakdown.exact.score}
+                              rank={result.breakdown.exact.rank}
                             />
                           )}
                         </div>
                       )}
-                      
+
                       {/* Название холста */}
                       {searchAllCanvases && result.canvasId && result.canvasId !== activeCanvasId && (
                         <p className="text-xs text-primary/70 mt-1 flex items-center gap-1">
@@ -848,7 +885,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
               </ul>
             )}
           </div>
-          
+
           {/* ----- ПОДСКАЗКИ ----- */}
           <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
             <span>

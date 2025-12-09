@@ -29,21 +29,21 @@ export const en: TranslationKeys = {
     update: 'Update',
     create: 'Create',
   },
-  
+
   // ===========================================================================
   // SETTINGS
   // ===========================================================================
   settings: {
     title: 'Settings',
     description: 'Global application settings. Changes are saved automatically.',
-    
+
     // API Section
     apiSection: 'API Settings',
-    
+
     // Provider
     apiProvider: 'API Provider',
     apiProviderDescription: 'Select an API provider. All providers use OpenAI-compatible format.',
-    
+
     // API Key
     apiKey: 'API Key',
     apiKeyDescription: 'Enter the API key from your selected provider.',
@@ -51,7 +51,7 @@ export const en: TranslationKeys = {
     apiKeyRequired: 'API key is required for the application to work. Generation is impossible without it.',
     showKey: 'Show key',
     hideKey: 'Hide key',
-    
+
     // Custom URL
     customApiUrl: 'Chat API URL',
     customApiUrlDescription: 'Base URL for OpenAI-compatible API (without /chat/completions).',
@@ -60,14 +60,14 @@ export const en: TranslationKeys = {
     currentApiUrl: 'Chat API',
     currentEmbeddingsUrl: 'Embeddings API',
     noEmbeddingsSupport: 'This provider does not support embeddings (semantic search unavailable)',
-    
+
     // Model
     model: 'Model',
     modelDescription: 'Select a model or enter the name manually (format: provider/model).',
     modelPlaceholder: 'openai/chatgpt-4o-latest',
     selectModel: '-- Select a model --',
     customModel: 'Or enter model name manually:',
-    
+
     // Context
     contextSection: 'Context Settings',
     summarization: 'Context Summarization',
@@ -77,17 +77,17 @@ export const en: TranslationKeys = {
     summarizationDisabled: 'Full context mode:',
     summarizationDisabledDescription: 'All ancestors pass the full response without truncation. Ideal for models with large context windows (GPT-4, Claude, etc.)',
     toggleSummarization: 'Toggle summarization',
-    
+
     // Language
     languageSection: 'Interface Language',
     language: 'Language',
     languageDescription: 'Select the application interface language.',
     russian: 'Русский',
     english: 'English',
-    
+
     // Reset
     resetSettings: 'Reset Settings',
-    
+
     // Corporate mode
     corporateSection: 'Corporate Network',
     corporateMode: 'Corporate Mode',
@@ -98,7 +98,7 @@ export const en: TranslationKeys = {
     corporateModeDisabledDescription: 'Full SSL certificate verification (recommended).',
     corporateModeWarning: '⚠️ Warning: disabling SSL verification reduces security. Do not use in public networks (cafes, airports)!',
     toggleCorporateMode: 'Toggle corporate mode',
-    
+
     // Provider descriptions
     providers: {
       openai: 'Official OpenAI API (GPT-4, GPT-3.5)',
@@ -108,7 +108,7 @@ export const en: TranslationKeys = {
       together: 'Open-source models (Llama, Mistral, Qwen)',
       custom: 'Any OpenAI-compatible API',
     },
-    
+
     // Embeddings section
     embeddingsSection: 'Semantic Search',
     embeddingsModel: 'Embeddings Model',
@@ -120,7 +120,7 @@ export const en: TranslationKeys = {
     clearAndChange: 'Clear and change',
     clearingIndex: 'Clearing index...',
   },
-  
+
   // ===========================================================================
   // SIDEBAR
   // ===========================================================================
@@ -136,35 +136,35 @@ export const en: TranslationKeys = {
     collapsePanel: 'Collapse panel',
     resizePanel: 'Resize width (double-click to reset)',
     version: 'NeuroCanvas v{version}',
-    
+
     // Search
     searchPlaceholder: 'Search canvases...',
     searchNoResults: 'Nothing found',
     searchHint: 'Ctrl+K to search',
     canvas: 'Canvas',
     folder: 'Folder',
-    
+
     // Folder context menu
     createCanvasInside: 'Create canvas inside',
     createSubfolder: 'Create subfolder',
-    
+
     // Recent context menu
     removeFromRecent: 'Remove from recent',
     openInNewTab: 'Open',
-    
+
     // Counters
     itemsCount: '{count} items',
-    
+
     // Canvas actions
     deleteCanvas: 'Delete canvas',
     deleteCanvasConfirm: 'Delete canvas "{name}"?',
-    
+
     // Folder actions
     deleteFolder: 'Delete folder',
     deleteFolderConfirm: 'Delete folder "{name}"?',
     folderActions: 'Action:\n1 - Rename\n2 - Delete\n3 - Cancel',
   },
-  
+
   // ===========================================================================
   // CANVAS
   // ===========================================================================
@@ -172,18 +172,18 @@ export const en: TranslationKeys = {
     // Loading
     loadingNotes: 'Loading notes...',
     restoringData: 'Restoring your data',
-    
+
     // Save status
     saving: 'Saving...',
     unsaved: 'Unsaved',
     saved: 'Saved',
     ready: 'Ready',
     saveManually: 'Save manually',
-    
+
     // Settings button
     openSettings: 'Open settings',
     settings: 'Settings',
-    
+
     // Undo/Redo
     undo: 'Undo',
     redo: 'Redo',
@@ -192,7 +192,7 @@ export const en: TranslationKeys = {
     noUndoAvailable: 'Nothing to undo',
     noRedoAvailable: 'Nothing to redo',
   },
-  
+
   // ===========================================================================
   // NODE (CARD)
   // ===========================================================================
@@ -200,7 +200,7 @@ export const en: TranslationKeys = {
     // Placeholder
     promptPlaceholder: 'What are you thinking about?...',
     promptPlaceholderWithContext: 'Continue the thought...',
-    
+
     // Buttons
     generateResponse: 'Generate response',
     regenerateResponse: 'Update response',
@@ -208,16 +208,16 @@ export const en: TranslationKeys = {
     deleteCard: 'Delete card',
     showResponse: 'Show response',
     hideResponse: 'Hide',
-    
+
     // Parent context
     parentContextUsed: 'Parent node context used',
     multipleParentContextUsed: 'Context from {count} parent nodes used',
     viewFullContext: 'Click to view full context',
-    
+
     // Stale state
     staleContext: 'Context changed — regeneration required',
     staleConnections: 'Connections changed — regeneration required',
-    
+
     // Quoting
     quoteFromParent: 'Quote from parent card',
     selectQuote: 'Select quote',
@@ -230,17 +230,17 @@ export const en: TranslationKeys = {
     selectNewQuote: 'Select new quote',
     selectTextForQuote: 'Select text to create a quote card',
     selectTextForQuoteUpdate: 'Select text to update quote in child card',
-    
+
     // Errors
     apiKeyMissing: 'API key not specified. Please add it in settings.',
-    
+
     // Stop generation
     stopGeneration: 'Stop generation',
-    
+
     // Resize
     resizeCard: 'Resize card width',
   },
-  
+
   // ===========================================================================
   // CONTEXT MODAL
   // ===========================================================================
@@ -250,25 +250,26 @@ export const en: TranslationKeys = {
     descriptionPlural: 'Context from {count} ancestors used',
     noContext: 'No context from parent cards',
     rootCard: 'This is a root card without parents',
-    
+
     // Levels
     parent: 'Parent',
     parentN: 'Parent {n}',
     ancestor: 'Ancestor [{n}]',
-    
+
     // Context types
     contextTypes: 'Context types:',
     fullResponse: 'Full Response',
     quote: 'Quote',
     summary: 'Summary',
     full: 'Full',
-    
+
     // Labels
     question: 'Question:',
     response: 'Response:',
     quoteLabel: 'Quote:',
+    excluded: 'Excluded from context',
   },
-  
+
   // ===========================================================================
   // SEMANTIC SEARCH
   // ===========================================================================
@@ -277,34 +278,34 @@ export const en: TranslationKeys = {
     title: 'Semantic Search',
     placeholder: 'Search by meaning...',
     hint: 'Enter a query to find similar cards',
-    
+
     // Search modes
     currentCanvas: 'Current canvas',
     allCanvases: 'All canvases',
     current: 'Current',
     all: 'All',
     toggleScope: 'toggle',
-    
+
     // Results
     noResults: 'No similar cards found',
     noResponse: 'No response',
     untitled: 'Untitled',
     searchError: 'Search error',
     indexedCards: 'Indexed cards: {count}',
-    
+
     // Navigation
     navigate: 'navigate',
     select: 'select',
     close: 'close',
-    
+
     // Reindex
     reindex: 'Index',
     reindexing: 'Indexing...',
-    
+
     // Hotkey
     hotkeyHint: 'Ctrl+P to search',
   },
-  
+
   // ===========================================================================
   // BATCH REGENERATION
   // ===========================================================================
@@ -322,7 +323,7 @@ export const en: TranslationKeys = {
     /** Button tooltip */
     tooltip: 'Regenerate all stale cards in order from ancestors to descendants',
   },
-  
+
   // ===========================================================================
   // DONATE AND SUPPORT
   // ===========================================================================

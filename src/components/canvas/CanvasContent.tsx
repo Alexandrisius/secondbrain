@@ -24,8 +24,8 @@ import {
   BackgroundVariant,
 } from '@xyflow/react';
 import { Save, RefreshCw, X, Loader2, Undo2, Redo2 } from 'lucide-react';
-import { 
-  useCanvasStore, 
+import {
+  useCanvasStore,
   markInitialDataLoaded,
   performUndo,
   performRedo,
@@ -117,13 +117,13 @@ export function CanvasContent() {
   // ===========================================================================
   // ЛОКАЛИЗАЦИЯ
   // ===========================================================================
-  
+
   const { t, language } = useTranslation();
-  
+
   // ===========================================================================
   // REACT FLOW HOOKS
   // ===========================================================================
-  
+
   /**
    * useReactFlow даёт доступ к методам управления viewport
    * ВАЖНО: Должен использоваться только внутри ReactFlowProvider!
@@ -131,7 +131,7 @@ export function CanvasContent() {
    * setCenter - плавно центрирует viewport на указанных координатах
    */
   const { screenToFlowPosition, getViewport, setViewport, setCenter } = useReactFlow();
-  
+
   /**
    * useStoreApi даёт доступ к внутреннему store React Flow
    * 
@@ -142,16 +142,16 @@ export function CanvasContent() {
    * остаётся активным NodesSelection rect, который блокирует взаимодействие.
    */
   const store = useStoreApi();
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ ДЛЯ ПРОГРАММНОГО PAN (ПКМ на нодах)
   // ===========================================================================
-  
+
   /**
    * Флаг: идёт ли программный pan (зажата ПКМ)
    */
   const [isPanningWithRMB, setIsPanningWithRMB] = useState(false);
-  
+
   /**
    * Начальная позиция мыши при старте pan
    */
@@ -160,44 +160,44 @@ export function CanvasContent() {
   // ===========================================================================
   // СОСТОЯНИЕ ДЛЯ ДИНАМИЧЕСКОГО РЕЖИМА ВЫДЕЛЕНИЯ
   // ===========================================================================
-  
+
   /**
    * Режим выделения:
    * - Full: выделяются только ноды, ПОЛНОСТЬЮ попавшие в рамку (слева направо)
    * - Partial: выделяются ноды, ЧАСТИЧНО пересекающие рамку (справа налево)
    */
   const [selectionMode, setSelectionMode] = useState<SelectionMode>(SelectionMode.Full);
-  
+
   /**
    * Состояние модального окна настроек
    * true - окно открыто, false - закрыто
    */
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
+
   /**
    * Состояние модального окна донатов/поддержки
    * true - окно открыто, false - закрыто
    */
   const [isDonateOpen, setIsDonateOpen] = useState(false);
-  
+
   /**
    * Состояние поисковой панели (семантический поиск)
    * Открывается по Ctrl+P или кликом на кнопку поиска
    */
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  
+
   /**
    * Флаг: идёт ли процесс выделения рамкой
    * Используется для показа/скрытия рамки и CSS классов
    */
   const [isSelecting, setIsSelecting] = useState(false);
-  
+
   /**
    * Флаг: идёт ли процесс создания связи (тянем от Handle)
    * Используется для блокировки выделения текста на других карточках
    */
   const [isConnecting, setIsConnecting] = useState(false);
-  
+
   /**
    * Начальная точка выделения (экранные координаты)
    * Используется для определения направления выделения
@@ -207,13 +207,13 @@ export function CanvasContent() {
   // ===========================================================================
   // СОСТОЯНИЕ UNDO/REDO
   // ===========================================================================
-  
+
   /**
    * Количество доступных шагов для Undo
    * Обновляется при изменениях в истории
    */
   const [undoSteps, setUndoSteps] = useState(0);
-  
+
   /**
    * Количество доступных шагов для Redo
    * Обновляется при изменениях в истории
@@ -223,7 +223,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ZUSTAND STORE
   // ===========================================================================
-  
+
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const onNodesChange = useCanvasStore((s) => s.onNodesChange);
@@ -232,54 +232,54 @@ export function CanvasContent() {
   const addNode = useCanvasStore((s) => s.addNode);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const setPendingFocusNodeId = useCanvasStore((s) => s.setPendingFocusNodeId);
-  
+
   /**
    * Actions для быстрого создания карточек по горячим клавишам
    * Работают как из textarea (в NeuroNode), так и при выделении карточки (здесь)
    */
   const createLinkedNodeRight = useCanvasStore((s) => s.createLinkedNodeRight);
   const createSiblingNode = useCanvasStore((s) => s.createSiblingNode);
-  
+
   /**
    * Action для создания карточки от нескольких родителей
    * Вызывается по Tab при выделении нескольких карточек рамкой
    */
   const createNodeFromMultipleParents = useCanvasStore((s) => s.createNodeFromMultipleParents);
-  
+
   /**
    * Action для переключения раскрытия/сворачивания ответной части карточки
    * Вызывается по пробелу при выделенной карточке
    */
-  const toggleNodeAnswerExpanded = useCanvasStore((s) => s.toggleNodeAnswerExpanded);
-  
+  const toggleSelectedNodesAnswerExpanded = useCanvasStore((s) => s.toggleSelectedNodesAnswerExpanded);
+
   // ===========================================================================
   // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
   // ===========================================================================
-  
+
   /**
    * Флаг: идёт ли пакетная регенерация
    */
   const isBatchRegenerating = useCanvasStore((s) => s.isBatchRegenerating);
-  
+
   /**
    * Прогресс пакетной регенерации
    */
   const batchRegenerationProgress = useCanvasStore((s) => s.batchRegenerationProgress);
-  
+
   /**
    * Запустить пакетную регенерацию
    */
   const regenerateStaleNodes = useCanvasStore((s) => s.regenerateStaleNodes);
-  
+
   /**
    * Отменить пакетную регенерацию
    */
   const cancelBatchRegeneration = useCanvasStore((s) => s.cancelBatchRegeneration);
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ ПЕРСИСТЕНТНОСТИ
   // ===========================================================================
-  
+
   const isLoading = useCanvasStore((s) => s.isLoading);
   const isSaving = useCanvasStore((s) => s.isSaving);
   const lastSaved = useCanvasStore((s) => s.lastSaved);
@@ -288,13 +288,13 @@ export function CanvasContent() {
   const loadFromFile = useCanvasStore((s) => s.loadFromFile);
   const saveToFile = useCanvasStore((s) => s.saveToFile);
   const clearPersistError = useCanvasStore((s) => s.clearPersistError);
-  
+
   /**
    * ID ноды, на которую нужно центрировать холст
    * Устанавливается при создании новой карточки через Tab или Ctrl+Enter
    */
   const pendingCenterNodeId = useCanvasStore((s) => s.pendingCenterNodeId);
-  
+
   /**
    * Сброс pendingCenterNodeId после центрирования
    */
@@ -303,12 +303,12 @@ export function CanvasContent() {
   // ===========================================================================
   // REFS
   // ===========================================================================
-  
+
   /**
    * Ref на контейнер React Flow для вычисления координат
    */
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  
+
   /**
    * Ref для отслеживания первой загрузки
    * Предотвращает повторную загрузку при hot reload
@@ -318,13 +318,13 @@ export function CanvasContent() {
   // ===========================================================================
   // ПОЛУЧЕНИЕ АКТИВНОГО ХОЛСТА ИЗ WORKSPACE
   // ===========================================================================
-  
+
   const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
-  
+
   // ===========================================================================
   // ЗАГРУЗКА ДАННЫХ ПРИ МОНТИРОВАНИИ ИЛИ СМЕНЕ ХОЛСТА
   // ===========================================================================
-  
+
   /**
    * Загружаем данные холста при первом рендере или смене activeCanvasId
    * После успешной загрузки активируем автосохранение
@@ -332,7 +332,7 @@ export function CanvasContent() {
   useEffect(() => {
     // Если нет активного холста - не загружаем
     if (!activeCanvasId) return;
-    
+
     // Проверяем: если это тот же холст что уже загружен - пропускаем
     const currentCanvasId = useCanvasStore.getState().currentCanvasId;
     if (currentCanvasId === activeCanvasId && hasLoadedRef.current) return;
@@ -352,7 +352,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ЦЕНТРИРОВАНИЕ ХОЛСТА НА НОВОЙ НОДЕ
   // ===========================================================================
-  
+
   /**
    * Центрирование холста при создании новой карточки (Tab или Ctrl+Enter)
    * 
@@ -365,10 +365,10 @@ export function CanvasContent() {
    */
   useEffect(() => {
     if (!pendingCenterNodeId) return;
-    
+
     // Находим ноду для центрирования
     const targetNode = nodes.find((n) => n.id === pendingCenterNodeId);
-    
+
     if (targetNode) {
       // Небольшая задержка для завершения рендера новой ноды
       const timer = setTimeout(() => {
@@ -376,7 +376,7 @@ export function CanvasContent() {
         // Добавляем смещение на половину ширины карточки для точного центрирования
         const CARD_WIDTH = 400;
         const CARD_HEIGHT_ESTIMATE = 150;
-        
+
         setCenter(
           targetNode.position.x + CARD_WIDTH / 2,
           targetNode.position.y + CARD_HEIGHT_ESTIMATE / 2,
@@ -385,13 +385,13 @@ export function CanvasContent() {
             zoom: 1,        // Сохраняем текущий масштаб (или сбрасываем на 1)
           }
         );
-        
+
         // Сбрасываем pendingCenterNodeId
         clearPendingCenter();
-        
+
         console.log('[CanvasContent] Центрирование на ноде:', pendingCenterNodeId);
       }, 100);
-      
+
       return () => clearTimeout(timer);
     } else {
       // Нода не найдена - сбрасываем
@@ -402,7 +402,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ПРОГРАММНЫЙ PAN ПРИ ЗАЖАТОЙ ПКМ (работает даже на нодах)
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик для программного pan при зажатой ПКМ
    * 
@@ -417,7 +417,7 @@ export function CanvasContent() {
   useEffect(() => {
     const wrapper = reactFlowWrapper.current;
     if (!wrapper) return;
-    
+
     /**
      * Обработчик нажатия мыши
      * При ПКМ на ноде - начинаем программный pan
@@ -425,35 +425,35 @@ export function CanvasContent() {
     const handlePointerDown = (e: PointerEvent) => {
       // Только ПКМ (button === 2)
       if (e.button !== 2) return;
-      
+
       // Проверяем что клик на ноде (не на пустом месте - там React Flow сам pan'ит)
       const target = e.target as Element;
       const isOnNode = target.closest('.react-flow__node');
-      
+
       if (isOnNode) {
         // Начинаем программный pan
         setIsPanningWithRMB(true);
         panStartRef.current = { x: e.clientX, y: e.clientY };
-        
+
         // Предотвращаем контекстное меню
         e.preventDefault();
       }
     };
-    
+
     /**
      * Обработчик движения мыши
      * При активном pan - обновляем viewport
      */
     const handlePointerMove = (e: PointerEvent) => {
       if (!isPanningWithRMB || !panStartRef.current) return;
-      
+
       // Вычисляем смещение мыши
       const deltaX = e.clientX - panStartRef.current.x;
       const deltaY = e.clientY - panStartRef.current.y;
-      
+
       // Получаем текущий viewport
       const viewport = getViewport();
-      
+
       // Обновляем viewport с учётом смещения
       // ВАЖНО: при zoom !== 1 нужно учитывать масштаб
       setViewport({
@@ -461,11 +461,11 @@ export function CanvasContent() {
         y: viewport.y + deltaY,
         zoom: viewport.zoom,
       });
-      
+
       // Обновляем стартовую позицию для следующего движения
       panStartRef.current = { x: e.clientX, y: e.clientY };
     };
-    
+
     /**
      * Обработчик отпускания мыши
      * Завершаем программный pan
@@ -476,25 +476,25 @@ export function CanvasContent() {
         panStartRef.current = null;
       }
     };
-    
+
     /**
      * Предотвращаем контекстное меню при ПКМ на ноде
      */
     const handleContextMenu = (e: MouseEvent) => {
       const target = e.target as Element;
       const isOnNode = target.closest('.react-flow__node');
-      
+
       if (isOnNode) {
         e.preventDefault();
       }
     };
-    
+
     // Добавляем обработчики
     wrapper.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('pointermove', handlePointerMove);
     document.addEventListener('pointerup', handlePointerUp);
     wrapper.addEventListener('contextmenu', handleContextMenu);
-    
+
     return () => {
       wrapper.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('pointermove', handlePointerMove);
@@ -506,7 +506,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК DELETE для нод И связей
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик Delete/Backspace для удаления выделенных нод И связей
    * 
@@ -524,45 +524,45 @@ export function CanvasContent() {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Проверяем что нажата Delete или Backspace
       if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-      
+
       // Проверяем что не редактируем текст - УЛУЧШЕННАЯ ПРОВЕРКА
       const activeElement = document.activeElement as HTMLElement | null;
-      
+
       // Проверка 1: Стандартные текстовые элементы
-      const isStandardTextInput = 
+      const isStandardTextInput =
         activeElement?.tagName === 'INPUT' ||
         activeElement?.tagName === 'TEXTAREA';
-      
+
       // Проверка 2: ContentEditable элементы
       const isContentEditable = activeElement?.isContentEditable === true;
-      
+
       // Проверка 3: Элемент внутри ноды (textarea может быть вложенным)
       const isInsideNode = activeElement?.closest('.neuro-node') !== null;
-      
+
       // Проверка 4: Элемент с классами nodrag (явно помечен как область ввода)
       const hasNoDragClass = activeElement?.classList.contains('nodrag');
-      
+
       // Если любая из проверок true - не удаляем ноду
       if (isStandardTextInput || isContentEditable || (isInsideNode && hasNoDragClass)) {
         // Не блокируем событие - пусть браузер обработает удаление символа
         return;
       }
-      
+
       // Находим выделенные ноды
       const selectedNodes = nodes.filter((n) => n.selected);
-      
+
       // Находим выделенные связи
       const selectedEdges = edges.filter((e) => e.selected);
-      
+
       // Если есть что удалять - предотвращаем дефолтное поведение
       if (selectedNodes.length > 0 || selectedEdges.length > 0) {
         event.preventDefault();
-        
+
         // Удаляем все выделенные ноды
         selectedNodes.forEach((node) => {
           removeNode(node.id);
         });
-        
+
         // Удаляем все выделенные связи через onEdgesChange
         if (selectedEdges.length > 0) {
           const edgeChanges = selectedEdges.map((edge) => ({
@@ -573,7 +573,7 @@ export function CanvasContent() {
         }
       }
     };
-    
+
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [nodes, edges, removeNode, onEdgesChange]);
@@ -581,7 +581,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ГОРЯЧИХ КЛАВИШ ДЛЯ ВЫДЕЛЕННЫХ НОД
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик горячих клавиш для выделенных карточек
    * 
@@ -603,33 +603,33 @@ export function CanvasContent() {
       // ПРОВЕРКА: Не редактируем текст
       // =======================================================================
       const activeElement = document.activeElement as HTMLElement | null;
-      
+
       // Проверка 1: Стандартные текстовые элементы
-      const isStandardTextInput = 
+      const isStandardTextInput =
         activeElement?.tagName === 'INPUT' ||
         activeElement?.tagName === 'TEXTAREA';
-      
+
       // Проверка 2: ContentEditable элементы
       const isContentEditable = activeElement?.isContentEditable === true;
-      
+
       // Проверка 3: Элемент с классом nodrag внутри ноды (явно помечен как область ввода)
-      const isInsideNodeWithNoDrag = 
+      const isInsideNodeWithNoDrag =
         activeElement?.closest('.neuro-node') !== null &&
         activeElement?.classList.contains('nodrag');
-      
+
       // Если фокус на текстовом поле - не обрабатываем (там свои хендлеры в NeuroNode)
       if (isStandardTextInput || isContentEditable || isInsideNodeWithNoDrag) {
         return;
       }
-      
+
       // =======================================================================
       // НАХОДИМ ВЫДЕЛЕННЫЕ НОДЫ
       // =======================================================================
       const selectedNodes = nodes.filter((n) => n.selected);
-      
+
       // Если нет выделенных нод - ничего не делаем
       if (selectedNodes.length === 0) return;
-      
+
       // =======================================================================
       // TAB - СОЗДАНИЕ ДОЧЕРНЕЙ КАРТОЧКИ
       // При нескольких выделенных - карточка от всех родителей
@@ -640,16 +640,16 @@ export function CanvasContent() {
         const nodesWithResponse = selectedNodes.filter(
           (n) => n.data.response && !n.data.isGenerating
         );
-        
+
         // Если есть хотя бы одна нода с ответом
         if (nodesWithResponse.length > 0) {
           event.preventDefault();
-          
+
           // КРИТИЧНО: Сбрасываем внутреннее состояние selection rectangle
           // Без этого NodesSelection rect остаётся активным и блокирует
           // взаимодействие с новой нодой (перемещение, удаление)
           store.setState({ nodesSelectionActive: false });
-          
+
           if (nodesWithResponse.length >= 2) {
             // МНОЖЕСТВЕННЫЕ РОДИТЕЛИ: создаём карточку от всех выделенных
             const nodeIds = nodesWithResponse.map((n) => n.id);
@@ -663,14 +663,14 @@ export function CanvasContent() {
         }
         return;
       }
-      
+
       // Для остальных хоткеев используем первую выделенную ноду
       const selectedNode = selectedNodes[0];
-      
+
       // Проверяем что у ноды есть ответ и не идёт генерация
       const hasResponse = Boolean(selectedNode.data.response);
       const isGenerating = selectedNode.data.isGenerating;
-      
+
       // =======================================================================
       // CTRL+ENTER - СОЗДАНИЕ СЕСТРИНСКОЙ КАРТОЧКИ
       // =======================================================================
@@ -678,41 +678,45 @@ export function CanvasContent() {
         // КРИТИЧНО: Полностью блокируем событие, чтобы React Flow не снял выделение
         event.preventDefault();
         event.stopPropagation();
-        
+
         // Условия: есть ответ, есть родитель, не идёт генерация
         const hasParent = Boolean(selectedNode.data.parentId);
-        
+
         if (hasResponse && !isGenerating && hasParent) {
           createSiblingNode(selectedNode.id);
           console.log('[CanvasContent] Ctrl+Enter: создана сестринская карточка от', selectedNode.id);
         }
         return;
       }
-      
+
       // =======================================================================
       // SPACE - СВОРАЧИВАНИЕ/РАЗВОРАЧИВАНИЕ ОТВЕТНОЙ ЧАСТИ
       // =======================================================================
+      // =======================================================================
+      // SPACE - СВОРАЧИВАНИЕ/РАЗВОРАЧИВАНИЕ ОТВЕТНОЙ ЧАСТИ (МАССОВОЕ)
+      // =======================================================================
       if (event.key === ' ' || event.code === 'Space') {
-        // Работает только если есть контент для показа/скрытия
-        if (hasResponse || selectedNode.data.isGenerating) {
+        const canToggle = selectedNodes.some(n => n.data.response || n.data.isGenerating);
+
+        if (canToggle) {
           event.preventDefault();
-          toggleNodeAnswerExpanded(selectedNode.id);
-          console.log('[CanvasContent] Space: переключение ответной части', selectedNode.id);
+          toggleSelectedNodesAnswerExpanded();
+          console.log('[CanvasContent] Space: массовое переключение ответной части');
         }
         return;
       }
     };
-    
+
     // КРИТИЧНО: Используем capture phase (true), чтобы перехватить событие
     // ДО того, как оно достигнет React Flow и снимет выделение
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [nodes, createLinkedNodeRight, createSiblingNode, createNodeFromMultipleParents, toggleNodeAnswerExpanded, store]);
+  }, [nodes, createLinkedNodeRight, createSiblingNode, createNodeFromMultipleParents, toggleSelectedNodesAnswerExpanded, store]);
 
   // ===========================================================================
   // ОБРАБОТЧИКИ
   // ===========================================================================
-  
+
   /**
    * Автовыделение ноды при начале перетаскивания
    * 
@@ -727,7 +731,7 @@ export function CanvasContent() {
     (_event: React.MouseEvent, node: NeuroNodeType) => {
       // Если нода уже выделена - ничего не делаем
       if (node.selected) return;
-      
+
       // Выделяем ноду через onNodesChange
       onNodesChange([
         { type: 'select', id: node.id, selected: true },
@@ -735,7 +739,7 @@ export function CanvasContent() {
     },
     [onNodesChange]
   );
-  
+
   /**
    * Обработчик НАЧАЛА создания связи
    * 
@@ -745,7 +749,7 @@ export function CanvasContent() {
   const handleConnectStart = useCallback(() => {
     setIsConnecting(true);
   }, []);
-  
+
   /**
    * DRAG-TO-CREATE: Создание новой ноды при отпускании связи на пустое место
    * 
@@ -768,16 +772,16 @@ export function CanvasContent() {
       if (connectionState.isValid) {
         return; // Ничего не делаем, стандартное соединение обработается через onConnect
       }
-      
+
       // Получаем ID ноды, от которой началось соединение
       const fromNodeId = connectionState.fromNode?.id;
       if (!fromNodeId) return;
-      
+
       // Определяем координаты клика
       // Поддерживаем и MouseEvent и TouchEvent
       let clientX: number;
       let clientY: number;
-      
+
       if ('clientX' in event) {
         // MouseEvent
         clientX = event.clientX;
@@ -789,39 +793,39 @@ export function CanvasContent() {
       } else {
         return; // Неизвестный тип события
       }
-      
+
       // Конвертируем экранные координаты в координаты Flow
       // screenToFlowPosition учитывает текущий zoom и pan
       const position = screenToFlowPosition({
         x: clientX,
         y: clientY,
       });
-      
+
       // КОРРЕКТИРОВКА ПОЗИЦИИ: Смещаем ноду вверх, чтобы центр входного Handle
       // (target, слева) оказался точно под курсором мыши.
       // Без этого смещения курсор указывает на верхний левый угол карточки.
       position.y -= NEW_NODE_Y_OFFSET;
-      
+
       // Создаём новую ноду и связываем с родителем
       const newNodeId = addNode(position, fromNodeId);
-      
+
       // Автоматически выделяем новую ноду
       // Это позволяет сразу видеть, что карточка активна
       onNodesChange([
         { type: 'select', id: newNodeId, selected: true },
       ]);
-      
+
       // Устанавливаем автофокус на textarea новой ноды
       // Это позволяет сразу начать вводить текст
       setPendingFocusNodeId(newNodeId);
     },
     [screenToFlowPosition, addNode, onNodesChange, setPendingFocusNodeId]
   );
-  
+
   // ===========================================================================
   // ДИНАМИЧЕСКИЙ РЕЖИМ ВЫДЕЛЕНИЯ В ЗАВИСИМОСТИ ОТ НАПРАВЛЕНИЯ
   // ===========================================================================
-  
+
   /**
    * Обработчик начала выделения рамкой
    * 
@@ -833,7 +837,7 @@ export function CanvasContent() {
   useEffect(() => {
     const wrapper = reactFlowWrapper.current;
     if (!wrapper) return;
-    
+
     /**
      * Обработчик нажатия мыши - запоминаем начальную точку
      * Работает только для ЛКМ на пустом месте холста
@@ -841,16 +845,16 @@ export function CanvasContent() {
     const handleMouseDown = (e: MouseEvent) => {
       // Только ЛКМ
       if (e.button !== 0) return;
-      
+
       // Проверяем что клик на пустом месте (не на ноде)
       const target = e.target as Element;
       const isOnPane = target.classList.contains('react-flow__pane') ||
-                       target.classList.contains('react-flow__background') ||
-                       target.closest('.react-flow__pane');
+        target.classList.contains('react-flow__background') ||
+        target.closest('.react-flow__pane');
       const isOnNode = target.closest('.react-flow__node');
-      const isOnControls = target.closest('.react-flow__controls') || 
-                           target.closest('.react-flow__minimap');
-      
+      const isOnControls = target.closest('.react-flow__controls') ||
+        target.closest('.react-flow__minimap');
+
       if (isOnPane && !isOnNode && !isOnControls) {
         // Запоминаем начальную точку выделения
         selectionStartRef.current = { x: e.clientX, y: e.clientY };
@@ -859,28 +863,28 @@ export function CanvasContent() {
         setSelectionMode(SelectionMode.Full);
       }
     };
-    
+
     /**
      * Обработчик движения мыши - определяем направление выделения
      */
     const handleMouseMove = (e: MouseEvent) => {
       // Только если идёт выделение
       if (!selectionStartRef.current || !isSelecting) return;
-      
+
       // Вычисляем смещение от начальной точки
       const deltaX = e.clientX - selectionStartRef.current.x;
-      
+
       // Определяем режим по направлению:
       // - Положительный deltaX (вправо) → Full mode
       // - Отрицательный deltaX (влево) → Partial mode
       const newMode = deltaX >= 0 ? SelectionMode.Full : SelectionMode.Partial;
-      
+
       // Обновляем только если режим изменился
       if (newMode !== selectionMode) {
         setSelectionMode(newMode);
       }
     };
-    
+
     /**
      * Обработчик отпускания мыши - завершаем выделение
      */
@@ -893,12 +897,12 @@ export function CanvasContent() {
         }, 50);
       }
     };
-    
+
     // Добавляем обработчики
     wrapper.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-    
+
     return () => {
       wrapper.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('mousemove', handleMouseMove);
@@ -909,7 +913,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК CTRL+P (СЕМАНТИЧЕСКИЙ ПОИСК)
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик Ctrl+P / Cmd+P для открытия семантического поиска
    * 
@@ -927,14 +931,14 @@ export function CanvasContent() {
         // Предотвращаем дефолтное поведение (диалог печати)
         event.preventDefault();
         event.stopPropagation();
-        
+
         // Открываем поиск
         setIsSearchOpen(true);
-        
+
         console.log('[CanvasContent] Ctrl+P: открытие семантического поиска');
       }
     };
-    
+
     // Используем capture phase для перехвата до браузера
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
@@ -943,7 +947,7 @@ export function CanvasContent() {
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК CTRL+Z / CTRL+Y (UNDO/REDO)
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик Ctrl+Z / Cmd+Z для Undo
    * и Ctrl+Y / Cmd+Y или Ctrl+Shift+Z / Cmd+Shift+Z для Redo
@@ -956,27 +960,27 @@ export function CanvasContent() {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Проверяем что не редактируем текст
       const activeElement = document.activeElement as HTMLElement | null;
-      const isTextInput = 
+      const isTextInput =
         activeElement?.tagName === 'INPUT' ||
         activeElement?.tagName === 'TEXTAREA' ||
         activeElement?.isContentEditable === true;
-      
+
       // Если фокус в текстовом поле - пропускаем (браузер сам обработает undo/redo)
       if (isTextInput) {
         return;
       }
-      
+
       // Проверяем модификаторы (Ctrl или Cmd)
       const isMod = event.ctrlKey || event.metaKey;
       if (!isMod) return;
-      
+
       // =======================================================================
       // UNDO: Ctrl+Z / Cmd+Z
       // =======================================================================
       if (event.code === 'KeyZ' && !event.shiftKey) {
         event.preventDefault();
         event.stopPropagation();
-        
+
         if (canUndo()) {
           performUndo();
           // Обновляем состояние после операции
@@ -986,14 +990,14 @@ export function CanvasContent() {
         }
         return;
       }
-      
+
       // =======================================================================
       // REDO: Ctrl+Y / Cmd+Y или Ctrl+Shift+Z / Cmd+Shift+Z
       // =======================================================================
       if (event.code === 'KeyY' || (event.code === 'KeyZ' && event.shiftKey)) {
         event.preventDefault();
         event.stopPropagation();
-        
+
         if (canRedo()) {
           performRedo();
           // Обновляем состояние после операции
@@ -1004,16 +1008,16 @@ export function CanvasContent() {
         return;
       }
     };
-    
+
     // Используем capture phase для перехвата до других обработчиков
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, []);
-  
+
   // ===========================================================================
   // ОБНОВЛЕНИЕ СОСТОЯНИЯ UNDO/REDO ПРИ ИЗМЕНЕНИЯХ
   // ===========================================================================
-  
+
   /**
    * Подписка на изменения в store для обновления счётчиков undo/redo
    * Используем интервал для периодической проверки (простой и надёжный способ)
@@ -1022,20 +1026,20 @@ export function CanvasContent() {
     // Начальное обновление
     setUndoSteps(getUndoCount());
     setRedoSteps(getRedoCount());
-    
+
     // Периодическое обновление каждые 500ms
     const interval = setInterval(() => {
       setUndoSteps(getUndoCount());
       setRedoSteps(getRedoCount());
     }, 500);
-    
+
     return () => clearInterval(interval);
   }, []);
 
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДВОЙНОГО КЛИКА
   // ===========================================================================
-  
+
   /**
    * Глобальный обработчик двойного клика для создания новой ноды
    * Используем нативный обработчик на document, проверяем что клик на pane/background
@@ -1043,33 +1047,33 @@ export function CanvasContent() {
   useEffect(() => {
     const handleDoubleClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      
+
       // Проверяем что клик был на пустом месте холста
       // (на элементе с классом react-flow__pane или react-flow__background)
       const isPane = target.classList.contains('react-flow__pane') ||
-                     target.classList.contains('react-flow__background') ||
-                     target.closest('.react-flow__pane');
-      
+        target.classList.contains('react-flow__background') ||
+        target.closest('.react-flow__pane');
+
       // Проверяем что это НЕ клик на ноде или элементах управления
       const isNode = target.closest('.react-flow__node');
-      const isControls = target.closest('.react-flow__controls') || 
-                         target.closest('.react-flow__minimap');
-      
+      const isControls = target.closest('.react-flow__controls') ||
+        target.closest('.react-flow__minimap');
+
       if (isPane && !isNode && !isControls) {
         // Конвертируем экранные координаты в координаты Flow
         const position = screenToFlowPosition({
           x: event.clientX,
           y: event.clientY,
         });
-        
+
         // Создаём новую независимую ноду (без родителя)
         const newNodeId = addNode(position);
-        
+
         // Автоматически фокусируемся на новой ноде
         setPendingFocusNodeId(newNodeId);
       }
     };
-    
+
     // Добавляем обработчик на wrapper элемент
     const wrapper = reactFlowWrapper.current;
     if (wrapper) {
@@ -1081,11 +1085,11 @@ export function CanvasContent() {
   // ===========================================================================
   // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Форматирование времени
   // ===========================================================================
-  
+
   // ===========================================================================
   // ВЫЧИСЛЕНИЕ КОЛИЧЕСТВА УСТАРЕВШИХ КАРТОЧЕК
   // ===========================================================================
-  
+
   /**
    * Количество устаревших (stale) карточек
    * Пересчитывается при изменении nodes
@@ -1110,14 +1114,14 @@ export function CanvasContent() {
       second: '2-digit',
     });
   };
-  
+
   /**
    * ID карточки для фокусировки после загрузки холста (при переходе через поиск)
    * Хранится в STORE (не в локальном state), чтобы пережить перемонтирование компонента
    */
   const searchTargetNodeId = useCanvasStore((s) => s.searchTargetNodeId);
   const setSearchTargetNodeId = useCanvasStore((s) => s.setSearchTargetNodeId);
-  
+
   /**
    * Эффект для фокусировки на карточке после загрузки холста
    * Срабатывает когда загружен холст и есть ожидающая карточка (из поиска)
@@ -1129,7 +1133,7 @@ export function CanvasContent() {
   useEffect(() => {
     if (searchTargetNodeId && !isLoading && nodes.length > 0) {
       const targetNode = nodes.find((n) => n.id === searchTargetNodeId);
-      
+
       // Карточка найдена - обрабатываем и сбрасываем
       if (targetNode) {
         const CARD_WIDTH = 400;
@@ -1137,7 +1141,7 @@ export function CanvasContent() {
         const targetX = targetNode.position.x + CARD_WIDTH / 2;
         const targetY = targetNode.position.y + CARD_HEIGHT_ESTIMATE / 2;
         const nodeIdToSelect = searchTargetNodeId;
-        
+
         // Выделяем карточку сразу
         onNodesChange([
           // Снимаем выделение со всех
@@ -1149,19 +1153,19 @@ export function CanvasContent() {
           // Выделяем целевую
           { type: 'select' as const, id: nodeIdToSelect, selected: true },
         ]);
-        
+
         // Центрируем с задержкой, чтобы React Flow успел смонтироваться
         setTimeout(() => {
           setCenter(targetX, targetY, { duration: 300, zoom: 1 });
         }, 150);
-        
+
         // Сбрасываем ТОЛЬКО после успешной обработки
         setSearchTargetNodeId(null);
       }
       // Если карточка НЕ найдена - НЕ сбрасываем, ждём загрузки правильных nodes
     }
   }, [searchTargetNodeId, isLoading, nodes, setCenter, onNodesChange, setSearchTargetNodeId]);
-  
+
   /**
    * Обработчик выбора результата семантического поиска
    * Центрирует холст на выбранной карточке и подсвечивает её
@@ -1174,34 +1178,34 @@ export function CanvasContent() {
       // Если карточка на другом холсте - переключаемся
       if (canvasId !== activeCanvasId) {
         console.log('[CanvasContent] Переключение на холст:', canvasId, 'для карточки:', nodeId);
-        
+
         // Устанавливаем ID карточки для фокусировки после загрузки
         // ВАЖНО: Используем store напрямую, а не через callback,
         // т.к. при смене холста компонент перемонтируется
         useCanvasStore.getState().setSearchTargetNodeId(nodeId);
-        
+
         // Переключаем активный холст через openCanvas
         // После смены холста сработает useEffect с loadFromFile,
         // а затем useEffect с searchTargetNodeId центрирует на карточке
         const { openCanvas } = useWorkspaceStore.getState();
         openCanvas(canvasId);
-        
+
         return;
       }
-      
+
       // Карточка на текущем холсте - просто центрируемся
       const targetNode = nodes.find((n) => n.id === nodeId);
       if (targetNode) {
         const CARD_WIDTH = 400;
         const CARD_HEIGHT_ESTIMATE = 150;
-        
+
         // Центрируем с плавной анимацией
         setCenter(
           targetNode.position.x + CARD_WIDTH / 2,
           targetNode.position.y + CARD_HEIGHT_ESTIMATE / 2,
           { duration: 300, zoom: 1 }
         );
-        
+
         // Снимаем выделение со всех и выделяем найденную карточку
         onNodesChange([
           // Сначала снимаем выделение со всех
@@ -1213,7 +1217,7 @@ export function CanvasContent() {
           // Затем выделяем целевую
           { type: 'select' as const, id: nodeId, selected: true },
         ]);
-        
+
         console.log('[CanvasContent] Центрирование на карточке:', nodeId);
       }
     },
@@ -1223,7 +1227,7 @@ export function CanvasContent() {
   // ===========================================================================
   // РЕНДЕР
   // ===========================================================================
-  
+
   // Показываем лоадер во время загрузки данных
   if (isLoading) {
     return (
@@ -1232,11 +1236,11 @@ export function CanvasContent() {
           {/* Анимированный индикатор */}
           <div className="relative w-16 h-16">
             <div className="absolute inset-0 rounded-full border-4 border-muted animate-pulse" />
-            <div className="absolute inset-2 rounded-full border-4 border-primary/30 animate-spin" 
-                 style={{ animationDuration: '2s' }} />
+            <div className="absolute inset-2 rounded-full border-4 border-primary/30 animate-spin"
+              style={{ animationDuration: '2s' }} />
             <div className="absolute inset-6 rounded-full bg-primary animate-pulse" />
           </div>
-          
+
           {/* Текст загрузки */}
           <div className="text-center">
             <h2 className="text-lg font-semibold text-foreground">
@@ -1260,62 +1264,62 @@ export function CanvasContent() {
   ].filter(Boolean).join(' ');
 
   return (
-    <div 
-      ref={reactFlowWrapper} 
+    <div
+      ref={reactFlowWrapper}
       className={`w-full h-full relative ${selectionClasses}`}
     >
       <ReactFlow<NeuroNodeType>
         // === ДАННЫЕ ===
         nodes={nodes}
         edges={edges}
-        
+
         // === ТИПЫ НОД ===
         nodeTypes={nodeTypes}
-        
+
         // === CALLBACKS ДЛЯ ИЗМЕНЕНИЙ ===
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        
+
         // === АВТОВЫДЕЛЕНИЕ ПРИ ПЕРЕТАСКИВАНИИ ===
         onNodeDragStart={handleNodeDragStart}
-        
+
         // === DRAG-TO-CREATE И БЛОКИРОВКА ВЫДЕЛЕНИЯ ===
         onConnectStart={handleConnectStart}
         onConnectEnd={handleConnectEnd}
-        
+
         // === DOUBLE-CLICK обрабатывается через нативный обработчик в useEffect ===
-        
+
         // === СТИЛИ СВЯЗЕЙ - BEZIER для кривых ===
         connectionLineType={ConnectionLineType.Bezier}
         defaultEdgeOptions={defaultEdgeOptions}
-        
+
         // === УВЕЛИЧЕННЫЙ РАДИУС СОЕДИНЕНИЯ ===
         // Позволяет соединять, не целясь точно в handle
         connectionRadius={CONNECTION_RADIUS}
-        
+
         // === VIEWPORT ===
         fitView
         fitViewOptions={fitViewOptions}
         minZoom={0.1}
         maxZoom={2}
-        
+
         // === ВНЕШНИЙ ВИД ===
         className="neuro-canvas"
-        
+
         // === ПОВЕДЕНИЕ ===
         // Delete обрабатывается глобально через useEffect
         deleteKeyCode={null}
         multiSelectionKeyCode={['Control', 'Meta']}
-        
+
         // КОЛЁСИКО = ZOOM (не scroll!)
         panOnScroll={false}
         zoomOnScroll={true}
         zoomOnDoubleClick={false} // ОТКЛЮЧАЕМ зум по двойному клику
-        
+
         // Pan только средней кнопкой мыши или с зажатым пробелом
         panOnDrag={[1, 2]} // СКМ и ПКМ для pan
-        
+
         // === РЕЖИМ ВЫДЕЛЕНИЯ ===
         // Динамически меняется в зависимости от направления рисования рамки:
         // - Full: слева направо → только полностью попавшие в рамку
@@ -1323,10 +1327,10 @@ export function CanvasContent() {
         selectionMode={selectionMode}
         selectionOnDrag
         selectNodesOnDrag={false}
-        
+
         // Разрешаем выделение связей кликом
         edgesFocusable
-        
+
         // === АТРИБУТЫ ДОСТУПНОСТИ ===
         nodesDraggable
         nodesConnectable
@@ -1340,7 +1344,7 @@ export function CanvasContent() {
           size={2}
           color="hsl(var(--muted-foreground) / 0.3)"
         />
-        
+
         {/* ----- ЭЛЕМЕНТЫ УПРАВЛЕНИЯ ----- */}
         <Controls
           className="neuro-controls"
@@ -1348,7 +1352,7 @@ export function CanvasContent() {
           showFitView
           showInteractive={false}
         />
-        
+
         {/* ----- МИНИ-КАРТА ----- */}
         <MiniMap
           className="neuro-minimap"
@@ -1372,26 +1376,26 @@ export function CanvasContent() {
           </svg>
           <span className="text-xs text-muted-foreground hidden sm:inline">Ctrl+P</span>
         </button>
-        
+
         {/* Кнопка поддержки/донатов */}
         <DonateButtonTrigger onClick={() => setIsDonateOpen(true)} />
-        
+
         {/* Кнопка настроек */}
         <SettingsButton onClick={() => setIsSettingsOpen(true)} />
       </div>
-      
+
       {/* ----- МОДАЛЬНОЕ ОКНО НАСТРОЕК ----- */}
-      <SettingsModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
       />
-      
+
       {/* ----- МОДАЛЬНОЕ ОКНО ПОДДЕРЖКИ/ДОНАТОВ ----- */}
       <DonateModal
         isOpen={isDonateOpen}
         onClose={() => setIsDonateOpen(false)}
       />
-      
+
       {/* ----- ПОИСКОВАЯ ПАНЕЛЬ (СЕМАНТИЧЕСКИЙ ПОИСК) ----- */}
       <SearchBar
         isOpen={isSearchOpen}
@@ -1427,10 +1431,10 @@ export function CanvasContent() {
               <span className="text-xs font-medium min-w-[1ch]">{undoSteps}</span>
             )}
           </button>
-          
+
           {/* Разделитель */}
           <div className="w-px h-4 bg-border" />
-          
+
           {/* Кнопка Redo */}
           <button
             onClick={() => {
@@ -1456,7 +1460,7 @@ export function CanvasContent() {
             )}
           </button>
         </div>
-        
+
         {/* Кнопка пакетной регенерации (показывается только если есть stale ноды или идёт регенерация) */}
         {(staleNodesCount > 0 || isBatchRegenerating) && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">
@@ -1465,7 +1469,7 @@ export function CanvasContent() {
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
                 <span className="text-xs text-orange-600 dark:text-orange-400 font-medium">
-                  {batchRegenerationProgress 
+                  {batchRegenerationProgress
                     ? `${batchRegenerationProgress.completed}/${batchRegenerationProgress.total}`
                     : t.common.loading
                   }
@@ -1493,7 +1497,7 @@ export function CanvasContent() {
             )}
           </div>
         )}
-        
+
         {/* Индикатор сохранения */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur-sm border border-border shadow-sm">
           {/* Иконка статуса */}
@@ -1507,7 +1511,7 @@ export function CanvasContent() {
             // Всё сохранено
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
           )}
-          
+
           {/* Текст статуса */}
           <span className="text-xs text-muted-foreground">
             {isSaving ? (
@@ -1520,7 +1524,7 @@ export function CanvasContent() {
               t.canvas.ready
             )}
           </span>
-          
+
           {/* Кнопка ручного сохранения (дискетка) */}
           <button
             onClick={() => saveToFile()}
@@ -1544,25 +1548,25 @@ export function CanvasContent() {
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
           <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-destructive/10 border border-destructive/20 shadow-lg">
             {/* Иконка ошибки */}
-            <svg 
-              className="w-4 h-4 text-destructive" 
-              fill="none" 
-              viewBox="0 0 24 24" 
+            <svg
+              className="w-4 h-4 text-destructive"
+              fill="none"
+              viewBox="0 0 24 24"
               stroke="currentColor"
             >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={2} 
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" 
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            
+
             {/* Текст ошибки */}
             <span className="text-sm text-destructive">
               {persistError}
             </span>
-            
+
             {/* Кнопка закрытия */}
             <button
               onClick={clearPersistError}

@@ -32,15 +32,16 @@ import {
   X,
   Square,
   GripVertical,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCanvasStore } from '@/store/useCanvasStore';
-import { 
-  useSettingsStore, 
+import {
+  useSettingsStore,
   selectApiKey,
   selectApiBaseUrl,
   selectEmbeddingsBaseUrl,
-  selectModel, 
+  selectModel,
   selectUseSummarization,
   selectCorporateMode,
 } from '@/store/useSettingsStore';
@@ -96,118 +97,118 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // ЛОКАЛИЗАЦИЯ
   // ===========================================================================
-  
+
   const { t } = useTranslation();
-  
+
   // ===========================================================================
   // ZUSTAND ACTIONS & DATA
   // ===========================================================================
-  
+
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const markChildrenStale = useCanvasStore((s) => s.markChildrenStale);
-  
+
   /**
    * Action для проверки и снятия stale у потомков
    * Используется при blur для проверки восстановления контекста
    */
   const checkAndClearStale = useCanvasStore((s) => s.checkAndClearStale);
-  
+
   /**
    * Action для сохранения хэша контекста после генерации
    * Используется для автоматического снятия stale при возврате контекста
    */
   const saveContextHash = useCanvasStore((s) => s.saveContextHash);
-  
+
   /**
    * Action для уведомления о завершении генерации в пакетном режиме
    * Вызывается после успешной генерации, если идёт пакетная регенерация
    */
   const onBatchNodeComplete = useCanvasStore((s) => s.onBatchNodeComplete);
-  
+
   /**
    * Action для быстрого создания связанной карточки справа
    * Вызывается по нажатию Tab из textarea
    */
   const createLinkedNodeRight = useCanvasStore((s) => s.createLinkedNodeRight);
-  
+
   /**
    * Action для создания "сестринской" карточки (от того же родителя)
    * Вызывается по нажатию Ctrl+Enter из textarea
    */
   const createSiblingNode = useCanvasStore((s) => s.createSiblingNode);
-  
+
   /**
    * Action для создания карточки на основе цитаты
    */
   const createQuoteNode = useCanvasStore((s) => s.createQuoteNode);
-  
+
   /**
    * Action для сброса инвалидации цитаты
    */
   const clearQuoteInvalidation = useCanvasStore((s) => s.clearQuoteInvalidation);
-  
+
   /**
    * Action для обновления цитаты
    */
   const updateQuote = useCanvasStore((s) => s.updateQuote);
-  
+
   /**
    * Action для инициации режима выбора цитаты в родительской карточке
    * Вызывается из дочерней карточки с инвалидированной цитатой
    */
   const initiateQuoteSelectionInParent = useCanvasStore((s) => s.initiateQuoteSelectionInParent);
-  
+
   /**
    * Action для сброса режима цитирования
    */
   const clearQuoteModeActive = useCanvasStore((s) => s.clearQuoteModeActive);
-  
+
   /**
    * ID ноды, ожидающей фокус - используется для автофокуса новых карточек
    */
   const pendingFocusNodeId = useCanvasStore((s) => s.pendingFocusNodeId);
-  
+
   /**
    * Сброс pendingFocusNodeId после успешного фокуса
    */
   const clearPendingFocus = useCanvasStore((s) => s.clearPendingFocus);
-  
+
   /**
    * Получаем nodes и edges напрямую для правильного отслеживания изменений
    * Это позволяет React замечать изменения в данных нод (response, summary и т.д.)
    */
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
-  
+
   /**
    * API ключ из глобальных настроек
    * 
    * Используется для авторизации запросов к внешнему LLM API.
    */
   const apiKey = useSettingsStore(selectApiKey);
-  
+
   /**
    * Базовый URL API из глобальных настроек
    * 
    * Определяет к какому провайдеру будут отправляться запросы.
    */
   const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
-  
+
   /**
    * Базовый URL API для эмбеддингов из глобальных настроек
    * 
    * Используется для семантического поиска.
    */
   const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
-  
+
   /**
    * Модель из глобальных настроек
    * 
    * Название модели для генерации ответов (например "openai/gpt-4o").
    */
   const model = useSettingsStore(selectModel);
-  
+
   /**
    * Настройка суммаризации из глобальных настроек
    * 
@@ -215,7 +216,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * Когда false - для всех предков используется полный response (для моделей с большим контекстом)
    */
   const useSummarization = useSettingsStore(selectUseSummarization);
-  
+
   /**
    * Корпоративный режим из глобальных настроек
    * 
@@ -223,7 +224,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * в корпоративных сетях с SSL-инспекцией (DLP, прокси).
    */
   const corporateMode = useSettingsStore(selectCorporateMode);
-  
+
   /**
    * Модель эмбеддингов из глобальных настроек
    * 
@@ -231,7 +232,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * Разные провайдеры поддерживают разные модели эмбеддингов.
    */
   const embeddingsModel = useSettingsStore((s) => s.embeddingsModel);
-  
+
   /**
    * Вычисляем ПРЯМЫХ родителей через useMemo
    * 
@@ -241,7 +242,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   const directParents = useMemo(() => {
     const parents: NeuroNodeType[] = [];
-    
+
     // Приоритет 1: parentIds (массив родителей)
     if (data.parentIds && data.parentIds.length > 0) {
       data.parentIds.forEach((parentId) => {
@@ -252,7 +253,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       });
       return parents;
     }
-    
+
     // Приоритет 2: Ищем входящие связи (может быть несколько)
     const incomingEdges = edges.filter((e) => e.target === id);
     if (incomingEdges.length > 0) {
@@ -264,7 +265,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       });
       if (parents.length > 0) return parents;
     }
-    
+
     // Приоритет 3: parentId (обратная совместимость)
     if (data.parentId) {
       const parentNode = nodes.find((n) => n.id === data.parentId);
@@ -272,10 +273,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         parents.push(parentNode);
       }
     }
-    
+
     return parents;
   }, [id, data.parentIds, data.parentId, nodes, edges]);
-  
+
   /**
    * Вычисляем ПОЛНУЮ цепочку предков через useMemo
    * 
@@ -290,23 +291,23 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   const ancestorChain = useMemo(() => {
     const ancestors: NeuroNodeType[] = [];
-    
+
     // Если нет прямых родителей - пустая цепочка
     if (directParents.length === 0) return ancestors;
-    
+
     // Добавляем всех прямых родителей как первый "уровень"
     ancestors.push(...directParents);
-    
+
     // Очередь для BFS - начинаем с прямых родителей
     const queue: string[] = directParents.map((p) => p.id);
-    
+
     // Множество уже обработанных ID для избежания дубликатов и циклов
     const processedIds = new Set<string>(queue);
-    
+
     // Защита от бесконечных циклов
     const maxIterations = 500;
     let iterations = 0;
-    
+
     /**
      * Вспомогательная функция: получить всех родителей ноды
      * Проверяет parentIds, входящие edges и parentId
@@ -314,9 +315,9 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     const getParentsOfNode = (nodeId: string): NeuroNodeType[] => {
       const parents: NeuroNodeType[] = [];
       const node = nodes.find((n) => n.id === nodeId);
-      
+
       if (!node) return parents;
-      
+
       // Приоритет 1: parentIds (массив родителей)
       if (node.data.parentIds && node.data.parentIds.length > 0) {
         node.data.parentIds.forEach((pid) => {
@@ -327,7 +328,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         });
         return parents;
       }
-      
+
       // Приоритет 2: Входящие связи (edges)
       const incomingEdges = edges.filter((e) => e.target === nodeId);
       if (incomingEdges.length > 0) {
@@ -339,7 +340,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         });
         if (parents.length > 0) return parents;
       }
-      
+
       // Приоритет 3: parentId (обратная совместимость)
       if (node.data.parentId) {
         const parentNode = nodes.find((n) => n.id === node.data.parentId);
@@ -347,20 +348,20 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           parents.push(parentNode);
         }
       }
-      
+
       return parents;
     };
-    
+
     // BFS: обходим всё дерево предков
     while (queue.length > 0 && iterations < maxIterations) {
       iterations++;
-      
+
       // Берём следующую ноду из очереди
       const currentNodeId = queue.shift()!;
-      
+
       // Получаем всех родителей текущей ноды
       const parentsOfCurrent = getParentsOfNode(currentNodeId);
-      
+
       // Добавляем каждого родителя в предков и в очередь (если ещё не обработан)
       parentsOfCurrent.forEach((parent) => {
         if (!processedIds.has(parent.id)) {
@@ -370,10 +371,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         }
       });
     }
-    
+
     return ancestors;
   }, [directParents, nodes, edges]);
-  
+
   /**
    * Родительская нода (первый элемент списка прямых родителей)
    * Для backward compatibility
@@ -383,53 +384,53 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // ЛОКАЛЬНОЕ СОСТОЯНИЕ (для производительности)
   // ===========================================================================
-  
+
   /**
    * Локальное состояние для промпта во время редактирования
    * Синхронизируется с store только при blur или submit
    */
   const [localPrompt, setLocalPrompt] = useState(data.prompt);
-  
+
   /**
    * Режим редактирования текста вопроса
    * true - показываем textarea с фокусом
    * false - показываем div с текстом (можно драгать)
    */
   const [isEditing, setIsEditing] = useState(false);
-  
+
   /**
    * Streaming текст от AI - КРИТИЧНО хранить локально!
    * Иначе каждый chunk будет ре-рендерить весь Canvas
    */
   const [streamingText, setStreamingText] = useState('');
-  
+
   /**
    * Локальный флаг генерации (для UI отзывчивости)
    */
   const [isGenerating, setIsGenerating] = useState(false);
-  
+
   /**
    * Флаг успешного копирования (для feedback)
    */
   const [copied, setCopied] = useState(false);
-  
+
   /**
    * Сообщение об ошибке
    */
   const [error, setError] = useState<string | null>(null);
-  
+
   /**
    * НОВОЕ: Состояние раскрытости ответной части (слайдер)
    * Инициализируется из data.isAnswerExpanded для синхронизации с store
    * По умолчанию скрыта, автоматически раскрывается при первой генерации
    */
   const [isAnswerExpanded, setIsAnswerExpanded] = useState(data.isAnswerExpanded ?? false);
-  
+
   /**
    * Флаг: была ли уже первая генерация (для автораскрытия)
    */
   const [hasGeneratedOnce, setHasGeneratedOnce] = useState(Boolean(data.response));
-  
+
   /**
    * Флаг наличия вертикального скролла в ответной части
    * 
@@ -438,84 +439,84 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * - Если скролл есть → колёсико прокручивает контент
    */
   const [hasVerticalScroll, setHasVerticalScroll] = useState(false);
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ RESIZE (ИЗМЕНЕНИЕ ШИРИНЫ КАРТОЧКИ)
   // ===========================================================================
-  
+
   /**
    * Флаг активного resize (пользователь тянет ручку)
    */
   const [isResizing, setIsResizing] = useState(false);
-  
+
   /**
    * Текущая ширина карточки во время resize
    * Используется для мгновенного UI feedback
    */
   const [resizeWidth, setResizeWidth] = useState(data.width ?? DEFAULT_CARD_WIDTH);
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ ЦИТИРОВАНИЯ
   // ===========================================================================
-  
+
   /**
    * Режим цитирования активен
    * Когда true - пользователь может выделять текст для создания цитатной карточки
    */
   const [isQuoteMode, setIsQuoteMode] = useState(false);
-  
+
   /**
    * Выделенный текст для цитаты
    */
   const [selectedQuoteText, setSelectedQuoteText] = useState('');
-  
+
   // ===========================================================================
   // СОСТОЯНИЕ МОДАЛЬНОГО ОКНА КОНТЕКСТА
   // ===========================================================================
-  
+
   /**
    * Флаг открытости модального окна просмотра контекста
    * Открывается при клике на badge "Использован контекст от X родительских нод"
    */
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
-  
+
   // ===========================================================================
   // REFS
   // ===========================================================================
-  
+
   /**
    * Ref для textarea - используется для auto-focus и blur
    */
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  
+
   /**
    * Ref для question-section - для позиционирования Handle
    */
   const questionSectionRef = useRef<HTMLDivElement>(null);
-  
+
   /**
    * Ref для scrollable контейнера ответной части
    * Используется для перехвата события колёсика мыши
    */
   const answerScrollRef = useRef<HTMLDivElement>(null);
-  
+
   /**
    * Ref для контейнера контента ответа
    * Используется для отслеживания выделения текста при цитировании
    */
   const answerContentRef = useRef<HTMLDivElement>(null);
-  
+
   /**
    * AbortController для отмены streaming запроса
    */
   const abortControllerRef = useRef<AbortController | null>(null);
-  
+
   /**
    * Ref для хранения начальной позиции мыши при resize
    * Используется в обработчиках mousemove/mouseup
    */
   const resizeStartXRef = useRef<number>(0);
-  
+
   /**
    * Ref для хранения начальной ширины карточки при resize
    */
@@ -524,14 +525,14 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
-  
+
   /**
    * Синхронизация локального промпта при внешнем изменении data.prompt
    */
   useEffect(() => {
     setLocalPrompt(data.prompt);
   }, [data.prompt]);
-  
+
   /**
    * Auto-focus на input при создании новой ноды
    */
@@ -539,7 +540,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     if (!data.response && textareaRef.current) {
       // Включаем режим редактирования для новых нод
       setIsEditing(true);
-      
+
       // Небольшая задержка для завершения анимации появления
       const timer = setTimeout(() => {
         textareaRef.current?.focus();
@@ -547,7 +548,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       return () => clearTimeout(timer);
     }
   }, [data.response]);
-  
+
   /**
    * АВТОФОКУС ПРИ СОЗДАНИИ ЧЕРЕЗ TAB
    * 
@@ -559,7 +560,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     if (pendingFocusNodeId === id) {
       // Сначала включаем режим редактирования
       setIsEditing(true);
-      
+
       // Небольшая задержка для завершения рендера новой ноды
       const timer = setTimeout(() => {
         textareaRef.current?.focus();
@@ -569,7 +570,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       return () => clearTimeout(timer);
     }
   }, [pendingFocusNodeId, id, clearPendingFocus]);
-  
+
   /**
    * Автораскрытие ответной части при первой генерации
    */
@@ -579,7 +580,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       setHasGeneratedOnce(true);
     }
   }, [data.response, hasGeneratedOnce]);
-  
+
   /**
    * Синхронизация локального isAnswerExpanded с data.isAnswerExpanded из store
    * Это позволяет переключать состояние через глобальные горячие клавиши (Space)
@@ -591,7 +592,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.isAnswerExpanded]);
-  
+
   /**
    * Синхронизация локального isQuoteMode с data.isQuoteModeActive из store
    * 
@@ -610,8 +611,8 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.isQuoteModeActive]);
-  
-  
+
+
   /**
    * Синхронизация resizeWidth с data.width при внешнем изменении
    * (например, при загрузке сохранённого холста)
@@ -622,7 +623,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.width]);
-  
+
   /**
    * Отслеживание наличия вертикального скролла в ответной части
    * 
@@ -633,13 +634,13 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   useEffect(() => {
     const scrollContainer = answerScrollRef.current;
-    
+
     // Если контейнер не существует или ответ не раскрыт - скролла нет
     if (!scrollContainer || !isAnswerExpanded) {
       setHasVerticalScroll(false);
       return;
     }
-    
+
     /**
      * Функция проверки наличия скролла
      * Сравнивает высоту контента (scrollHeight) с высотой контейнера (clientHeight)
@@ -648,31 +649,31 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       const hasScroll = scrollContainer.scrollHeight > scrollContainer.clientHeight;
       setHasVerticalScroll(hasScroll);
     };
-    
+
     // Проверяем сразу при монтировании/изменении
     checkScroll();
-    
+
     // ResizeObserver для отслеживания изменений размера контента
     // (например, при streaming генерации текст добавляется постепенно)
     const resizeObserver = new ResizeObserver(() => {
       checkScroll();
     });
-    
+
     // Наблюдаем за контейнером
     resizeObserver.observe(scrollContainer);
-    
+
     // Также наблюдаем за содержимым контейнера (первый child)
     // чтобы отследить изменения высоты контента
     if (scrollContainer.firstElementChild) {
       resizeObserver.observe(scrollContainer.firstElementChild);
     }
-    
+
     // Cleanup при размонтировании
     return () => {
       resizeObserver.disconnect();
     };
   }, [isAnswerExpanded, data.response, streamingText]); // Пересчитываем при изменении контента или раскрытии
-  
+
   /**
    * Глобальные обработчики mousemove/mouseup для resize
    * 
@@ -683,7 +684,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   useEffect(() => {
     // Если resize не активен - обработчики не нужны
     if (!isResizing) return;
-    
+
     /**
      * Обработчик движения мыши во время resize
      * Вычисляет новую ширину и обновляет локальное состояние
@@ -691,26 +692,26 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     const handleMouseMove = (e: MouseEvent) => {
       // Предотвращаем выделение текста во время resize
       e.preventDefault();
-      
+
       // Вычисляем дельту относительно начальной позиции
       const deltaX = e.clientX - resizeStartXRef.current;
-      
+
       // Вычисляем новую ширину с ограничениями
       const rawWidth = resizeStartWidthRef.current + deltaX;
-      
+
       // Округляем до ближайших 10px для "магнитного" эффекта
       const snappedWidth = Math.round(rawWidth / 10) * 10;
-      
+
       // Применяем ограничения min/max
       const newWidth = Math.min(
         MAX_CARD_WIDTH,
         Math.max(MIN_CARD_WIDTH, snappedWidth)
       );
-      
+
       // Обновляем локальное состояние (мгновенный UI feedback)
       setResizeWidth(newWidth);
     };
-    
+
     /**
      * Обработчик отпускания кнопки мыши
      * Завершает resize и сохраняет ширину в store
@@ -718,15 +719,15 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     const handleMouseUp = () => {
       // Сохраняем финальную ширину в store
       updateNodeData(id, { width: resizeWidth });
-      
+
       // Завершаем resize
       setIsResizing(false);
     };
-    
+
     // Добавляем глобальные обработчики
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-    
+
     // Cleanup при размонтировании или завершении resize
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
@@ -737,7 +738,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // ОБРАБОТЧИКИ
   // ===========================================================================
-  
+
   /**
    * Обработчик нажатия клавиш в textarea
    * 
@@ -767,11 +768,11 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         textareaRef.current?.blur();
         return;
       }
-      
+
       // КРИТИЧНО: Блокируем propagation для ВСЕХ остальных клавиш!
       // Это предотвращает перехват React Flow (Delete удаляет ноду, стрелки двигают и т.д.)
       e.stopPropagation();
-      
+
       // =======================================================================
       // TAB - БЫСТРОЕ СОЗДАНИЕ НОВОЙ СВЯЗАННОЙ КАРТОЧКИ (ДОЧЕРНЕЙ)
       // =======================================================================
@@ -788,7 +789,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         // Проверяем что есть ответ и не идёт генерация
         if (data.response && !isGenerating) {
           e.preventDefault();
-          
+
           // Создаём новую карточку справа от текущей
           // Она автоматически получит:
           // - Связь (edge) от этой карточки
@@ -802,7 +803,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         e.preventDefault();
         return;
       }
-      
+
       // =======================================================================
       // CTRL+ENTER - СОЗДАНИЕ "СЕСТРИНСКОЙ" КАРТОЧКИ (АЛЬТЕРНАТИВНАЯ ВЕТКА)
       // =======================================================================
@@ -820,11 +821,11 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         // Проверяем что есть ответ и не идёт генерация
         if (data.response && !isGenerating && data.parentId) {
           e.preventDefault();
-          
+
           // Сворачиваем ответную часть текущей карточки
           // чтобы сестринская карточка не наезжала
           setIsAnswerExpanded(false);
-          
+
           // Создаём сестринскую карточку (от того же родителя)
           // Она автоматически получит:
           // - Связь (edge) от родителя этой карточки
@@ -841,14 +842,14 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         e.preventDefault();
         return;
       }
-      
+
       // Enter без Shift и без Ctrl - отправляем промпт на генерацию
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         handleGenerate();
         return;
       }
-      
+
       // Все остальные клавиши обрабатываются нативно браузером:
       // - Ctrl+A: выделить всё
       // - Ctrl+C/V/X: копирование/вставка/вырезание
@@ -864,7 +865,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [localPrompt, data.response, data.parentId, isGenerating, id, createLinkedNodeRight, createSiblingNode]
   );
-  
+
   /**
    * Обработчик изменения промпта
    * При изменении в Result mode - помечаем детей как stale
@@ -873,7 +874,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newValue = e.target.value;
       setLocalPrompt(newValue);
-      
+
       // Если есть ответ и меняем промпт - дети устаревают
       if (data.response) {
         markChildrenStale(id);
@@ -881,7 +882,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     },
     [data.response, id, markChildrenStale]
   );
-  
+
   /**
    * Сохранение промпта в store при потере фокуса
    * 
@@ -893,7 +894,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   const handlePromptBlur = useCallback(() => {
     setIsEditing(false); // Выходим из режима редактирования
-    
+
     if (localPrompt !== data.prompt) {
       // Промпт изменился - сохраняем в store
       // updateNodeData автоматически вызовет checkAndClearStale
@@ -915,7 +916,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       }
     }
   }, [id, localPrompt, data.prompt, data.response, updateNodeData, checkAndClearStale]);
-  
+
   /**
    * Генерация краткого резюме (summary) ответа
    * 
@@ -933,17 +934,17 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       updateNodeData(id, { summary: responseText });
       return;
     }
-    
+
     // Устанавливаем флаг генерации summary
     updateNodeData(id, { isSummarizing: true });
-    
+
     try {
       // Запрос к API суммаризации (без streaming)
       // Передаём API ключ и модель из настроек
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           text: responseText,
           apiKey: apiKey,
           apiBaseUrl: apiBaseUrl,
@@ -952,37 +953,37 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           corporateMode: corporateMode,
         }),
       });
-      
+
       if (!response.ok) {
         console.error('Summary generation failed:', response.status);
         // При ошибке - используем начало ответа как fallback summary
         const fallbackSummary = responseText.slice(0, 200) + '...';
-        updateNodeData(id, { 
+        updateNodeData(id, {
           summary: fallbackSummary,
-          isSummarizing: false 
+          isSummarizing: false
         });
         return;
       }
-      
+
       const data = await response.json();
-      
+
       // Сохраняем summary в store
-      updateNodeData(id, { 
+      updateNodeData(id, {
         summary: data.summary || responseText.slice(0, 200) + '...',
-        isSummarizing: false 
+        isSummarizing: false
       });
-      
+
     } catch (err) {
       console.error('Summary generation error:', err);
       // При ошибке - используем начало ответа как fallback summary
       const fallbackSummary = responseText.slice(0, 200) + '...';
-      updateNodeData(id, { 
+      updateNodeData(id, {
         summary: fallbackSummary,
-        isSummarizing: false 
+        isSummarizing: false
       });
     }
   }, [id, updateNodeData, apiKey, apiBaseUrl, model]);
-  
+
   /**
    * Построение ИЕРАРХИЧЕСКОГО контекста из цепочки предков
    * 
@@ -1003,16 +1004,21 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    * 1. Цитатным карточкам фокусироваться на конкретном фрагменте
    * 2. Карточкам с несколькими родителями объединять контекст
    * 3. Прямым потомкам иметь полный контекст для детальных вопросов
-   * 4. Более дальним потомкам иметь сжатый контекст без переполнения токенов
+   * 4. Более  /**
+   * Построение контекста из родительских нод
+   * Используется при генерации ответа
    * 
-   * @returns Форматированный контекст для AI или undefined если нет предков
+   * @returns строка контекста или undefined если нет родителей
    */
   const buildParentContext = useCallback((): string | undefined => {
     // Если нет прямых родителей - контекста нет
     if (directParents.length === 0) return undefined;
-    
+
+    // Получаем список исключенных нод
+    const excludedIds = data.excludedContextNodeIds || [];
+
     const contextParts: string[] = [];
-    
+
     // =======================================================================
     // ЧАСТЬ 1: КОНТЕКСТ ОТ ПРЯМЫХ РОДИТЕЛЕЙ
     // НОВОЕ: Поддержка НЕСКОЛЬКИХ родителей!
@@ -1021,157 +1027,152 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     // ВАЖНО: Логика обработки цитаты должна быть идентична ContextViewerModal
     // (см. ContextViewerModal.tsx строки 173-197)
     // =======================================================================
-    
+
     if (directParents.length === 1) {
       // ОДИН РОДИТЕЛЬ - стандартная логика
       const parent = directParents[0];
-      
-      if (parent && (parent.data.prompt || parent.data.response)) {
-        const parentParts: string[] = [];
-        parentParts.push('=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ ===');
-        
-        if (parent.data.prompt) {
-          parentParts.push(`Вопрос: ${parent.data.prompt}`);
+
+      // Проверяем исключение
+      if (!excludedIds.includes(parent.id)) {
+        if (parent && (parent.data.prompt || parent.data.response)) {
+          const parentParts: string[] = [];
+          parentParts.push('=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ ===');
+
+          if (parent.data.prompt) {
+            parentParts.push(`Вопрос: ${parent.data.prompt}`);
+          }
+
+          // ЦИТИРОВАНИЕ: Передаем И цитату, И контекст
+          if (data.quote && data.quoteSourceNodeId === parent.id) {
+            // 1. Цитата (дословно)
+            parentParts.push(`[Цитата]: "${data.quote}"`);
+
+            // 2. Контекст (summary или полный ответ)
+            // Пользователь хочет видеть и то и то
+            if (useSummarization && parent.data.summary) {
+              parentParts.push(`[Контекст]: ${parent.data.summary}`);
+            } else if (parent.data.response) {
+              parentParts.push(`[Контекст]: ${parent.data.response}`);
+            }
+          } else if (parent.data.response) {
+            // Обычная карточка - полный ответ родителя
+            parentParts.push(`Ответ: ${parent.data.response}`);
+          }
+
+          contextParts.push(parentParts.join('\n'));
         }
-        
-        // ЦИТИРОВАНИЕ: Если есть цитата и источник совпадает с родителем
-        // используем ЦИТАТУ вместо полного response
-        // (логика идентична ContextViewerModal строка 181-184)
-        if (data.quote && data.quoteSourceNodeId === parent.id) {
-          // Используем цитату - более сфокусированный контекст
-          parentParts.push(`Выделенная цитата: "${data.quote}"`);
-          parentParts.push('(Пользователь сфокусировался на этом фрагменте ответа)');
-        } else if (parent.data.response) {
-          // Обычная карточка - полный ответ родителя
-          parentParts.push(`Ответ: ${parent.data.response}`);
-        }
-        
-        contextParts.push(parentParts.join('\n'));
       }
     } else {
       // НЕСКОЛЬКО РОДИТЕЛЕЙ - добавляем контекст от каждого
       // ВАЖНО: Для каждого родителя проверяем цитату индивидуально
       // (логика идентична ContextViewerModal строка 173-197)
       directParents.forEach((parent, index) => {
-        if (parent && (parent.data.prompt || parent.data.response)) {
-          const parentParts: string[] = [];
-          parentParts.push(`=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ ${index + 1} ===`);
-          
-          if (parent.data.prompt) {
-            parentParts.push(`Вопрос: ${parent.data.prompt}`);
-          }
-          
-          // ЦИТИРОВАНИЕ: Если есть цитата и источник совпадает с этим родителем
-          // используем ЦИТАТУ вместо полного response
-          // (логика идентична ContextViewerModal строка 181-184)
-          if (data.quote && data.quoteSourceNodeId === parent.id) {
-            // Используем цитату - более сфокусированный контекст
-            parentParts.push(`Выделенная цитата: "${data.quote}"`);
-            parentParts.push('(Пользователь сфокусировался на этом фрагменте ответа)');
-          } else if (parent.data.response) {
-            // Обычная карточка - полный ответ родителя
-            parentParts.push(`Ответ: ${parent.data.response}`);
-          }
-          
-          contextParts.push(parentParts.join('\n'));
+        if (!parent) return;
+
+        // Пропускаем исключенные
+        if (excludedIds.includes(parent.id)) return;
+
+        const parentParts: string[] = [];
+        parentParts.push(`=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ №${index + 1} ===`);
+
+        if (parent.data.prompt) {
+          parentParts.push(`Вопрос: ${parent.data.prompt}`);
         }
+
+        // ЦИТИРОВАНИЕ:
+        if (data.quote && data.quoteSourceNodeId === parent.id) {
+          parentParts.push(`[Цитата]: "${data.quote}"`);
+          if (useSummarization && parent.data.summary) {
+            parentParts.push(`[Контекст]: ${parent.data.summary}`);
+          } else if (parent.data.response) {
+            parentParts.push(`[Контекст]: ${parent.data.response}`);
+          }
+        } else if (parent.data.response) {
+          parentParts.push(`Ответ: ${parent.data.response}`);
+        }
+
+        contextParts.push(parentParts.join('\n'));
       });
     }
-    
+
     // =======================================================================
-    // ЧАСТЬ 2: КОНТЕКСТ ОТ ДЕДУШЕК И ДАЛЕЕ
-    // Включает ВСЕХ предков, собранных через BFS (все родители каждого предка)
-    // 
-    // ВАЖНО: Логика обработки дедушек должна быть идентична ContextViewerModal
-    // 
-    // ПРИОРИТЕТ КОНТЕНТА для каждого предка:
-    // 1. Если кто-то из потомков (ближе к текущей ноде) ЦИТИРУЕТ этого предка
-    //    → используем эту цитату (она важнее чем summary)
-    // 2. Если у самого предка есть своя ЦИТАТА от его родителя
-    //    → передаём её ЦЕЛИКОМ (не суммаризируем!)
-    // 3. Если есть summary → используем summary
-    // 4. Fallback: сокращённый response до 300 символов
+    // ЧАСТЬ 2: ДЕДУШКИ И ДАЛЕЕ (КОНТЕКСТ ПРЕДКОВ)
     // =======================================================================
-    
-    // Получаем предков, исключая прямых родителей
+    // Используем summary для дальних предков, чтобы не перегружать контекст
+
+    // Фильтруем предков:
+    // 1. Исключаем прямых родителей (уже добавлены выше)
+    // 2. Исключаем ноды из списка excludedIds
     const grandparents = ancestorChain.filter(
-      (node) => !directParents.some((p) => p.id === node.id)
+      (node) => !directParents.some((p) => p.id === node.id) && !excludedIds.includes(node.id)
     );
-    
+
     /**
      * Вспомогательная функция: найти цитату на предка среди его потомков в цепочке
      * Если родитель или более близкий предок цитирует данного предка,
      * возвращаем эту цитату (она должна передаваться дальше по цепочке)
      */
-    const findQuoteForAncestor = (ancestorId: string): string | null => {
-      // Проверяем прямых родителей текущей карточки
+    const findQuoteForAncestorSimpler = (ancestorId: string): string | null => {
+      // Direct parents
       for (const parent of directParents) {
-        if (parent.data.quoteSourceNodeId === ancestorId && parent.data.quote) {
-          return parent.data.quote;
-        }
+        if (parent.data.quoteSourceNodeId === ancestorId && parent.data.quote) return parent.data.quote;
       }
-      
-      // Проверяем всех предков (кроме самого искомого)
-      // Ищем среди тех, кто "ближе" к текущей ноде
+      // Ancestors - filter excluded ones? The quoter itself might be excluded?
+      // If a NODE is excluded from context, its QUOTE should also probably be excluded, 
+      // BUT current implementation only excludes the content/summary of that node.
+      // If node A quotes B, and we exclude B, we don't see B's content.
+      // If we exclude A, we don't see A's content AND A's quote of B?
+      // Yes, if A is excluded, it's skipped entirely.
+
+      // So here we only check non-excluded ancestors for quotes
       for (const ancestor of ancestorChain) {
-        if (ancestor.id === ancestorId) continue; // Пропускаем самого предка
-        if (ancestor.data.quoteSourceNodeId === ancestorId && ancestor.data.quote) {
-          return ancestor.data.quote;
-        }
+        if (excludedIds.includes(ancestor.id)) continue;
+        if (ancestor.id === ancestorId) continue;
+        if (ancestor.data.quoteSourceNodeId === ancestorId && ancestor.data.quote) return ancestor.data.quote;
       }
-      
       return null;
     };
-    
-    const grandparentsContext = grandparents
-      .filter((node) => node.data.prompt || node.data.response || node.data.summary)
-      .map((node, idx) => {
-        // Определяем название поколения — компактный формат с номером
-        // idx = 0 это первый предок после родителя (поколение 1), idx = 1 — поколение 2, и т.д.
-        const generationName = `Предок [${idx + 1}]`;
-        
-        const parts: string[] = [];
-        
-        // Добавляем вопрос предка
-        if (node.data.prompt) {
-          parts.push(`Вопрос: ${node.data.prompt}`);
+
+
+    grandparents.forEach((ancestor, index) => {
+      if (!ancestor) return;
+
+      const ancestorParts: string[] = [];
+      ancestorParts.push(`=== КОНТЕКСТ ПРЕДКА (Уровень -${index + 2}) ===`); // Условно
+
+      if (ancestor.data.prompt) {
+        ancestorParts.push(`Вопрос: ${ancestor.data.prompt}`);
+      }
+
+      // Check for quotes from descendants
+      const quoteFromDescendant = findQuoteForAncestorSimpler(ancestor.id);
+
+      if (quoteFromDescendant) {
+        ancestorParts.push(`[Цитата (из потомка)]: "${quoteFromDescendant}"`);
+
+        if (useSummarization && ancestor.data.summary) {
+          ancestorParts.push(`[Контекст]: ${ancestor.data.summary}`);
+        } else if (ancestor.data.response) {
+          // Fallback truncate
+          const text = !useSummarization ? ancestor.data.response : (ancestor.data.response.slice(0, 500) + '...');
+          ancestorParts.push(`[Контекст]: ${text}`);
         }
-        
-        // ПРИОРИТЕТ 1: Проверяем, цитирует ли кто-то из потомков этого предка
-        // Если да - используем эту цитату (она должна "просачиваться" вниз по цепочке)
-        const quoteFromDescendant = findQuoteForAncestor(node.id);
-        if (quoteFromDescendant) {
-          parts.push(`Цитата (дословно): "${quoteFromDescendant}"`);
-        }
-        // РЕЖИМ ПОЛНОГО КОНТЕКСТА: если суммаризация выключена - всегда полный response
-        else if (!useSummarization && node.data.response) {
-          // Полный ответ без сокращений (для моделей с большим контекстом)
-          parts.push(`Полный ответ: ${node.data.response}`);
-        }
-        // ПРИОРИТЕТ 2: Если есть summary - используем его (режим суммаризации включён)
-        else if (node.data.summary) {
-          parts.push(`Краткий ответ: ${node.data.summary}`);
-        }
-        // ПРИОРИТЕТ 3: Fallback на полный response (суммаризация включена, но summary ещё нет)
-        // ВАЖНО: node.data.quote — это цитата которую предок ПОЛУЧИЛ от своего родителя,
-        // а НЕ его ответ! Потомкам нужно передавать response предка.
-        else if (node.data.response) {
-          // При включённой суммаризации всё равно передаём полный ответ,
-          // потому что summary ещё не готов (fallback поведение)
-          parts.push(`Полный ответ: ${node.data.response}`);
-        }
-        
-        return `[${generationName}]\n${parts.join('\n')}`;
-      });
-    
-    if (grandparentsContext.length > 0) {
-      contextParts.push('=== КОНТЕКСТ ИЗ ПРЕДЫДУЩИХ КАРТОЧЕК (прапредки) ===');
-      contextParts.push(grandparentsContext.join('\n\n'));
-    }
-    
-    return contextParts.length > 0 ? contextParts.join('\n\n') : undefined;
-  }, [directParents, ancestorChain, data.quote, data.quoteSourceNodeId, useSummarization]);
-  
+      } else if (!useSummarization && ancestor.data.response) {
+        // Full context mode
+        ancestorParts.push(`Ответ: ${ancestor.data.response}`);
+      } else if (ancestor.data.summary) {
+        ancestorParts.push(`Суть ответа: ${ancestor.data.summary}`);
+      } else if (ancestor.data.response) {
+        // Fallback summary
+        ancestorParts.push(`Суть ответа: ${ancestor.data.response.slice(0, 300)}...`);
+      }
+
+      contextParts.push(ancestorParts.join('\n'));
+    });
+
+    return contextParts.join('\n\n');
+  }, [directParents, ancestorChain, data.quote, data.quoteSourceNodeId, useSummarization, data.excludedContextNodeIds]);
+
   /**
    * Запуск генерации AI ответа
    * Использует streaming для отзывчивого UI
@@ -1180,39 +1181,39 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const handleGenerate = useCallback(async () => {
     // Проверяем что есть текст
     if (!localPrompt.trim()) return;
-    
+
     // Отменяем предыдущий запрос если есть
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    
+
     // Создаём новый AbortController
     abortControllerRef.current = new AbortController();
-    
+
     // Сбрасываем состояние
     setError(null);
     setStreamingText('');
     setIsGenerating(true);
-    
+
     // Автоматически раскрываем ответную часть при генерации
     setIsAnswerExpanded(true);
-    
+
     // Сохраняем промпт в store
-    updateNodeData(id, { 
+    updateNodeData(id, {
       prompt: localPrompt,
       isGenerating: true,
       mode: 'result', // Переключаемся в Result mode
     });
-    
+
     try {
       // Проверяем наличие API ключа
       if (!apiKey) {
         throw new Error(t.node.apiKeyMissing);
       }
-      
+
       // Получаем контекст от родительской ноды
       const parentContext = buildParentContext();
-      
+
       // Запрос к API с контекстом
       // Передаём API ключ и модель из настроек
       const response = await fetch('/api/chat', {
@@ -1233,43 +1234,43 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         }),
         signal: abortControllerRef.current.signal,
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       // Проверяем что есть body для streaming
       if (!response.body) {
         throw new Error('Response body is null');
       }
-      
+
       // Читаем stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
-      
+
       while (true) {
         const { done, value } = await reader.read();
-        
+
         if (done) break;
-        
+
         // Декодируем chunk
         const chunk = decoder.decode(value, { stream: true });
-        
+
         // Парсим SSE формат (data: {...}\n\n)
         const lines = chunk.split('\n');
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const jsonStr = line.slice(6);
-            
+
             // Проверяем на [DONE] маркер
             if (jsonStr === '[DONE]') continue;
-            
+
             try {
               const parsed = JSON.parse(jsonStr);
               const content = parsed.choices?.[0]?.delta?.content || '';
-              
+
               if (content) {
                 fullText += content;
                 // Обновляем локальное состояние (НЕ store!)
@@ -1281,28 +1282,28 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           }
         }
       }
-      
+
       // Коммитим финальный результат в store
       updateNodeData(id, {
         response: fullText,
         isGenerating: false,
         isStale: false,
       });
-      
+
       // =======================================================================
       // СОХРАНЕНИЕ ХЭША КОНТЕКСТА
       // Сохраняем "эталонный" хэш контекста с которым был сгенерирован ответ.
       // Это позволит автоматически снять stale если контекст вернётся к этому состоянию.
       // =======================================================================
       saveContextHash(id);
-      
+
       // =======================================================================
       // УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ В ПАКЕТНОМ РЕЖИМЕ
       // Если идёт пакетная регенерация - уведомляем store о завершении
       // Это позволяет перейти к следующему уровню когда все ноды текущего завершены
       // =======================================================================
       onBatchNodeComplete(id);
-      
+
       // =======================================================================
       // ГЕНЕРАЦИЯ ЭМБЕДДИНГА ДЛЯ СЕМАНТИЧЕСКОГО ПОИСКА
       // После успешной генерации ответа вычисляем эмбеддинг карточки
@@ -1318,11 +1319,11 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             if (canvasId) {
               // Передаём модель эмбеддингов для корректной векторизации
               generateAndSaveEmbedding(
-                id, 
-                canvasId, 
-                localPrompt, 
-                fullText, 
-                apiKey, 
+                id,
+                canvasId,
+                localPrompt,
+                fullText,
+                apiKey,
                 embeddingsBaseUrl,
                 corporateMode,
                 embeddingsModel
@@ -1339,10 +1340,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           });
         });
       }
-      
+
       // Отмечаем что генерация была
       setHasGeneratedOnce(true);
-      
+
       // =======================================================================
       // ГЕНЕРАЦИЯ SUMMARY (в фоне, не блокирует UI)
       // Summary используется для передачи контекста внукам и далее
@@ -1353,17 +1354,17 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       if (useSummarization) {
         generateSummary(fullText);
       }
-      
+
     } catch (err) {
       // Игнорируем ошибки отмены
       if (err instanceof Error && err.name === 'AbortError') {
         return;
       }
-      
+
       // Показываем ошибку
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setError(errorMessage);
-      
+
       updateNodeData(id, {
         isGenerating: false,
       });
@@ -1372,7 +1373,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       abortControllerRef.current = null;
     }
   }, [id, localPrompt, updateNodeData, buildParentContext, generateSummary, useSummarization, apiKey, model, saveContextHash, onBatchNodeComplete, t.node.apiKeyMissing]);
-  
+
   /**
    * Регенерация ответа
    * Сбрасывает response и summary, затем запускает генерацию заново
@@ -1380,19 +1381,19 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const handleRegenerate = useCallback(() => {
     // Сбрасываем ответ и summary, затем запускаем генерацию заново
     setStreamingText('');
-    updateNodeData(id, { 
-      response: null, 
+    updateNodeData(id, {
+      response: null,
       summary: null // Сбрасываем summary - будет сгенерирован заново
     });
     handleGenerate();
   }, [id, updateNodeData, handleGenerate]);
-  
+
   /**
    * Ref для отслеживания уже обработанных pendingRegenerate
    * Предотвращает повторный запуск при ре-рендере
    */
   const pendingRegenerateHandledRef = useRef(false);
-  
+
   /**
    * Авто-регенерация при установке флага pendingRegenerate
    * 
@@ -1410,26 +1411,26 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   useEffect(() => {
     if (data.pendingRegenerate && localPrompt.trim() && !pendingRegenerateHandledRef.current) {
       console.log('[NeuroNode] Запуск авто-регенерации для:', id);
-      
+
       // Помечаем как обработанное ДО вызова, чтобы избежать дублей
       pendingRegenerateHandledRef.current = true;
-      
+
       // Сбрасываем флаг в store
       updateNodeData(id, { pendingRegenerate: false });
-      
+
       // Вызываем регенерацию СИНХРОННО (без setTimeout)
       // setTimeout вызывал проблемы: cleanup отменял таймер при ре-рендере
       console.log('[NeuroNode] Вызов handleRegenerate для:', id);
       handleRegenerate();
     }
-    
+
     // Сбрасываем ref когда pendingRegenerate становится false
     if (!data.pendingRegenerate) {
       pendingRegenerateHandledRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.pendingRegenerate, id, localPrompt, updateNodeData, handleRegenerate]);
-  
+
   /**
    * Остановка генерации ответа
    * 
@@ -1452,22 +1453,22 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     // Сбрасываем локальное состояние генерации
     setIsGenerating(false);
-    
+
     // Сохраняем уже сгенерированный текст (если есть)
     // Это позволяет не терять частично сгенерированный ответ
     if (streamingText.trim()) {
-      updateNodeData(id, { 
+      updateNodeData(id, {
         response: streamingText,
         isGenerating: false,
         isStale: false, // Сбрасываем stale - ответ актуален
       });
-      
+
       // Отмечаем что генерация была (для UI)
       setHasGeneratedOnce(true);
-      
+
       console.log('[NeuroNode] Генерация остановлена, сохранён частичный ответ:', streamingText.length, 'символов');
     } else {
       // Текста нет - просто обновляем флаг
@@ -1475,14 +1476,14 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       console.log('[NeuroNode] Генерация остановлена (текст не сгенерирован)');
     }
   }, [id, updateNodeData, streamingText]);
-  
+
   /**
    * Копирование ответа в буфер обмена
    */
   const handleCopy = useCallback(async () => {
     const textToCopy = data.response || streamingText;
     if (!textToCopy) return;
-    
+
     try {
       await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
@@ -1491,7 +1492,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       console.error('Failed to copy:', err);
     }
   }, [data.response, streamingText]);
-  
+
   /**
    * Удаление ноды
    */
@@ -1502,7 +1503,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     }
     removeNode(id);
   }, [id, removeNode]);
-  
+
   /**
    * Переключение раскрытости ответной части
    * Обновляет как локальное состояние, так и store для синхронизации
@@ -1513,7 +1514,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     // Синхронизируем со store для персистентности и глобальных хоткеев
     updateNodeData(id, { isAnswerExpanded: newValue });
   }, [isAnswerExpanded, id, updateNodeData]);
-  
+
   /**
    * Обработчик колёсика мыши для ответной части
    * 
@@ -1530,10 +1531,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   const handleAnswerWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     const scrollContainer = answerScrollRef.current;
-    
+
     // Если контейнера нет - пропускаем событие (на всякий случай)
     if (!scrollContainer) return;
-    
+
     // =======================================================================
     // СЛУЧАЙ 1: Нет вертикального скролла
     // Контент помещается полностью → колёсико должно зуммировать холст
@@ -1543,43 +1544,43 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       // Не вызываем stopPropagation() - событие уйдёт в React Flow
       return;
     }
-    
+
     // =======================================================================
     // СЛУЧАЙ 2: Есть скролл - проверяем edge-cases
     // Если достигли края и продолжаем крутить в ту же сторону → зум холста
     // =======================================================================
-    
+
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     const isAtTop = scrollTop <= 0;
     const isAtBottom = scrollTop + clientHeight >= scrollHeight - 1; // -1 для погрешности
-    
+
     // Направление прокрутки: deltaY > 0 = вниз, deltaY < 0 = вверх
     const scrollingDown = e.deltaY > 0;
     const scrollingUp = e.deltaY < 0;
-    
+
     // Edge-case: достигли верха и крутим вверх → зум
     if (isAtTop && scrollingUp) {
       // Не блокируем - пусть React Flow зуммирует
       return;
     }
-    
+
     // Edge-case: достигли низа и крутим вниз → зум
     if (isAtBottom && scrollingDown) {
       // Не блокируем - пусть React Flow зуммирует
       return;
     }
-    
+
     // =======================================================================
     // СЛУЧАЙ 3: Скролл есть и не на краю → прокручиваем контент
     // Блокируем событие чтобы React Flow не получил его
     // =======================================================================
     e.stopPropagation();
   }, [hasVerticalScroll]);
-  
+
   // ===========================================================================
   // ОБРАБОТЧИКИ ЦИТИРОВАНИЯ
   // ===========================================================================
-  
+
   /**
    * Включение режима цитирования
    * Позволяет пользователю выделить текст для создания цитатной карточки
@@ -1588,7 +1589,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     setIsQuoteMode(true);
     setSelectedQuoteText('');
   }, []);
-  
+
   /**
    * Выход из режима цитирования
    * Сбрасывает все состояния цитирования (локальные и в store)
@@ -1603,7 +1604,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       clearQuoteModeActive(id);
     }
   }, [id, data.isQuoteModeActive, clearQuoteModeActive]);
-  
+
   /**
    * Обработчик события mouseup для отслеживания выделения текста
    * 
@@ -1613,32 +1614,32 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const handleTextSelection = useCallback(() => {
     // Работаем только в режиме цитирования
     if (!isQuoteMode) return;
-    
+
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       // Нет выделения
       setSelectedQuoteText('');
       return;
     }
-    
+
     const selectedText = selection.toString().trim();
     if (!selectedText) {
       setSelectedQuoteText('');
       return;
     }
-    
+
     // Проверяем что выделение внутри контейнера ответа
     const range = selection.getRangeAt(0);
     const container = answerContentRef.current;
-    
+
     if (!container || !container.contains(range.commonAncestorContainer)) {
       // Выделение вне контейнера ответа - игнорируем
       return;
     }
-    
+
     setSelectedQuoteText(selectedText);
   }, [isQuoteMode]);
-  
+
   /**
    * Создание карточки на основе выделенной цитаты
    * 
@@ -1650,7 +1651,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
    */
   const handleCreateQuoteCard = useCallback(() => {
     if (!selectedQuoteText || !data.response) return;
-    
+
     // Проверяем: режим был инициирован дочерней карточкой?
     if (data.quoteModeInitiatedByNodeId) {
       // Обновляем цитату в дочерней карточке
@@ -1660,7 +1661,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         id,                               // ID этой ноды (источник цитаты)
         data.response                     // Текущий response для отслеживания изменений
       );
-      
+
       console.log(
         '[NeuroNode] Обновлена цитата в дочерней карточке:',
         data.quoteModeInitiatedByNodeId,
@@ -1671,7 +1672,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       // Создаём новую цитатную карточку
       createQuoteNode(id, selectedQuoteText);
     }
-    
+
     // Выходим из режима цитирования
     handleExitQuoteMode();
   }, [
@@ -1683,7 +1684,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     createQuoteNode,
     handleExitQuoteMode
   ]);
-  
+
   /**
    * Сброс инвалидации цитаты и очистка полей
    * Позволяет пользователю выделить новую цитату
@@ -1692,7 +1693,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const handleClearQuoteInvalidation = useCallback(() => {
     clearQuoteInvalidation(id);
   }, [id, clearQuoteInvalidation]);
-  
+
   /**
    * Инициация выбора новой цитаты в родительской карточке
    * 
@@ -1707,7 +1708,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const handleInitiateQuoteSelectionInParent = useCallback(() => {
     initiateQuoteSelectionInParent(id);
   }, [id, initiateQuoteSelectionInParent]);
-  
+
   /**
    * Обновление цитаты в текущей карточке
    * Используется когда у карточки уже была цитата, но она инвалидирована
@@ -1715,18 +1716,46 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleUpdateQuote = useCallback(() => {
     if (!selectedQuoteText || !parentNode?.data.response) return;
-    
+
     // Обновляем цитату
     updateQuote(id, selectedQuoteText, parentNode.id, parentNode.data.response);
-    
+
     // Выходим из режима цитирования
     handleExitQuoteMode();
   }, [selectedQuoteText, parentNode, id, updateQuote, handleExitQuoteMode]);
-  
+
+  /**
+   * Открытие модального окна контекста
+   */
+  const handleOpenContextModal = useCallback(() => {
+    setIsContextModalOpen(true);
+  }, []);
+
+  /**
+   * Обработчик переключения исключения ноды из контекста
+   */
+  const handleToggleContextItem = useCallback((targetNodeId: string) => {
+    // Получаем текущий список исключенных
+    const currentExcluded = data.excludedContextNodeIds || [];
+
+    let newExcluded: string[];
+
+    if (currentExcluded.includes(targetNodeId)) {
+      // Существует -> удаляем (включаем обратно)
+      newExcluded = currentExcluded.filter(id => id !== targetNodeId);
+    } else {
+      // Не существует -> добавляем (исключаем)
+      newExcluded = [...currentExcluded, targetNodeId];
+    }
+
+    // Обновляем данные ноды
+    updateNodeData(id, { excludedContextNodeIds: newExcluded });
+  }, [data.excludedContextNodeIds, id, updateNodeData]);
+
   // ===========================================================================
   // ОБРАБОТЧИКИ RESIZE (ИЗМЕНЕНИЕ ШИРИНЫ КАРТОЧКИ)
   // ===========================================================================
-  
+
   /**
    * Начало resize при mousedown на ручке
    * 
@@ -1737,11 +1766,11 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     // Предотвращаем перетаскивание карточки и другие действия
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Сохраняем начальные значения в refs
     resizeStartXRef.current = e.clientX;
     resizeStartWidthRef.current = resizeWidth;
-    
+
     // Активируем режим resize
     setIsResizing(true);
   }, [resizeWidth]);
@@ -1749,31 +1778,31 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // ВЫЧИСЛЯЕМЫЕ ЗНАЧЕНИЯ
   // ===========================================================================
-  
+
   /**
    * Текст для отображения (streaming или финальный)
    */
   const displayText = isGenerating ? streamingText : data.response;
-  
+
   /**
    * Есть ли контент для отображения
    */
   const hasContent = Boolean(displayText);
-  
+
   /**
    * Есть ли контекст от предков
    * Проверяем наличие response у любого прямого родителя ИЛИ summary у более дальних предков
    */
   const hasParentContext = Boolean(
-    directParents.some((p) => p.data.response) || 
+    directParents.some((p) => p.data.response) ||
     ancestorChain.some((node) => node.data.summary)
   );
-  
+
   /**
    * Показывать ли ответную часть (есть контент или идёт генерация или была ошибка)
    */
   const showAnswerSection = hasContent || isGenerating || error;
-  
+
   /**
    * Мемоизированный Markdown компонент для производительности
    */
@@ -1786,15 +1815,15 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // ===========================================================================
   // РЕНДЕР
   // ===========================================================================
-  
+
   return (
-    <div 
+    <div
       className={cn(
         'neuro-node-wrapper relative',
         // Во время resize отключаем transition для мгновенного отклика
         isResizing && 'neuro-node-wrapper--resizing'
       )}
-      style={{ 
+      style={{
         width: resizeWidth,
       }}
     >
@@ -1807,16 +1836,16 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           'neuro-node',
           'bg-card rounded-xl border border-border',
           'shadow-lg backdrop-blur-sm',
-          
+
           // Анимация морфинга
           'transition-all duration-300 ease-out',
-          
+
           // Состояние выделения
           selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
-          
+
           // STALE состояние - ЯРКИЙ ОРАНЖЕВЫЙ!
           data.isStale && !data.isQuoteInvalidated && 'neuro-node--stale',
-          
+
           // ЦИТАТА ИНВАЛИДИРОВАНА - КРАСНАЯ ПОДСВЕТКА!
           data.isQuoteInvalidated && 'neuro-node--quote-invalid'
         )}
@@ -1826,7 +1855,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             Содержит: вопрос, badges, кнопки
             Handle позиционируются по центру этой секции
             ================================================================= */}
-        <div 
+        <div
           ref={questionSectionRef}
           className="neuro-question-section relative p-4"
         >
@@ -1843,7 +1872,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               '!absolute !left-0 !top-1/2 !-translate-x-1/2 !-translate-y-1/2',
             )}
           />
-          
+
           {/* --- HANDLE: ВЫХОД (правая сторона) - по центру question section --- */}
           <Handle
             type="source"
@@ -1857,7 +1886,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               '!absolute !right-0 !top-1/2 !translate-x-1/2 !-translate-y-1/2',
             )}
           />
-          
+
           {/* Контекст родителя badge - КЛИКАБЕЛЬНЫЙ */}
           {hasParentContext && !data.isStale && (
             <button
@@ -1865,10 +1894,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               onPointerDown={(e) => e.stopPropagation()}
               className={cn(
                 'flex items-center gap-1 text-xs mb-2',
-                'text-blue-600 dark:text-blue-400',
-                // Hover эффекты для индикации кликабельности
-                'hover:text-blue-700 dark:hover:text-blue-300',
-                'hover:bg-blue-50 dark:hover:bg-blue-950/30',
+                // Цвет зависит от фильтрации
+                data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+                  ? 'text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30'
+                  : 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30',
                 // Стили кнопки
                 'rounded-md px-2 py-1 -ml-2',
                 'transition-colors duration-150',
@@ -1878,19 +1907,30 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               )}
               title={t.node.viewFullContext}
             >
-              <span className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="underline underline-offset-2 decoration-blue-400/50">
+              <span className={cn(
+                "w-2 h-2 rounded-full",
+                data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+                  ? "bg-orange-500"
+                  : "bg-blue-500"
+              )} />
+              <span className={cn(
+                "underline underline-offset-2",
+                data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+                  ? "decoration-orange-400/50"
+                  : "decoration-blue-400/50"
+              )}>
                 {directParents.length > 1
                   ? format(t.node.multipleParentContextUsed, { count: directParents.length })
                   : t.node.parentContextUsed
                 }
+                {data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0 && " *"}
               </span>
             </button>
           )}
-          
+
           {/* Stale badge - ЯРКИЙ с кнопкой регенерации */}
           {data.isStale && !data.isQuoteInvalidated && (
-            <div 
+            <div
               className={cn(
                 'flex items-center justify-between gap-2 mb-2 p-2 rounded-lg',
                 'bg-orange-50 dark:bg-orange-950/30',
@@ -1934,7 +1974,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               )}
             </div>
           )}
-          
+
           {/* =================================================================
               СЕКЦИЯ ЦИТАТЫ (если карточка создана на основе цитаты)
               Показывает выделенный фрагмент текста из родительской ноды
@@ -1942,7 +1982,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               user-select: none в CSS запрещает выделение текста
               ================================================================= */}
           {data.quote && (
-            <div 
+            <div
               className={cn(
                 'quote-section mb-3 p-3 rounded-lg',
                 'bg-muted/50 border-l-4',
@@ -1958,23 +1998,9 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                   <Quote className="w-3.5 h-3.5" />
                   <span>{t.node.quoteFromParent}</span>
                 </div>
-                
-                {/* Кнопка изменения цитаты (всегда доступна, не только при инвалидации) */}
-                {!data.isQuoteInvalidated && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleInitiateQuoteSelectionInParent}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    className="h-6 px-2 text-xs text-muted-foreground hover:text-primary nodrag"
-                    title={t.node.selectAnotherQuote}
-                  >
-                    <RefreshCw className="w-3 h-3 mr-1" />
-                    {t.node.changeQuote}
-                  </Button>
-                )}
+
               </div>
-              
+
               {/* Текст цитаты */}
               <blockquote className={cn(
                 'text-sm italic text-foreground/80',
@@ -1982,29 +2008,29 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               )}>
                 &ldquo;{data.quote}&rdquo;
               </blockquote>
-              
-                              {/* Предупреждение об инвалидации */}
-                              {data.isQuoteInvalidated && (
-                                <div className="mt-3 p-2 rounded bg-red-100/50 dark:bg-red-900/30">
-                                  <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400 font-medium mb-2">
-                                    <AlertCircle className="w-3.5 h-3.5" />
-                                    <span>{t.node.quoteInvalidated}</span>
-                                  </div>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={handleInitiateQuoteSelectionInParent}
-                                    onPointerDown={(e) => e.stopPropagation()}
-                                    className="text-xs h-7 border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 nodrag"
-                                  >
-                                    <RefreshCw className="w-3 h-3 mr-1.5" />
-                                    {t.node.selectNewQuote}
-                                  </Button>
-                                </div>
-                              )}
+
+              {/* Предупреждение об инвалидации */}
+              {data.isQuoteInvalidated && (
+                <div className="mt-3 p-2 rounded bg-red-100/50 dark:bg-red-900/30">
+                  <div className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400 font-medium mb-2">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>{t.node.quoteInvalidated}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleInitiateQuoteSelectionInParent}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="text-xs h-7 border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 nodrag"
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                    {t.node.selectNewQuote}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
-          
+
           {/* Поле ввода вопроса с кнопкой генерации справа */}
           {/* flex items-end - кнопка прижата к нижнему краю поля ввода */}
           <div className="flex items-end gap-2">
@@ -2076,7 +2102,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 )}
               </div>
             )}
-            
+
             {/* Кнопка генерации / остановки - справа от поля ввода, прижата к низу */}
             {/* КРИТИЧНО: nodrag + stopPropagation предотвращают перехват клика React Flow */}
             {/* 
@@ -2125,9 +2151,9 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
               )}
             </button>
           </div>
-          
+
         </div>
-        
+
         {/* =================================================================
             ANSWER SECTION (нижняя часть) - выезжающий слайдер
             Фиксированная высота 400px с вертикальным скроллом
@@ -2138,7 +2164,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             {/* БЕЗ nodrag на контейнере - позволяет перемещать карточку за эту область */}
             {/* neuro-answer-toolbar запрещает выделение текста (см. globals.css) */}
             {/* nodrag остаётся ТОЛЬКО на кнопках внутри */}
-            <div 
+            <div
               className="neuro-answer-toolbar flex items-center justify-between px-2 py-1 border-t border-border bg-muted/30"
             >
               {/* Левая часть: кнопки копирования и цитирования */}
@@ -2161,7 +2187,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                     )}
                   </Button>
                 )}
-                
+
                 {/* Кнопка цитирования */}
                 {hasContent && !isGenerating && (
                   <div className="flex items-center gap-1">
@@ -2182,30 +2208,30 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                         <Quote className="w-4 h-4" />
                       )}
                     </Button>
-                    
-                                    {/* Кнопка создания/обновления карточки (только когда есть выделение) */}
-                                    {isQuoteMode && selectedQuoteText && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={handleCreateQuoteCard}
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                        className="h-8 px-2 text-primary hover:text-primary hover:bg-primary/10 gap-1.5 animate-in fade-in slide-in-from-left-2 duration-200 nodrag"
-                                        title={data.quoteModeInitiatedByNodeId 
-                                          ? t.node.updateQuote
-                                          : t.node.createQuoteCard
-                                        }
-                                      >
-                                        <PlusCircle className="w-4 h-4" />
-                                        <span className="text-xs font-medium">
-                                          {data.quoteModeInitiatedByNodeId ? t.common.update : t.common.create}
-                                        </span>
-                                      </Button>
-                                    )}
+
+                    {/* Кнопка создания/обновления карточки (только когда есть выделение) */}
+                    {isQuoteMode && selectedQuoteText && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCreateQuoteCard}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        className="h-8 px-2 text-primary hover:text-primary hover:bg-primary/10 gap-1.5 animate-in fade-in slide-in-from-left-2 duration-200 nodrag"
+                        title={data.quoteModeInitiatedByNodeId
+                          ? t.node.updateQuote
+                          : t.node.createQuoteCard
+                        }
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        <span className="text-xs font-medium">
+                          {data.quoteModeInitiatedByNodeId ? t.common.update : t.common.create}
+                        </span>
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
-              
+
               {/* Центральная часть: кнопка раскрытия/скрытия ответа */}
               {/* КРИТИЧНО: nodrag + stopPropagation предотвращают перехват клика React Flow */}
               <button
@@ -2235,7 +2261,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                   </>
                 )}
               </button>
-              
+
               {/* Правая часть: кнопка удаления + ручка resize */}
               <div className="flex items-center gap-1">
                 <Button
@@ -2248,7 +2274,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 >
                   <Trash2 className="w-4 h-4" />
                 </Button>
-                
+
                 {/* ===============================================================
                     RESIZE HANDLE (РУЧКА ИЗМЕНЕНИЯ ШИРИНЫ)
                     
@@ -2290,7 +2316,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 </div>
               </div>
             </div>
-            
+
             {/* Контент ответа со слайд-анимацией */}
             <div
               className={cn(
@@ -2310,7 +2336,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                 
                 nodrag предотвращает начало drag карточки при клике на контент ответа
               */}
-              <div 
+              <div
                 ref={answerScrollRef}
                 onWheel={handleAnswerWheel}
                 className={cn(
@@ -2327,7 +2353,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 )}
-                
+
                 {/* Error state */}
                 {error && (
                   <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
@@ -2335,10 +2361,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                     <span>{error}</span>
                   </div>
                 )}
-                
+
                 {/* Markdown content с поддержкой цитирования */}
                 {hasContent && (
-                  <div 
+                  <div
                     ref={answerContentRef}
                     onMouseUp={handleTextSelection}
                     className={cn(
@@ -2351,23 +2377,23 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
                     )}
                   >
                     {/* Индикатор режима цитирования */}
-                                    {isQuoteMode && (
-                                      <div className="mb-3 p-2 rounded-lg bg-primary/10 border border-primary/30">
-                                        <div className="flex items-center gap-2 text-xs text-primary font-medium">
-                                          <Quote className="w-3.5 h-3.5" />
-                                          <span>
-                                            {data.quoteModeInitiatedByNodeId 
-                                              ? t.node.selectTextForQuoteUpdate
-                                              : t.node.selectTextForQuote
-                                            }
-                                          </span>
-                                        </div>
-                                      </div>
-                                    )}
-                    
+                    {isQuoteMode && (
+                      <div className="mb-3 p-2 rounded-lg bg-primary/10 border border-primary/30">
+                        <div className="flex items-center gap-2 text-xs text-primary font-medium">
+                          <Quote className="w-3.5 h-3.5" />
+                          <span>
+                            {data.quoteModeInitiatedByNodeId
+                              ? t.node.selectTextForQuoteUpdate
+                              : t.node.selectTextForQuote
+                            }
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Мини-тулбар над/под выделением */}
                     {/* УБРАН ПО ЗАПРОСУ: теперь кнопка в панели инструментов */}
-                    
+
                     {/* Markdown контент */}
                     <div className={cn(
                       'prose prose-sm dark:prose-invert max-w-none',
@@ -2395,11 +2421,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           </div>
         )}
       </div>
-      
-      {/* ===================================================================
-          МОДАЛЬНОЕ ОКНО ПРОСМОТРА КОНТЕКСТА
-          Открывается при клике на badge "Использован контекст от X родительских нод"
-          =================================================================== */}
+
       <ContextViewerModal
         isOpen={isContextModalOpen}
         onClose={() => setIsContextModalOpen(false)}
@@ -2407,8 +2429,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         ancestorChain={ancestorChain}
         quote={data.quote}
         quoteSourceNodeId={data.quoteSourceNodeId}
+        excludedContextNodeIds={data.excludedContextNodeIds}
+        onToggleContextItem={handleToggleContextItem}
       />
-      
+
       {/* Индикатор ширины во время resize */}
       {isResizing && (
         <div
