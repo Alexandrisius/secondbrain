@@ -1036,10 +1036,14 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       if (!excludedIds.includes(parent.id)) {
         if (parent && (parent.data.prompt || parent.data.response)) {
           const parentParts: string[] = [];
-          parentParts.push('=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ ===');
+
+          const isNote = parent.type === 'note';
+          const headerTitle = isNote ? '=== КОНТЕКСТ ИЗ ЗАМЕТКИ ===' : '=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ ===';
+          parentParts.push(headerTitle);
 
           if (parent.data.prompt) {
-            parentParts.push(`Вопрос: ${parent.data.prompt}`);
+            const promptLabel = isNote ? 'Note Title' : 'Вопрос';
+            parentParts.push(`${promptLabel}: ${parent.data.prompt}`);
           }
 
           // ЦИТИРОВАНИЕ: Передаем И цитату, И контекст
@@ -1056,7 +1060,8 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             }
           } else if (parent.data.response) {
             // Обычная карточка - полный ответ родителя
-            parentParts.push(`Ответ: ${parent.data.response}`);
+            const responseLabel = isNote ? 'Note Content' : 'Ответ';
+            parentParts.push(`${responseLabel}: ${parent.data.response}`);
           }
 
           contextParts.push(parentParts.join('\n'));
@@ -1073,10 +1078,16 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         if (excludedIds.includes(parent.id)) return;
 
         const parentParts: string[] = [];
-        parentParts.push(`=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ №${index + 1} ===`);
+        const isNote = parent.type === 'note';
+        const headerTitle = isNote
+          ? `=== КОНТЕКСТ ИЗ ЗАМЕТКИ №${index + 1} ===`
+          : `=== КОНТЕКСТ ИЗ РОДИТЕЛЬСКОЙ КАРТОЧКИ №${index + 1} ===`;
+
+        parentParts.push(headerTitle);
 
         if (parent.data.prompt) {
-          parentParts.push(`Вопрос: ${parent.data.prompt}`);
+          const promptLabel = isNote ? 'Note Title' : 'Вопрос';
+          parentParts.push(`${promptLabel}: ${parent.data.prompt}`);
         }
 
         // ЦИТИРОВАНИЕ:
@@ -1088,7 +1099,8 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             parentParts.push(`[Контекст]: ${parent.data.response}`);
           }
         } else if (parent.data.response) {
-          parentParts.push(`Ответ: ${parent.data.response}`);
+          const responseLabel = isNote ? 'Note Content' : 'Ответ';
+          parentParts.push(`${responseLabel}: ${parent.data.response}`);
         }
 
         contextParts.push(parentParts.join('\n'));
@@ -1279,6 +1291,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             } catch {
               // Игнорируем ошибки парсинга отдельных chunks
             }
+
           }
         }
       }

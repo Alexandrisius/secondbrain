@@ -802,35 +802,58 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          * @returns ID созданной ноды
          */
         addNode: (position, parentId) => {
-          const nodeId = generateNodeId();
+          const id = generateNodeId();
+          const newNode: NeuroNode = {
+            id,
+            type: 'neuro',
+            position,
+            data: createDefaultNodeData(parentId),
+          };
 
           set((state) => {
-            // Создаём новую ноду
-            const newNode: NeuroNode = {
-              id: nodeId,
-              type: 'neuro',
-              position,
-              data: createDefaultNodeData(parentId),
+            // Проверяем тип родительской ноды для определения стиля связи
+            const parentNode = parentId ? state.nodes.find(n => n.id === parentId) : null;
+            const isParentNote = parentNode?.type === 'note';
+
+            return {
+              nodes: [...state.nodes, newNode],
+              edges: parentId
+                ? [
+                  ...state.edges,
+                  {
+                    id: generateEdgeId(parentId, id),
+                    source: parentId,
+                    target: id,
+                    type: isParentNote ? 'neuro-edge' : 'default',
+                    animated: isParentNote,
+                  },
+                ]
+                : state.edges,
             };
-
-            // Добавляем ноду в массив
-            state.nodes.push(newNode);
-
-            // Если указан parentId, создаём связь
-            if (parentId) {
-              const newEdge: NeuroEdge = {
-                id: generateEdgeId(parentId, nodeId),
-                source: parentId,
-                target: nodeId,
-                // Используем bezier для плавных кривых
-                type: 'default',
-                animated: false,
-              };
-              state.edges.push(newEdge);
-            }
           });
+          return id;
+        },
 
-          return nodeId;
+        addNoteNode: (position) => {
+          const id = generateNodeId();
+          // Initialize with expanded answer for immediate editing
+          const defaultData = createDefaultNodeData();
+          const noteData: NeuroNodeData = {
+            ...defaultData,
+            isAnswerExpanded: true, // Always expanded
+          };
+
+          const newNode: NeuroNode = {
+            id,
+            type: 'note',
+            position,
+            data: noteData,
+          };
+
+          set((state) => ({
+            nodes: [...state.nodes, newNode],
+          }));
+          return id;
         },
 
         /**
@@ -1254,14 +1277,19 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           if (!connection.source || !connection.target) return;
 
           set((state) => {
+            // Проверяем тип исходной ноды
+            const sourceNode = state.nodes.find(n => n.id === connection.source);
+            const isSourceNote = sourceNode?.type === 'note';
+
             // Создаём новую связь
+            // Если исходная нода - Заметка, связь будет пунктирной (animated)
             const newEdge: NeuroEdge = {
               id: generateEdgeId(connection.source!, connection.target!),
               source: connection.source!,
               target: connection.target!,
-              // Используем bezier для плавных кривых
-              type: 'default',
-              animated: false,
+              // Используем neuro-edge для нод из заметок, default для остальных
+              type: isSourceNote ? 'neuro-edge' : 'default',
+              animated: isSourceNote,
             };
 
             // Проверяем, что такой связи ещё нет
@@ -1567,12 +1595,15 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
 
             // Создаём связи (edges) от ВСЕХ родителей к новой ноде
             nodeIds.forEach((parentId) => {
+              const parentNode = state.nodes.find(n => n.id === parentId);
+              const isParentNote = parentNode?.type === 'note';
+
               const newEdge: NeuroEdge = {
                 id: generateEdgeId(parentId, newNodeId),
                 source: parentId,
                 target: newNodeId,
-                type: 'default',
-                animated: false,
+                type: isParentNote ? 'neuro-edge' : 'default',
+                animated: isParentNote,
               };
               state.edges.push(newEdge);
             });
@@ -1770,12 +1801,13 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             state.nodes.push(newNode);
 
             // Создаём связь с источником
+            const isSourceNote = sourceNode.type === 'note';
             const newEdge: NeuroEdge = {
               id: generateEdgeId(sourceNodeId, newNodeId),
               source: sourceNodeId,
               target: newNodeId,
-              type: 'default',
-              animated: false,
+              type: isSourceNote ? 'neuro-edge' : 'default',
+              animated: isSourceNote,
             };
             state.edges.push(newEdge);
 

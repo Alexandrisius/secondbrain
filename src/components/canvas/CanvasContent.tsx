@@ -36,6 +36,7 @@ import {
 } from '@/store/useCanvasStore';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { NeuroNode } from './NeuroNode';
+import NoteNode from './NoteNode';
 import { SettingsModal, SettingsButton } from './SettingsModal';
 import { DonateModal, DonateButtonTrigger } from './DonateModal';
 import { SearchBar } from './SearchBar';
@@ -55,6 +56,7 @@ import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
  */
 const nodeTypes = {
   neuro: NeuroNode,
+  note: NoteNode,
 } satisfies NodeTypes;
 
 /**
@@ -131,6 +133,17 @@ export function CanvasContent() {
    * setCenter - плавно центрирует viewport на указанных координатах
    */
   const { screenToFlowPosition, getViewport, setViewport, setCenter } = useReactFlow();
+
+  /**
+   * useStoreApi даёт доступ к внутреннему store React Flow
+   * 
+   * Используется для сброса внутреннего состояния selection rectangle
+   * (nodesSelectionActive) после программного создания ноды.
+   * 
+   * Без этого после создания ноды через Tab из множественного выделения
+   * остаётся активным NodesSelection rect, который блокирует взаимодействие.
+   */
+  const addNoteNode = useCanvasStore((s) => s.addNoteNode);
 
   /**
    * useStoreApi даёт доступ к внутреннему store React Flow
@@ -1382,6 +1395,57 @@ export function CanvasContent() {
 
         {/* Кнопка настроек */}
         <SettingsButton onClick={() => setIsSettingsOpen(true)} />
+      </div>
+
+      {/* =======================================================================
+          ПАНЕЛЬ СОЗДАНИЯ КАРТОЧЕК (Слева посередине)
+          ======================================================================= */}
+      <div className="absolute left-4 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-3">
+        <button
+          onClick={() => {
+            const viewport = getViewport();
+            // Create in center of viewport
+            const center = {
+              x: -viewport.x / viewport.zoom + (window.innerWidth / 2 / viewport.zoom),
+              y: -viewport.y / viewport.zoom + (window.innerHeight / 2 / viewport.zoom)
+            };
+            // Offset slightly random to avoid stacking
+            const position = { x: center.x - 200, y: center.y - 100 };
+            addNode(position);
+          }}
+          className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-blue-500/50 hover:shadow-blue-500/20"
+          title={t.common?.create || "Create AI Card"}
+        >
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mb-0.5 group-hover:scale-125 transition-transform" />
+          <div className="absolute -right-1 -top-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+          <span className="sr-only">New AI Card</span>
+          <svg className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-blue-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </button>
+
+        <button
+          onClick={() => {
+            const viewport = getViewport();
+            const center = {
+              x: -viewport.x / viewport.zoom + (window.innerWidth / 2 / viewport.zoom),
+              y: -viewport.y / viewport.zoom + (window.innerHeight / 2 / viewport.zoom)
+            };
+            const position = { x: center.x - 200, y: center.y + 100 };
+            addNoteNode(position);
+          }}
+          className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-amber-500/50 hover:shadow-amber-500/20"
+          title="New Note"
+        >
+          <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-orange-500/10 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="absolute -right-1 -top-1 w-3 h-3 bg-amber-500 rounded-full animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+          <span className="sr-only">New Note Card</span>
+          {/* Icon placeholder (Note) */}
+          <svg className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-amber-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+        </button>
       </div>
 
       {/* ----- МОДАЛЬНОЕ ОКНО НАСТРОЕК ----- */}

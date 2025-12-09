@@ -153,7 +153,7 @@ export interface NeuroNodeData {
  * Кастомный тип ноды для React Flow
  * Расширяет базовый Node тип данными NeuroNodeData
  */
-export type NeuroNode = Node<NeuroNodeData, 'neuro'>;
+export type NeuroNode = Node<NeuroNodeData, 'neuro' | 'note'>;
 
 /**
  * Тип связи между нодами
@@ -237,6 +237,7 @@ export interface CanvasActions {
    * @returns ID созданной ноды
    */
   addNode: (position: { x: number; y: number }, parentId?: string) => string;
+  addNoteNode: (position: { x: number; y: number }) => string;
 
   /**
    * Обновить данные существующей ноды

@@ -110,7 +110,6 @@ To use the application, **you need your own API key** from your chosen provider 
 ```bash
 # Clone the repository
 git clone https://github.com/Alexandrisius/secondbrain.git
-cd neurocanvas
 
 # Install dependencies
 npm install
