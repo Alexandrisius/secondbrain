@@ -53,8 +53,8 @@ NeuroCanvas allows you to:
 ## 🌟 Features
 
 ### 🤖 Multi-AI Support
-- **OpenAI** (GPT-4o, GPT-3.5)
-- **OpenRouter** (Claude 3, Llama 3, Mistral, etc.)
+- **OpenAI** (GPT-5.1, etc.)
+- **OpenRouter** (Gemini 3 Pro, Claude 4.5 Opus, etc.)
 - **Groq** (Ultra-fast inference)
 - **Together AI** (Open-source models)
 - **vsellm.ru** (Russian proxy, RUB payments)
