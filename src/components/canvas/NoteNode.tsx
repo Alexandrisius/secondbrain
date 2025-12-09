@@ -112,11 +112,13 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     // Sync from store
     useEffect(() => {
         if (data.prompt !== localTitle) setLocalTitle(data.prompt || '');
-    }, [data.prompt, localTitle]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.prompt]);
 
     useEffect(() => {
         if (data.response !== localContent) setLocalContent(data.response || '');
-    }, [data.response, localContent]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.response]);
 
     // Auto-focus new notes
     useEffect(() => {
@@ -134,7 +136,8 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
             setIsQuoteMode(data.isQuoteModeActive);
             if (data.isQuoteModeActive) setSelectedQuoteText('');
         }
-    }, [data.isQuoteModeActive, isQuoteMode]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.isQuoteModeActive]);
 
     // Save Title on Debounce or Blur
     useEffect(() => {
@@ -399,7 +402,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             onChange={handleTitleChange}
                             onBlur={handleTitleBlur}
                             onKeyDown={handleTitleKeyDown}
-                            placeholder={"Название заметки"}
+                            placeholder={t.noteNode?.titlePlaceholder || 'Note title'}
                             minRows={1}
                             className={cn(
                                 'w-full resize-none overflow-hidden bg-transparent border-none p-0',
@@ -409,7 +412,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                         />
                     ) : (
                         <div className="text-lg font-bold text-amber-900 dark:text-amber-100 min-h-[28px]">
-                            {localTitle || <span className="text-amber-900/30 dark:text-amber-100/30">Название заметки</span>}
+                            {localTitle || <span className="text-amber-900/30 dark:text-amber-100/30">{t.noteNode?.titlePlaceholder || 'Note title'}</span>}
                         </div>
                     )}
                 </div>
@@ -502,10 +505,10 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             )}
                         >
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {localContent || '*Пустая заметка*'}
+                                {localContent || `*${t.noteNode?.emptyNote || 'Empty note'}*`}
                             </ReactMarkdown>
                             <div className="absolute top-2 right-2 bg-amber-200 text-amber-900 text-xs px-2 py-1 rounded shadow">
-                                Режим выбора текста
+                                {t.noteNode?.quoteSelectionMode || 'Text selection mode'}
                             </div>
                         </div>
                     ) : isEditingContent ? (
@@ -515,7 +518,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             onChange={handleContentChange}
                             onBlur={handleContentBlur}
                             onKeyDown={handleContentKeyDown}
-                            placeholder="Напишите заметку..."
+                            placeholder={t.noteNode?.contentPlaceholder || 'Write your note...'}
                             minRows={5}
                             className={cn(
                                 'w-full resize-none bg-transparent border-none p-2',
@@ -530,7 +533,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                                     {localContent}
                                 </ReactMarkdown>
                             ) : (
-                                <span className="text-muted-foreground">Напишите заметку...</span>
+                                <span className="text-muted-foreground">{t.noteNode?.contentPlaceholder || 'Write your note...'}</span>
                             )}
                         </div>
                     )}
@@ -538,8 +541,8 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
 
                 {/* Footer info */}
                 <div className="px-4 py-2 text-xs text-amber-900/40 dark:text-amber-100/40 flex justify-between">
-                    <span>{localContent.length} chars</span>
-                    {data.isSummarizing && <span className="animate-pulse">Summarizing...</span>}
+                    <span>{localContent.length} {t.noteNode?.chars || 'chars'}</span>
+                    {data.isSummarizing && <span className="animate-pulse">{t.noteNode?.summarizing || 'Summarizing...'}</span>}
                 </div>
 
             </div>

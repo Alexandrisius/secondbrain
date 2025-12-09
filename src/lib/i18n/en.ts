@@ -325,6 +325,28 @@ export const en: TranslationKeys = {
   },
 
   // ===========================================================================
+  // CARD CREATION BUTTONS
+  // ===========================================================================
+  toolButtons: {
+    createAiCard: 'AI Card',
+    createAiCardTooltip: 'Create an AI card for LLM conversation',
+    createNoteCard: 'Note',
+    createNoteCardTooltip: 'Create a personal note',
+  },
+
+  // ===========================================================================
+  // PERSONAL NOTE (NoteNode)
+  // ===========================================================================
+  noteNode: {
+    titlePlaceholder: 'Note title',
+    contentPlaceholder: 'Write your note...',
+    emptyNote: 'Empty note',
+    quoteSelectionMode: 'Text selection mode',
+    chars: 'chars',
+    summarizing: 'Summarizing...',
+  },
+
+  // ===========================================================================
   // DONATE AND SUPPORT
   // ===========================================================================
   donate: {

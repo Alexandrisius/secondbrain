@@ -1414,12 +1414,10 @@ export function CanvasContent() {
             addNode(position);
           }}
           className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-blue-500/50 hover:shadow-blue-500/20"
-          title={t.common?.create || "Create AI Card"}
+          title={t.toolButtons?.createAiCardTooltip || 'Create an AI card for LLM conversation'}
         >
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mb-0.5 group-hover:scale-125 transition-transform" />
-          <div className="absolute -right-1 -top-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
-          <span className="sr-only">New AI Card</span>
+          <span className="sr-only">{t.toolButtons?.createAiCard || 'AI Card'}</span>
           <svg className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-blue-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
@@ -1436,12 +1434,10 @@ export function CanvasContent() {
             addNoteNode(position);
           }}
           className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-amber-500/50 hover:shadow-amber-500/20"
-          title="New Note"
+          title={t.toolButtons?.createNoteCardTooltip || 'Create a personal note'}
         >
           <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-orange-500/10 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="absolute -right-1 -top-1 w-3 h-3 bg-amber-500 rounded-full animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
-          <span className="sr-only">New Note Card</span>
-          {/* Icon placeholder (Note) */}
+          <span className="sr-only">{t.toolButtons?.createNoteCard || 'Note'}</span>
           <svg className="w-6 h-6 text-zinc-700 dark:text-zinc-200 group-hover:text-amber-500 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
           </svg>
