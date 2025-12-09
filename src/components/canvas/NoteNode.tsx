@@ -12,7 +12,7 @@
 
 'use client';
 
-import React, { memo, useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { memo, useState, useCallback, useRef, useEffect } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import TextareaAutosize from 'react-textarea-autosize';
 import ReactMarkdown from 'react-markdown';
@@ -21,7 +21,6 @@ import {
     Copy,
     Trash2,
     Check,
-    AlertCircle,
     Quote,
     PlusCircle,
     X,
@@ -47,7 +46,6 @@ type NoteNodeProps = NodeProps<NeuroNodeType>;
 const MIN_CARD_WIDTH = 300;
 const MAX_CARD_WIDTH = 800;
 const DEFAULT_CARD_WIDTH = 400;
-const ANSWER_SECTION_HEIGHT = 400;
 
 const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     const { t } = useTranslation();
@@ -57,7 +55,6 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     // ===========================================================================
     const updateNodeData = useCanvasStore((s) => s.updateNodeData);
     const removeNode = useCanvasStore((s) => s.removeNode);
-    const checkAndClearStale = useCanvasStore((s) => s.checkAndClearStale);
     // Reusing quote actions
     const createQuoteNode = useCanvasStore((s) => s.createQuoteNode);
     const updateQuote = useCanvasStore((s) => s.updateQuote);
@@ -115,11 +112,11 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     // Sync from store
     useEffect(() => {
         if (data.prompt !== localTitle) setLocalTitle(data.prompt || '');
-    }, [data.prompt]);
+    }, [data.prompt, localTitle]);
 
     useEffect(() => {
         if (data.response !== localContent) setLocalContent(data.response || '');
-    }, [data.response]);
+    }, [data.response, localContent]);
 
     // Auto-focus new notes
     useEffect(() => {
@@ -137,7 +134,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
             setIsQuoteMode(data.isQuoteModeActive);
             if (data.isQuoteModeActive) setSelectedQuoteText('');
         }
-    }, [data.isQuoteModeActive]);
+    }, [data.isQuoteModeActive, isQuoteMode]);
 
     // Save Title on Debounce or Blur
     useEffect(() => {
@@ -200,7 +197,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
             // But data.summary is the OLD summary.
             generateSummary(debouncedContent);
         }
-    }, [debouncedContent]); // Intentionally not including deps to avoid loops, relying on debounce
+    }, [debouncedContent, data.summary, generateSummary]);
 
     // Resize Logic (Copy-paste from NeuroNode)
     useEffect(() => {

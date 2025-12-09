@@ -32,7 +32,6 @@ import {
   X,
   Square,
   GripVertical,
-  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCanvasStore } from '@/store/useCanvasStore';
@@ -1183,7 +1182,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     });
 
     return contextParts.join('\n\n');
-  }, [directParents, ancestorChain, data.quote, data.quoteSourceNodeId, useSummarization, data.excludedContextNodeIds]);
+  }, [directParents, ancestorChain, data.quote, data.quoteSourceNodeId, useSummarization, data.excludedContextNodeIds, corporateMode]);
 
   /**
    * Запуск генерации AI ответа
@@ -1385,7 +1384,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [id, localPrompt, updateNodeData, buildParentContext, generateSummary, useSummarization, apiKey, model, saveContextHash, onBatchNodeComplete, t.node.apiKeyMissing]);
+  }, [id, localPrompt, updateNodeData, buildParentContext, generateSummary, useSummarization, apiKey, model, saveContextHash, onBatchNodeComplete, t.node.apiKeyMissing, apiBaseUrl, corporateMode, embeddingsBaseUrl, embeddingsModel]);
 
   /**
    * Регенерация ответа
@@ -1737,12 +1736,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
     handleExitQuoteMode();
   }, [selectedQuoteText, parentNode, id, updateQuote, handleExitQuoteMode]);
 
-  /**
-   * Открытие модального окна контекста
-   */
-  const handleOpenContextModal = useCallback(() => {
-    setIsContextModalOpen(true);
-  }, []);
+
 
   /**
    * Обработчик переключения исключения ноды из контекста
