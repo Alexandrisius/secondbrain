@@ -1740,6 +1740,10 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
 
   /**
    * Обработчик переключения исключения ноды из контекста
+   * 
+   * При изменении списка исключённых контекстов:
+   * - Если карточка имеет response → помечается как stale (контекст изменился)
+   * - После обновления проверяем: если контекст вернулся к эталонному → stale снимается
    */
   const handleToggleContextItem = useCallback((targetNodeId: string) => {
     // Получаем текущий список исключенных
@@ -1755,9 +1759,31 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       newExcluded = [...currentExcluded, targetNodeId];
     }
 
-    // Обновляем данные ноды
-    updateNodeData(id, { excludedContextNodeIds: newExcluded });
-  }, [data.excludedContextNodeIds, id, updateNodeData]);
+    // Если у карточки есть response - помечаем как stale (контекст изменился)
+    // Иначе просто обновляем список исключённых
+    if (data.response) {
+      updateNodeData(id, { 
+        excludedContextNodeIds: newExcluded,
+        isStale: true, // Контекст изменился - карточка устарела
+        updatedAt: Date.now(),
+      });
+      
+      // Проверяем: если контекст вернулся к эталонному хэшу - stale будет снят
+      // Вызываем через setTimeout чтобы state успел обновиться
+      setTimeout(() => {
+        checkAndClearStale(id);
+      }, 0);
+      
+      console.log(
+        '[handleToggleContextItem] Переключен контекст для ноды:',
+        id,
+        '- помечена как stale'
+      );
+    } else {
+      // Нет response - просто обновляем список исключённых
+      updateNodeData(id, { excludedContextNodeIds: newExcluded });
+    }
+  }, [data.excludedContextNodeIds, data.response, id, updateNodeData, checkAndClearStale]);
 
   // ===========================================================================
   // ОБРАБОТЧИКИ RESIZE (ИЗМЕНЕНИЕ ШИРИНЫ КАРТОЧКИ)
