@@ -253,6 +253,35 @@ export function CanvasContent() {
   const createLinkedNodeRight = useCanvasStore((s) => s.createLinkedNodeRight);
   const createSiblingNode = useCanvasStore((s) => s.createSiblingNode);
 
+  // ===========================================================================
+  // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Снятие выделения со всех и выделение новой
+  // ===========================================================================
+
+  /**
+   * Снимает выделение со ВСЕХ карточек и выделяет только указанную
+   * 
+   * ВАЖНО: Используется при создании новых карточек, чтобы гарантировать,
+   * что выделена ТОЛЬКО новая карточка. Это предотвращает случайное
+   * удаление нескольких карточек при нажатии Delete.
+   * 
+   * @param newNodeId - ID новой карточки для выделения
+   */
+  const deselectAllAndSelect = useCallback(
+    (newNodeId: string) => {
+      const selectionChanges = [
+        // Снимаем выделение со всех выделенных нод
+        ...nodes
+          .filter((n) => n.selected)
+          .map((n) => ({ type: 'select' as const, id: n.id, selected: false })),
+        // Выделяем новую ноду
+        { type: 'select' as const, id: newNodeId, selected: true },
+      ];
+
+      onNodesChange(selectionChanges);
+    },
+    [nodes, onNodesChange]
+  );
+
   /**
    * Action для создания карточки от нескольких родителей
    * Вызывается по Tab при выделении нескольких карточек рамкой
@@ -822,17 +851,16 @@ export function CanvasContent() {
       // Создаём новую ноду и связываем с родителем
       const newNodeId = addNode(position, fromNodeId);
 
-      // Автоматически выделяем новую ноду
-      // Это позволяет сразу видеть, что карточка активна
-      onNodesChange([
-        { type: 'select', id: newNodeId, selected: true },
-      ]);
+      // Снимаем выделение со ВСЕХ нод и выделяем ТОЛЬКО новую
+      // Это поведение согласовано с Tab (createLinkedNodeRight)
+      // и предотвращает случайное удаление нескольких карточек
+      deselectAllAndSelect(newNodeId);
 
       // Устанавливаем автофокус на textarea новой ноды
       // Это позволяет сразу начать вводить текст
       setPendingFocusNodeId(newNodeId);
     },
-    [screenToFlowPosition, addNode, onNodesChange, setPendingFocusNodeId]
+    [screenToFlowPosition, addNode, deselectAllAndSelect, setPendingFocusNodeId]
   );
 
   // ===========================================================================
@@ -1082,6 +1110,10 @@ export function CanvasContent() {
         // Создаём новую независимую ноду (без родителя)
         const newNodeId = addNode(position);
 
+        // Снимаем выделение со ВСЕХ нод и выделяем ТОЛЬКО новую
+        // Предотвращает случайное удаление нескольких карточек при Delete
+        deselectAllAndSelect(newNodeId);
+
         // Автоматически фокусируемся на новой ноде
         setPendingFocusNodeId(newNodeId);
       }
@@ -1093,7 +1125,7 @@ export function CanvasContent() {
       wrapper.addEventListener('dblclick', handleDoubleClick);
       return () => wrapper.removeEventListener('dblclick', handleDoubleClick);
     }
-  }, [screenToFlowPosition, addNode, setPendingFocusNodeId]);
+  }, [screenToFlowPosition, addNode, deselectAllAndSelect, setPendingFocusNodeId]);
 
   // ===========================================================================
   // ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Форматирование времени
@@ -1404,14 +1436,17 @@ export function CanvasContent() {
         <button
           onClick={() => {
             const viewport = getViewport();
-            // Create in center of viewport
+            // Создаём в центре viewport
             const center = {
               x: -viewport.x / viewport.zoom + (window.innerWidth / 2 / viewport.zoom),
               y: -viewport.y / viewport.zoom + (window.innerHeight / 2 / viewport.zoom)
             };
-            // Offset slightly random to avoid stacking
+            // Небольшое смещение чтобы избежать наложения
             const position = { x: center.x - 200, y: center.y - 100 };
-            addNode(position);
+            const newNodeId = addNode(position);
+            // Снимаем выделение со ВСЕХ нод и выделяем ТОЛЬКО новую
+            // Предотвращает случайное удаление нескольких карточек при Delete
+            deselectAllAndSelect(newNodeId);
           }}
           className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-blue-500/50 hover:shadow-blue-500/20"
           title={t.toolButtons?.createAiCardTooltip || 'Create an AI card for LLM conversation'}
@@ -1431,7 +1466,10 @@ export function CanvasContent() {
               y: -viewport.y / viewport.zoom + (window.innerHeight / 2 / viewport.zoom)
             };
             const position = { x: center.x - 200, y: center.y + 100 };
-            addNoteNode(position);
+            const newNodeId = addNoteNode(position);
+            // Снимаем выделение со ВСЕХ нод и выделяем ТОЛЬКО новую
+            // Предотвращает случайное удаление нескольких карточек при Delete
+            deselectAllAndSelect(newNodeId);
           }}
           className="group relative flex items-center justify-center w-12 h-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl hover:scale-110 transition-all duration-300 hover:border-amber-500/50 hover:shadow-amber-500/20"
           title={t.toolButtons?.createNoteCardTooltip || 'Create a personal note'}
