@@ -525,8 +525,14 @@ export function CanvasContent() {
     const handleContextMenu = (e: MouseEvent) => {
       const target = e.target as Element;
       const isOnNode = target.closest('.react-flow__node');
+      
+      // Не блокируем контекстное меню в текстовых полях (для копирования/вставки)
+      const isEditableElement = target.tagName === 'TEXTAREA' || 
+                                target.tagName === 'INPUT' ||
+                                (target as HTMLElement).isContentEditable;
 
-      if (isOnNode) {
+      // Блокируем только для нод, но не для редактируемых элементов
+      if (isOnNode && !isEditableElement) {
         e.preventDefault();
       }
     };
