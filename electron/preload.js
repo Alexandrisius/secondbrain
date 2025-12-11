@@ -79,6 +79,71 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {string} - 'win32' | 'darwin' | 'linux'
    */
   platform: process.platform,
+  
+  // ===========================================================================
+  // МЕТОДЫ ДЛЯ ПРОВЕРКИ НЕСОХРАНЁННЫХ ИЗМЕНЕНИЙ ПРИ ЗАКРЫТИИ
+  // ===========================================================================
+  
+  /**
+   * Регистрирует callback для получения статуса несохранённых изменений
+   * 
+   * Вызывается из React-компонента для регистрации функции,
+   * которая будет возвращать текущий статус hasUnsavedChanges.
+   * Main процесс вызывает эту функцию через executeJavaScript
+   * при попытке закрытия окна.
+   * 
+   * @param {() => boolean} callback - функция, возвращающая hasUnsavedChanges
+   * 
+   * @example
+   * // В React компоненте:
+   * useEffect(() => {
+   *   window.electronAPI?.registerUnsavedChangesCallback(() => hasUnsavedChanges);
+   *   return () => window.electronAPI?.unregisterUnsavedChangesCallback();
+   * }, [hasUnsavedChanges]);
+   */
+  registerUnsavedChangesCallback: (callback) => {
+    window.__getUnsavedChangesStatus = callback;
+    console.log('[Electron Preload] Зарегистрирован callback для проверки несохранённых изменений');
+  },
+  
+  /**
+   * Удаляет зарегистрированный callback
+   * Вызывается при размонтировании компонента
+   */
+  unregisterUnsavedChangesCallback: () => {
+    window.__getUnsavedChangesStatus = null;
+    console.log('[Electron Preload] Callback для проверки несохранённых изменений удалён');
+  },
+  
+  /**
+   * Регистрирует callback для сохранения холста
+   * 
+   * Вызывается из React-компонента для регистрации функции сохранения.
+   * Main процесс вызывает эту функцию через executeJavaScript
+   * когда пользователь выбирает "Сохранить и выйти".
+   * 
+   * @param {() => Promise<void>} callback - async функция сохранения холста
+   * 
+   * @example
+   * // В React компоненте:
+   * useEffect(() => {
+   *   window.electronAPI?.registerSaveCallback(saveToFile);
+   *   return () => window.electronAPI?.unregisterSaveCallback();
+   * }, [saveToFile]);
+   */
+  registerSaveCallback: (callback) => {
+    window.__saveCanvas = callback;
+    console.log('[Electron Preload] Зарегистрирован callback для сохранения холста');
+  },
+  
+  /**
+   * Удаляет зарегистрированный callback сохранения
+   * Вызывается при размонтировании компонента
+   */
+  unregisterSaveCallback: () => {
+    window.__saveCanvas = null;
+    console.log('[Electron Preload] Callback для сохранения холста удалён');
+  },
 });
 
 // =============================================================================

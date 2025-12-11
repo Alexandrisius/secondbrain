@@ -28,8 +28,8 @@ let autoUpdater = null;
 
 /**
  * Флаг для отслеживания ручной проверки обновлений
- * Если true - показываем диалог даже если обновлений нет
- * При автоматической проверке при старте - не показываем
+ * Если true - показываем диалог "Версия актуальна" если обновлений нет
+ * При автоматической проверке при старте - не показываем такой диалог
  */
 let isManualUpdateCheck = false;
 
@@ -38,6 +38,19 @@ let isManualUpdateCheck = false;
  * Если true - показываем ошибки скачивания
  */
 let isDownloadingUpdate = false;
+
+/**
+ * Флаг для предотвращения показа двух диалогов одновременно
+ * Защита от бага когда событие update-available срабатывает дважды
+ */
+let isShowingUpdateDialog = false;
+
+/**
+ * Флаг для принудительного закрытия приложения
+ * Устанавливается в true когда пользователь подтверждает выход
+ * или выбирает "Выйти без сохранения"
+ */
+let forceQuit = false;
 
 // =============================================================================
 // КОНСТАНТЫ И НАСТРОЙКИ
@@ -313,7 +326,109 @@ function createWindow() {
     console.log('[Electron] Окно готово и отображено');
   });
 
-  // Обрабатываем закрытие окна
+  // =============================================================================
+  // ОБРАБОТКА ЗАКРЫТИЯ ОКНА С ЗАПРОСОМ СОХРАНЕНИЯ
+  // =============================================================================
+
+  /**
+   * Обработчик события 'close' - перехватываем закрытие окна
+   * 
+   * Логика:
+   * 1. Если forceQuit === true - разрешаем закрытие (пользователь уже подтвердил)
+   * 2. Иначе - предотвращаем закрытие и спрашиваем через IPC о несохранённых изменениях
+   * 3. Если есть несохранённые изменения - показываем диалог с тремя вариантами:
+   *    - "Сохранить и выйти" - сохраняем и закрываем
+   *    - "Выйти без сохранения" - закрываем без сохранения
+   *    - "Отмена" - отменяем закрытие
+   * 4. Если нет несохранённых изменений - закрываем сразу
+   */
+  mainWindow.on('close', async (event) => {
+    // Если уже разрешили выход - не блокируем
+    if (forceQuit) {
+      console.log('[Electron] Закрытие разрешено (forceQuit=true)');
+      return;
+    }
+
+    // Предотвращаем закрытие окна пока не проверим несохранённые изменения
+    event.preventDefault();
+    console.log('[Electron] Перехвачено закрытие окна, проверяем несохранённые изменения...');
+
+    try {
+      // Запрашиваем статус несохранённых изменений у renderer процесса
+      // Renderer отвечает через IPC с текущим значением hasUnsavedChanges
+      const hasUnsavedChanges = await mainWindow.webContents.executeJavaScript(
+        'window.__getUnsavedChangesStatus ? window.__getUnsavedChangesStatus() : false'
+      );
+
+      console.log('[Electron] Статус несохранённых изменений:', hasUnsavedChanges);
+
+      if (!hasUnsavedChanges) {
+        // Нет несохранённых изменений - закрываем сразу
+        console.log('[Electron] Нет несохранённых изменений, закрываем окно');
+        forceQuit = true;
+        mainWindow.close();
+        return;
+      }
+
+      // Есть несохранённые изменения - показываем диалог
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Несохранённые изменения',
+        message: 'У вас есть несохранённые изменения',
+        detail: 'Хотите сохранить изменения перед выходом?',
+        buttons: ['Сохранить и выйти', 'Выйти без сохранения', 'Отмена'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+
+      if (response === 0) {
+        // "Сохранить и выйти" - сохраняем и закрываем
+        console.log('[Electron] Пользователь выбрал "Сохранить и выйти"');
+        
+        try {
+          // Вызываем сохранение через executeJavaScript
+          await mainWindow.webContents.executeJavaScript(
+            'window.__saveCanvas ? window.__saveCanvas() : Promise.resolve()'
+          );
+          console.log('[Electron] Холст сохранён, закрываем окно');
+        } catch (saveError) {
+          console.error('[Electron] Ошибка при сохранении:', saveError);
+          // Даже при ошибке сохранения даём возможность выйти
+        }
+        
+        forceQuit = true;
+        mainWindow.close();
+      } else if (response === 1) {
+        // "Выйти без сохранения" - закрываем без сохранения
+        console.log('[Electron] Пользователь выбрал "Выйти без сохранения"');
+        forceQuit = true;
+        mainWindow.close();
+      } else {
+        // "Отмена" - ничего не делаем, окно остаётся открытым
+        console.log('[Electron] Пользователь отменил закрытие');
+      }
+    } catch (error) {
+      console.error('[Electron] Ошибка при проверке несохранённых изменений:', error);
+      // При ошибке - показываем упрощённый диалог
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Закрыть приложение?',
+        message: 'Не удалось проверить статус сохранения',
+        detail: 'Возможно есть несохранённые изменения. Вы уверены, что хотите выйти?',
+        buttons: ['Выйти', 'Отмена'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+
+      if (response === 0) {
+        forceQuit = true;
+        mainWindow.close();
+      }
+    }
+  });
+
+  // Обрабатываем полное закрытие окна (после close)
   mainWindow.on('closed', () => {
     mainWindow = null;
     console.log('[Electron] Главное окно закрыто');
@@ -619,76 +734,92 @@ function initAutoUpdater() {
     
     /**
      * Найдено новое обновление
-     * Диалог показывается только при ручной проверке (из меню)
-     * При автоматической проверке при запуске - только логируем
+     * Показываем диалог пользователю с предложением скачать обновление
+     * Защита от двойных диалогов через флаг isShowingUpdateDialog
      */
     autoUpdater.on('update-available', (info) => {
       console.log('[Updater] Доступно обновление:', info.version);
       
-      // Показываем диалог только при ручной проверке
-      if (isManualUpdateCheck) {
-        isManualUpdateCheck = false; // Сбрасываем флаг
-        
-        // Показываем диалог пользователю
-        dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          title: 'Доступно обновление',
-          message: `Доступна новая версия ${info.version}`,
-          detail: `Текущая версия: ${app.getVersion()}\nНовая версия: ${info.version}\n\nХотите скачать и установить обновление?`,
-          buttons: ['Скачать', 'Позже'],
-          defaultId: 0,
-          cancelId: 1,
-        }).then(({ response }) => {
-          if (response === 0) {
-            // Пользователь согласился - начинаем скачивание
-            console.log('[Updater] Пользователь согласился на обновление, начинаем скачивание...');
-            
-            // Устанавливаем флаг скачивания
-            isDownloadingUpdate = true;
-            
-            // Показываем уведомление о начале скачивания
-            if (mainWindow) {
-              mainWindow.setTitle('NeuroCanvas - Подготовка к скачиванию...');
-              mainWindow.setProgressBar(0.01); // Минимальный прогресс чтобы показать что процесс идёт
-            }
-            
-            // Запускаем скачивание
-            autoUpdater.downloadUpdate().catch((err) => {
-              isDownloadingUpdate = false;
-              console.error('[Updater] Ошибка при скачивании:', err);
-              if (mainWindow) {
-                mainWindow.setProgressBar(-1);
-                mainWindow.setTitle('NeuroCanvas');
-              }
-              dialog.showMessageBox(mainWindow, {
-                type: 'error',
-                title: 'Ошибка скачивания',
-                message: 'Не удалось скачать обновление',
-                detail: err.message || String(err),
-                buttons: ['OK'],
-              });
-            });
-          } else {
-            console.log('[Updater] Пользователь отложил обновление');
-          }
-        });
-      } else {
-        // При автоматической проверке при запуске - только логируем
-        console.log('[Updater] Обновление доступно (автопроверка), диалог не показываем');
+      // Сохраняем и сбрасываем флаг ручной проверки
+      const wasManualCheck = isManualUpdateCheck;
+      isManualUpdateCheck = false;
+      
+      // Защита от показа двух диалогов одновременно
+      // (событие может сработать дважды из-за особенностей electron-updater)
+      if (isShowingUpdateDialog) {
+        console.log('[Updater] Диалог уже показывается, пропускаем...');
+        return;
       }
+      
+      // Устанавливаем флаг что диалог сейчас показывается
+      isShowingUpdateDialog = true;
+      
+      // Показываем диалог пользователю (и при автопроверке, и при ручной)
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Доступно обновление',
+        message: `Доступна новая версия ${info.version}`,
+        detail: `Текущая версия: ${app.getVersion()}\nНовая версия: ${info.version}\n\nХотите скачать и установить обновление?`,
+        buttons: ['Скачать', 'Позже'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then(({ response }) => {
+        // Сбрасываем флаг после закрытия диалога
+        isShowingUpdateDialog = false;
+        
+        if (response === 0) {
+          // Пользователь согласился - начинаем скачивание
+          console.log('[Updater] Пользователь согласился на обновление, начинаем скачивание...');
+          
+          // Устанавливаем флаг скачивания
+          isDownloadingUpdate = true;
+          
+          // Показываем уведомление о начале скачивания
+          if (mainWindow) {
+            mainWindow.setTitle('NeuroCanvas - Подготовка к скачиванию...');
+            mainWindow.setProgressBar(0.01); // Минимальный прогресс чтобы показать что процесс идёт
+          }
+          
+          // Запускаем скачивание
+          autoUpdater.downloadUpdate().catch((err) => {
+            isDownloadingUpdate = false;
+            console.error('[Updater] Ошибка при скачивании:', err);
+            if (mainWindow) {
+              mainWindow.setProgressBar(-1);
+              mainWindow.setTitle('NeuroCanvas');
+            }
+            dialog.showMessageBox(mainWindow, {
+              type: 'error',
+              title: 'Ошибка скачивания',
+              message: 'Не удалось скачать обновление',
+              detail: err.message || String(err),
+              buttons: ['OK'],
+            });
+          });
+        } else {
+          console.log('[Updater] Пользователь отложил обновление');
+        }
+      }).catch(() => {
+        // На случай ошибки диалога - сбрасываем флаг
+        isShowingUpdateDialog = false;
+      });
     });
     
     /**
      * Обновлений нет - версия актуальна
      * При ручной проверке показываем диалог пользователю
+     * При автопроверке при запуске - ничего не показываем (не раздражаем)
      */
     autoUpdater.on('update-not-available', (info) => {
       console.log('[Updater] Обновлений нет, текущая версия актуальна:', info.version);
       
+      // Сохраняем и сбрасываем флаг ручной проверки
+      const wasManualCheck = isManualUpdateCheck;
+      isManualUpdateCheck = false;
+      
       // Показываем диалог только при ручной проверке (из меню или через IPC)
-      if (isManualUpdateCheck) {
-        isManualUpdateCheck = false; // Сбрасываем флаг
-        
+      // При автопроверке при запуске - не показываем, чтобы не раздражать
+      if (wasManualCheck) {
         dialog.showMessageBox(mainWindow, {
           type: 'info',
           title: 'Обновления',
@@ -724,8 +855,9 @@ function initAutoUpdater() {
     autoUpdater.on('update-downloaded', (info) => {
       console.log('[Updater] Обновление скачано:', info.version);
       
-      // Сбрасываем флаг скачивания
+      // Сбрасываем флаги
       isDownloadingUpdate = false;
+      isShowingUpdateDialog = false; // На всякий случай сбрасываем
       
       // Сбрасываем прогресс-бар и обновляем заголовок
       if (mainWindow) {
@@ -766,15 +898,18 @@ function initAutoUpdater() {
     
     /**
      * Ошибка при обновлении (проверка или скачивание)
+     * При автопроверке при запуске - не показываем ошибку (сеть может быть недоступна)
+     * При ручной проверке или скачивании - показываем ошибку пользователю
      */
     autoUpdater.on('error', (error) => {
       console.error('[Updater] Ошибка:', error);
       
-      // Сохраняем и сбрасываем флаги
+      // Сохраняем и сбрасываем все флаги
       const wasManualCheck = isManualUpdateCheck;
       const wasDownloading = isDownloadingUpdate;
       isManualUpdateCheck = false;
       isDownloadingUpdate = false;
+      isShowingUpdateDialog = false; // Сбрасываем флаг диалога при ошибке
       
       // Сбрасываем прогресс-бар при ошибке
       if (mainWindow) {
@@ -782,6 +917,7 @@ function initAutoUpdater() {
         mainWindow.setTitle('NeuroCanvas');
         
         // Показываем диалог с ошибкой при ручной проверке или скачивании
+        // При автопроверке при запуске - не показываем (сеть может быть недоступна)
         if (wasManualCheck || wasDownloading) {
           const title = wasDownloading ? 'Ошибка скачивания' : 'Ошибка проверки обновлений';
           const message = wasDownloading 

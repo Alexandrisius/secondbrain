@@ -231,6 +231,34 @@
     stroke-width: 3;
   }
 
+  /* --- ЦИТАТНЫЕ СВЯЗИ (оранжевый цвет) ---
+   * Связи от карточек с цитатами к источникам цитат
+   * Оранжевый цвет совпадает с оформлением блока цитаты в карточке
+   * Эти связи нельзя выделить и удалить - они привязаны к цитате
+   */
+  .react-flow__edge.quote-edge .react-flow__edge-path {
+    stroke: hsl(25 95% 53%); /* Оранжевый */
+    stroke-width: 2;
+    /* Курсор default - связь нельзя выделить */
+    cursor: default;
+  }
+
+  /* Hover эффект минимальный - связь нельзя выделить */
+  .react-flow__edge.quote-edge:hover .react-flow__edge-path {
+    stroke: hsl(25 95% 53%); /* Тот же цвет */
+    stroke-width: 2.5;
+  }
+
+  /* Тёмная тема: чуть ярче для видимости */
+  .dark .react-flow__edge.quote-edge .react-flow__edge-path {
+    stroke: hsl(25 90% 55%);
+  }
+
+  .dark .react-flow__edge.quote-edge:hover .react-flow__edge-path {
+    stroke: hsl(25 90% 55%);
+    stroke-width: 2.5;
+  }
+
   /* --- Линия во время создания соединения --- */
   .react-flow__connection-path {
     stroke: hsl(var(--primary));

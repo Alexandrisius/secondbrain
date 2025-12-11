@@ -170,13 +170,15 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         </div>
       )}
 
-      {/* СЕКЦИЯ ЦИТАТЫ */}
+      {/* СЕКЦИЯ ЦИТАТЫ - оранжевый цвет как у связи цитаты */}
       {data.quote && (
         <div
           className={cn(
             'quote-section mb-3 p-3 rounded-lg',
-            'bg-muted/50 border-l-4',
-            !data.isQuoteInvalidated && 'border-primary',
+            'border-l-4',
+            // Оранжевый фон и рамка для нормального состояния
+            !data.isQuoteInvalidated && 'bg-orange-50/50 dark:bg-orange-950/20 border-orange-500',
+            // Красный для инвалидированной цитаты
             data.isQuoteInvalidated && 'border-red-500 bg-red-50/10 dark:bg-red-950/20'
           )}
         >

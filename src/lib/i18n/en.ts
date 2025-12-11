@@ -424,4 +424,20 @@ export const en: TranslationKeys = {
     githubDescription: 'Give us a star on GitHub!',
     thanks: 'Thank you for using NeuroCanvas!',
   },
+
+  // ===========================================================================
+  // CLOSE CONFIRMATION DIALOG (ELECTRON)
+  // ===========================================================================
+  closeConfirm: {
+    title: 'Unsaved Changes',
+    message: 'You have unsaved changes',
+    detail: 'Do you want to save changes before exiting?',
+    saveAndExit: 'Save and Exit',
+    exitWithoutSaving: 'Exit Without Saving',
+    cancel: 'Cancel',
+    errorTitle: 'Close Application?',
+    errorMessage: 'Could not check save status',
+    errorDetail: 'There may be unsaved changes. Are you sure you want to exit?',
+    exit: 'Exit',
+  },
 };

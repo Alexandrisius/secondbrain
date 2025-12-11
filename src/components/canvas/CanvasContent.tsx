@@ -21,6 +21,7 @@ import {
   SelectionMode,
   type OnConnectEnd,
   type NodeTypes,
+  type Edge,
   BackgroundVariant,
 } from '@xyflow/react';
 import { Save, RefreshCw, X, Loader2, Undo2, Redo2 } from 'lucide-react';
@@ -397,6 +398,43 @@ export function CanvasContent() {
 
     initializeData();
   }, [activeCanvasId, loadFromFile]);
+
+  // ===========================================================================
+  // РЕГИСТРАЦИЯ CALLBACKS ДЛЯ ELECTRON (ПРОВЕРКА НЕСОХРАНЁННЫХ ИЗМЕНЕНИЙ)
+  // ===========================================================================
+
+  /**
+   * Регистрируем callbacks для Electron при закрытии окна
+   * 
+   * Эти callbacks вызываются из main процесса через executeJavaScript
+   * для проверки наличия несохранённых изменений и сохранения холста.
+   * 
+   * ВАЖНО: Регистрируем заново при каждом изменении hasUnsavedChanges,
+   * чтобы callback всегда возвращал актуальное значение.
+   */
+  useEffect(() => {
+    // Регистрируем callback для проверки несохранённых изменений
+    // Возвращает текущее значение hasUnsavedChanges
+    window.electronAPI?.registerUnsavedChangesCallback(() => {
+      const state = useCanvasStore.getState();
+      console.log('[CanvasContent] Проверка hasUnsavedChanges:', state.hasUnsavedChanges);
+      return state.hasUnsavedChanges;
+    });
+
+    // Регистрируем callback для сохранения холста
+    // Вызывает метод saveToFile из store
+    window.electronAPI?.registerSaveCallback(async () => {
+      console.log('[CanvasContent] Сохранение холста перед закрытием...');
+      await useCanvasStore.getState().saveToFile();
+      console.log('[CanvasContent] Холст сохранён');
+    });
+
+    // Cleanup: удаляем callbacks при размонтировании
+    return () => {
+      window.electronAPI?.unregisterUnsavedChangesCallback();
+      window.electronAPI?.unregisterSaveCallback();
+    };
+  }, []); // Пустой массив зависимостей - регистрируем один раз при монтировании
 
   // ===========================================================================
   // ЦЕНТРИРОВАНИЕ ХОЛСТА НА НОВОЙ НОДЕ
@@ -1168,6 +1206,47 @@ export function CanvasContent() {
     return nodes.filter((n) => n.data.isStale && n.data.response).length;
   }, [nodes]);
 
+  // ===========================================================================
+  // СТИЛИЗАЦИЯ ЦИТАТНЫХ СВЯЗЕЙ
+  // ===========================================================================
+
+  /**
+   * Edges с динамическими стилями для цитатных связей
+   * 
+   * Цитатные связи (isQuoteEdge === true) отображаются пурпурным цветом,
+   * чтобы визуально выделить источник цитаты среди других родителей.
+   * 
+   * Пересчитывается при изменении edges.
+   */
+  const styledEdges = useMemo((): Edge[] => {
+    return edges.map((edge): Edge => {
+      // Проверяем: является ли связь цитатной
+      const isQuoteEdge = edge.data?.isQuoteEdge === true;
+
+      if (isQuoteEdge) {
+        // Цитатная связь - оранжевый цвет (как в контекстном окне)
+        // Связь нельзя выделить и удалить - она привязана к цитате
+        return {
+          ...edge,
+          // Добавляем CSS класс для стилизации через globals.css
+          className: 'quote-edge',
+          // Связь нельзя выделять и удалять
+          selectable: false,
+          deletable: false,
+          // Inline стили для цвета связи - оранжевый
+          style: {
+            ...edge.style,
+            stroke: 'hsl(25 95% 53%)', // Оранжевый цвет
+            strokeWidth: 2,
+          },
+        } as Edge;
+      }
+
+      // Обычная связь - без изменений
+      return edge as Edge;
+    });
+  }, [edges]);
+
   /**
    * Форматирует timestamp в читаемое время
    * @param timestamp - временная метка в мс
@@ -1341,7 +1420,8 @@ export function CanvasContent() {
       <ReactFlow<NeuroNodeType>
         // === ДАННЫЕ ===
         nodes={nodes}
-        edges={edges}
+        // Используем styledEdges с динамическими стилями для цитатных связей
+        edges={styledEdges}
 
         // === ТИПЫ НОД ===
         nodeTypes={nodeTypes}

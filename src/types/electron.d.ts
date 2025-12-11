@@ -74,6 +74,48 @@ interface ElectronAPI {
    * }
    */
   platform: 'win32' | 'darwin' | 'linux';
+  
+  // ===========================================================================
+  // МЕТОДЫ ДЛЯ ПРОВЕРКИ НЕСОХРАНЁННЫХ ИЗМЕНЕНИЙ ПРИ ЗАКРЫТИИ
+  // ===========================================================================
+  
+  /**
+   * Регистрирует callback для получения статуса несохранённых изменений
+   * 
+   * Main процесс вызывает эту функцию через executeJavaScript
+   * при попытке закрытия окна для проверки наличия несохранённых изменений.
+   * 
+   * @param callback - функция, возвращающая текущий статус hasUnsavedChanges
+   * 
+   * @example
+   * window.electronAPI?.registerUnsavedChangesCallback(() => hasUnsavedChanges);
+   */
+  registerUnsavedChangesCallback: (callback: () => boolean) => void;
+  
+  /**
+   * Удаляет зарегистрированный callback для проверки несохранённых изменений
+   * Вызывается при размонтировании компонента
+   */
+  unregisterUnsavedChangesCallback: () => void;
+  
+  /**
+   * Регистрирует callback для сохранения холста
+   * 
+   * Main процесс вызывает эту функцию через executeJavaScript
+   * когда пользователь выбирает "Сохранить и выйти" в диалоге закрытия.
+   * 
+   * @param callback - async функция сохранения холста
+   * 
+   * @example
+   * window.electronAPI?.registerSaveCallback(saveToFile);
+   */
+  registerSaveCallback: (callback: () => Promise<void>) => void;
+  
+  /**
+   * Удаляет зарегистрированный callback сохранения
+   * Вызывается при размонтировании компонента
+   */
+  unregisterSaveCallback: () => void;
 }
 
 // =============================================================================

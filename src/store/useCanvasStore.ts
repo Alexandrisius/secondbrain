@@ -945,11 +945,41 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
 
           // =======================================================================
-          // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
-          // Если промпт вернулся к эталонному состоянию - проверяем хэш
+          // УСТАРЕВАНИЕ САМОЙ КАРТОЧКИ ПРИ ИЗМЕНЕНИИ ПРОМПТА
+          // Если промпт изменился и у карточки есть response - карточка устарела,
+          // потому что ответ был сгенерирован на другой вопрос
           // =======================================================================
           const newPrompt = data.prompt;
           if (newPrompt !== undefined && newPrompt !== oldPrompt) {
+            // Получаем актуальное состояние ноды после set
+            const { nodes: currentNodes } = get();
+            const currentNode = currentNodes.find((n) => n.id === nodeId);
+            
+            // Если у карточки есть ответ - помечаем её как устаревшую
+            if (currentNode?.data.response) {
+              set((state) => {
+                const nodeIndex = state.nodes.findIndex((n) => n.id === nodeId);
+                if (nodeIndex !== -1) {
+                  state.nodes[nodeIndex].data = {
+                    ...state.nodes[nodeIndex].data,
+                    isStale: true,
+                    updatedAt: Date.now(),
+                  };
+                }
+              });
+              
+              console.log(
+                '[updateNodeData] Промпт изменился для ноды:',
+                nodeId,
+                '- карточка помечена как stale'
+              );
+            }
+            
+            // =======================================================================
+            // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
+            // Если промпт вернулся к эталонному состоянию - проверяем хэш
+            // (хэш включает prompt, поэтому если вернулся - stale снимется)
+            // =======================================================================
             const { checkAndClearStale } = get();
             checkAndClearStale(nodeId);
           }
@@ -1816,6 +1846,8 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             state.nodes.push(newNode);
 
             // Создаём связь с источником
+            // ВАЖНО: Помечаем связь как цитатную (isQuoteEdge: true)
+            // Это позволяет визуально выделить источник цитаты пурпурным цветом
             const isSourceNote = sourceNode.type === 'note';
             const newEdge: NeuroEdge = {
               id: generateEdgeId(sourceNodeId, newNodeId),
@@ -1823,6 +1855,10 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
               target: newNodeId,
               type: isSourceNote ? 'neuro-edge' : 'default',
               animated: isSourceNote,
+              // Данные связи: помечаем как цитатную для особой стилизации
+              data: {
+                isQuoteEdge: true,
+              },
             };
             state.edges.push(newEdge);
 

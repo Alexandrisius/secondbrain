@@ -39,14 +39,28 @@ const REQUEST_TIMEOUT = 30000; // 30 секунд
  * Системный промпт для суммаризации
  * Инструктирует модель создать краткое резюме
  */
-const SUMMARIZE_SYSTEM_PROMPT = `Ты - ассистент для суммаризации текста.
-Твоя задача: сократить данный текст до 2-3 ключевых предложений, сохраняя основную суть и важные факты.
-Правила:
-- Пиши кратко и по существу
-- Сохраняй ключевые факты и выводы
-- Не добавляй новую информацию
-- Не используй вводные фразы типа "В данном тексте говорится..."
-- Просто дай краткое резюме содержания`;
+// =============================================================================
+// СИСТЕМНЫЙ ПРОМПТ ДЛЯ СУММАРИЗАЦИИ
+// Написан на английском, чтобы не влиять на язык ответа.
+// LLM должна определить язык входного текста и отвечать на том же языке.
+// =============================================================================
+const SUMMARIZE_SYSTEM_PROMPT = `You are a text summarization assistant.
+
+Your task: condense the given text into 2-3 key sentences while preserving the main idea and important facts.
+
+CRITICAL LANGUAGE RULE:
+- Detect the language of the input text
+- Write your summary in THE SAME LANGUAGE as the input
+- If input is in Russian → summarize in Russian
+- If input is in English → summarize in English
+- If input is in any other language → summarize in that language
+
+Rules:
+- Be concise and to the point
+- Preserve key facts and conclusions
+- Do not add new information not present in the original
+- Do not use introductory phrases like "This text discusses..." or "The author talks about..."
+- Just provide a brief summary of the content`;
 
 // =============================================================================
 // ТИПЫ
