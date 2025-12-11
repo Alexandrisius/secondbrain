@@ -440,4 +440,21 @@ export const en: TranslationKeys = {
     errorDetail: 'There may be unsaved changes. Are you sure you want to exit?',
     exit: 'Exit',
   },
+
+  // ===========================================================================
+  // SYSTEM PROMPT
+  // ===========================================================================
+  systemPrompt: {
+    title: 'System Prompt',
+    description: 'This prompt applies to all cards on this canvas. The global prompt is added automatically.',
+    globalSection: 'Global Prompt',
+    globalDescription: 'This prompt applies to all canvases and cannot be modified.',
+    canvasSection: 'Canvas Prompt',
+    canvasDescription: 'Additional prompt for this canvas. Added after the global prompt.',
+    placeholder: 'E.g., "Be concise and to the point" or "Use technical writing style"',
+    clear: 'Clear',
+    unsavedChanges: 'Unsaved changes',
+    hint: 'The system prompt is sent to the LLM at the beginning of each request. Use it to customize response style, specify a role, or add project context.',
+    buttonTooltip: 'System prompt for LLM',
+  },
 };

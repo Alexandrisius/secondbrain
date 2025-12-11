@@ -42,6 +42,7 @@ import { SettingsModal, SettingsButton } from './SettingsModal';
 import { DonateModal, DonateButtonTrigger } from './DonateModal';
 import { SearchBar } from './SearchBar';
 import { ReadingModeModal } from './ReadingModeModal';
+import { SystemPromptModal, SystemPromptButton } from './SystemPromptModal';
 import { useReadingModeStore } from '@/store/useReadingModeStore';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
@@ -195,6 +196,12 @@ export function CanvasContent() {
    * true - окно открыто, false - закрыто
    */
   const [isDonateOpen, setIsDonateOpen] = useState(false);
+
+  /**
+   * Состояние модального окна системного промпта
+   * true - окно открыто, false - закрыто
+   */
+  const [isSystemPromptOpen, setIsSystemPromptOpen] = useState(false);
 
   /**
    * Состояние поисковой панели (семантический поиск)
@@ -1538,6 +1545,12 @@ export function CanvasContent() {
           ПАНЕЛЬ СОЗДАНИЯ КАРТОЧЕК (Слева посередине)
           ======================================================================= */}
       <div className="absolute left-4 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-3">
+        {/* Кнопка системного промпта - выше кнопок создания карточек */}
+        <SystemPromptButton onClick={() => setIsSystemPromptOpen(true)} />
+        
+        {/* Разделитель */}
+        <div className="w-8 h-px bg-zinc-200 dark:bg-zinc-700 mx-auto" />
+        
         <button
           onClick={() => {
             const viewport = getViewport();
@@ -1597,6 +1610,12 @@ export function CanvasContent() {
       <DonateModal
         isOpen={isDonateOpen}
         onClose={() => setIsDonateOpen(false)}
+      />
+
+      {/* ----- МОДАЛЬНОЕ ОКНО СИСТЕМНОГО ПРОМПТА ----- */}
+      <SystemPromptModal
+        isOpen={isSystemPromptOpen}
+        onClose={() => setIsSystemPromptOpen(false)}
       />
 
       {/* ----- ПОИСКОВАЯ ПАНЕЛЬ (СЕМАНТИЧЕСКИЙ ПОИСК) ----- */}

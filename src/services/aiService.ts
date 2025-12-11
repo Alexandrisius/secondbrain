@@ -8,6 +8,8 @@ import { ChatMessage } from '@/types/canvas';
 export interface ChatRequestParams {
   messages: ChatMessage[];
   context?: string;
+  /** Системная инструкция холста (добавляется к глобальной) */
+  systemPrompt?: string;
   apiKey: string;
   apiBaseUrl?: string;
   model: string;
@@ -29,6 +31,7 @@ export interface SummarizeRequestParams {
 export async function streamChatCompletion({
   messages,
   context,
+  systemPrompt,
   apiKey,
   apiBaseUrl,
   model,
@@ -41,6 +44,7 @@ export async function streamChatCompletion({
     body: JSON.stringify({
       messages,
       context,
+      systemPrompt, // Передаём системную инструкцию холста
       apiKey,
       apiBaseUrl,
       model,

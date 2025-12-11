@@ -96,6 +96,11 @@ export interface CanvasStoreWithPersistence extends CanvasStore {
   setCurrentCanvasId: (canvasId: string | null) => void;
   /** Установить ID карточки для центрирования после загрузки холста */
   setSearchTargetNodeId: (nodeId: string | null) => void;
+  /** 
+   * Установить системную инструкцию для холста
+   * Эта инструкция добавляется к глобальной и применяется ко всем карточкам
+   */
+  setSystemPrompt: (prompt: string | null) => void;
 }
 
 // =============================================================================
@@ -776,6 +781,15 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
 
         /** ID карточки для центрирования после перехода на другой холст (из поиска) */
         searchTargetNodeId: null,
+
+        /**
+         * Системная инструкция для холста
+         * 
+         * Эта инструкция добавляется к глобальной системной инструкции
+         * и применяется ко всем карточкам на данном холсте.
+         * Позволяет задать специфичный контекст для каждого холста.
+         */
+        systemPrompt: null as string | null,
 
         // =========================================================================
         // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
@@ -1701,6 +1715,22 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
         },
 
         /**
+         * Установить системную инструкцию для холста
+         * 
+         * Эта инструкция добавляется к глобальной системной инструкции
+         * и применяется ко всем карточкам на данном холсте.
+         * 
+         * @param prompt - Текст инструкции или null для очистки
+         */
+        setSystemPrompt: (prompt: string | null) => {
+          set((state) => {
+            state.systemPrompt = prompt;
+            // Помечаем что есть несохранённые изменения
+            state.hasUnsavedChanges = true;
+          });
+        },
+
+        /**
          * Переключить раскрытие/сворачивание ответной части карточки
          * 
          * Используется для:
@@ -2591,6 +2621,8 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
               state.nodes = loadedNodes;
               // Загружаем связи (могут быть пустыми)
               state.edges = data.edges || [];
+              // Загружаем системную инструкцию холста (может быть null)
+              state.systemPrompt = data.systemPrompt || null;
               // Обновляем метаданные
               state.lastSaved = data.lastSaved || null;
               state.isLoading = false;
@@ -2653,7 +2685,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          * или вручную пользователем
          */
         saveToFile: async () => {
-          const { nodes, edges, currentCanvasId } = get();
+          const { nodes, edges, currentCanvasId, systemPrompt } = get();
 
           // Если нет ID холста - нечего сохранять
           if (!currentCanvasId) {
@@ -2669,12 +2701,13 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
 
           try {
             // Запрос к API с ID холста
+            // Включаем systemPrompt в сохраняемые данные
             const response = await fetch(`/api/canvas/${currentCanvasId}`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ nodes, edges }),
+              body: JSON.stringify({ nodes, edges, systemPrompt }),
             });
 
             if (!response.ok) {

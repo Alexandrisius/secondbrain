@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { buildFullSystemPrompt } from '@/lib/systemPrompt';
 
 // =============================================================================
 // NEXT.JS ROUTE КОНФИГУРАЦИЯ (для streaming)
@@ -76,6 +77,11 @@ interface ChatRequestBody {
   messages: ChatMessage[];
   /** Контекст от родительских нод */
   context?: string;
+  /** 
+   * Системная инструкция холста
+   * Объединяется с глобальной инструкцией и добавляется как system message
+   */
+  systemPrompt?: string;
   /** API ключ для авторизации */
   apiKey?: string;
   /** Базовый URL API провайдера (например "https://api.openai.com/v1") */
@@ -152,17 +158,27 @@ export async function POST(request: NextRequest) {
     // ПОДГОТОВКА СООБЩЕНИЙ
     // =========================================================================
     
-    // Если есть контекст от родительских нод, добавляем его как system message
     const messages: ChatMessage[] = [];
     
-    if (body.context) {
+    // 1. Добавляем системную инструкцию (глобальная + холста)
+    // buildFullSystemPrompt объединяет GLOBAL_SYSTEM_PROMPT и systemPrompt холста
+    const fullSystemPrompt = buildFullSystemPrompt(body.systemPrompt);
+    if (fullSystemPrompt) {
       messages.push({
         role: 'system',
-        content: `Context from previous thoughts:\n${body.context}`,
+        content: fullSystemPrompt,
       });
     }
     
-    // Добавляем основные сообщения
+    // 2. Если есть контекст от родительских нод, добавляем его как второй system message
+    if (body.context) {
+      messages.push({
+        role: 'system',
+        content: `=== Контекст из родительских карточек ===\n${body.context}`,
+      });
+    }
+    
+    // 3. Добавляем основные сообщения (вопрос пользователя)
     messages.push(...body.messages);
     
     // =========================================================================

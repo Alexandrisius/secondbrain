@@ -27,7 +27,7 @@ import {
 // =============================================================================
 
 /**
- * Структура данных холста (ноды и связи)
+ * Структура данных холста (ноды, связи, системная инструкция)
  */
 interface CanvasData {
   /** Массив нод */
@@ -36,6 +36,8 @@ interface CanvasData {
   edges: unknown[];
   /** Временная метка последнего сохранения */
   lastSaved: number;
+  /** Системная инструкция для холста (опционально) */
+  systemPrompt?: string | null;
 }
 
 /**
@@ -339,10 +341,13 @@ export async function POST(
     }
     
     // Формируем данные для записи
+    // Включаем systemPrompt если он передан (может быть null или строка)
     const data: CanvasData = {
       nodes: body.nodes,
       edges: body.edges,
       lastSaved: Date.now(),
+      // Сохраняем systemPrompt только если он передан в запросе
+      ...(body.systemPrompt !== undefined && { systemPrompt: body.systemPrompt }),
     };
     
     // Сохраняем в файл

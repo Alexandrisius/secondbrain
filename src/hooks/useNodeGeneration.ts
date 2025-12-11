@@ -41,6 +41,9 @@ export const useNodeGeneration = ({
   const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
   const embeddingsModel = useSettingsStore((s) => s.embeddingsModel);
 
+  // Системная инструкция холста
+  const systemPrompt = useCanvasStore((s) => s.systemPrompt);
+
   // Local state
   const [streamingText, setStreamingText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -144,6 +147,7 @@ export const useNodeGeneration = ({
       const response = await streamChatCompletion({
         messages: [{ role: 'user', content: localPrompt }],
         context: parentContext,
+        systemPrompt: systemPrompt || undefined, // Передаём системную инструкцию холста
         apiKey,
         apiBaseUrl,
         model,
@@ -210,7 +214,7 @@ export const useNodeGeneration = ({
     }
   }, [
     id, localPrompt, apiKey, t.node.apiKeyMissing, buildParentContext, 
-    apiBaseUrl, model, corporateMode, updateNodeData, saveContextHash, 
+    apiBaseUrl, model, corporateMode, systemPrompt, updateNodeData, saveContextHash, 
     onBatchNodeComplete, handleGenerateEmbedding, useSummarization, 
     handleGenerateSummary, setIsAnswerExpanded
   ]);
