@@ -61,6 +61,10 @@ NeuroCanvas allows you to:
 - **vsellm.ru** (Russian proxy, RUB payments)
 - **Custom API** (Any OpenAI-compatible API, e.g., LM Studio or Ollama)
 
+### 🧠 System Instructions
+Define global system instructions and behavioral rules for the LLM that apply to the entire canvas context. Control the persona, tone, and constraints of your AI assistant.
+![System Instructions](./docs/images/SystemPrompt.png)
+
 ### 🎨 Visual Canvas
 - **Infinite canvas** with navigation and zoom
 - **Drag-to-Create**: drag a connection to create a card
@@ -68,6 +72,11 @@ NeuroCanvas allows you to:
 - **Dynamic Positioning**: new child cards automatically position to the right of parent with proper spacing
 - **Resizable Cards**: drag the right edge to adjust card width
 - **Automatic Context**: parent cards form the context for children
+- **Colored Connections**: Visual distinction between standard parent-child links and quote-based connections.
+
+### 📖 Reading Mode
+Focus on the content with a distraction-free reading mode for any card. Ideal for studying long responses or notes without UI clutter.
+![Reading Mode](./docs/images/ReadingMode.png)
 
 ### 📝 Card Types
 - **AI Cards**: interact with LLM, generate responses, support context inheritance
@@ -82,6 +91,7 @@ NeuroCanvas allows you to:
 - **Quote Invalidation**: automatic detection when source response changes
 - **Quote Update**: re-select quote when source is modified
 - **Visual Highlighting**: quoted sections highlighted in context viewer
+- **Colored Links**: Connections created from quotes have distinct colors on the canvas.
 
 ### 🔍 Smart Search (RRF)
 Combines 4 search methods for perfect results:
