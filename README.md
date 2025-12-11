@@ -37,6 +37,7 @@ Download the latest version for Windows:
 ## 🎯 What is it?
 
 **NeuroCanvas** is an innovative tool for visually building AI prompts on an infinite canvas. Instead of a linear chat, you create a **knowledge graph** where each card connects to others, and context is passed automatically.
+![Workflow](./docs/images/NeuroCanvas.png)
 
 ### 💡 The Problem
 Traditional AI chats suffer from a critical issue: **linear history**. When exploring a complex topic, you inevitably drift into side branches, making it painful to return to the main conversation line.
