@@ -429,15 +429,18 @@ export const en: TranslationKeys = {
   // CLOSE CONFIRMATION DIALOG (ELECTRON)
   // ===========================================================================
   closeConfirm: {
-    title: 'Unsaved Changes',
-    message: 'You have unsaved changes',
-    detail: 'Do you want to save changes before exiting?',
+    title: 'Close NeuroCanvas?',
+    message: 'Are you sure you want to close the application?',
+    detail: 'All data will be saved before closing.',
     saveAndExit: 'Save and Exit',
-    exitWithoutSaving: 'Exit Without Saving',
     cancel: 'Cancel',
+    saveErrorTitle: 'Save Error',
+    saveErrorMessage: 'Could not save data',
+    saveErrorDetail: 'Exit without saving anyway?',
+    exitWithoutSaving: 'Exit Without Saving',
     errorTitle: 'Close Application?',
-    errorMessage: 'Could not check save status',
-    errorDetail: 'There may be unsaved changes. Are you sure you want to exit?',
+    errorMessage: 'An error occurred',
+    errorDetail: 'Could not save. Exit anyway?',
     exit: 'Exit',
   },
 

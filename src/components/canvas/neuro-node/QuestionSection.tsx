@@ -86,14 +86,17 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         )}
       />
 
-      {/* Контекст родителя badge */}
-      {hasParentContext && !data.isStale && (
+      {/* Контекст родителя badge - всегда видна при наличии родительского контекста */}
+      {/* Убрано условие !data.isStale чтобы кнопка была доступна даже в stale состоянии */}
+      {/* Это позволяет пользователю изменять настройки контекста без необходимости регенерации */}
+      {hasParentContext && (
         <button
           onClick={() => setIsContextModalOpen(true)}
           onPointerDown={(e) => e.stopPropagation()}
           className={cn(
             'flex items-center gap-1 text-xs mb-2',
-            data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+            // Оранжевый цвет если есть исключённые блоки ИЛИ карточка stale
+            (data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0) || data.isStale
               ? 'text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30'
               : 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30',
             'rounded-md px-2 py-1 -ml-2',
@@ -105,13 +108,15 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         >
           <span className={cn(
             "w-2 h-2 rounded-full",
-            data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+            // Оранжевый индикатор если есть исключённые блоки ИЛИ карточка stale
+            (data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0) || data.isStale
               ? "bg-orange-500"
               : "bg-blue-500"
           )} />
           <span className={cn(
             "underline underline-offset-2",
-            data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0
+            // Оранжевое подчёркивание если есть исключённые блоки ИЛИ карточка stale
+            (data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0) || data.isStale
               ? "decoration-orange-400/50"
               : "decoration-blue-400/50"
           )}>
@@ -119,6 +124,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
               ? format(t.node.multipleParentContextUsed, { count: directParents.length })
               : t.node.parentContextUsed
             }
+            {/* Звёздочка если есть исключённые блоки контекста */}
             {data.excludedContextNodeIds && data.excludedContextNodeIds.length > 0 && " *"}
           </span>
         </button>

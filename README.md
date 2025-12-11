@@ -105,6 +105,8 @@ Combines 4 search methods for perfect results:
   - Quotes for referenced sections
   - Summaries for distant ancestors
 
+![Context View](./docs/images/ContextView.png)
+
 ### ⚙️ Advanced Capabilities
 - **Embeddings Model Selection**: tune search quality (`text-embedding-3`, `multilingual-e5`, etc.)
 - **Corporate Mode**: work in networks with SSL inspection

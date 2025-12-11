@@ -86,6 +86,12 @@ export interface CanvasStoreWithPersistence extends CanvasStore {
    */
   searchTargetNodeId: string | null;
 
+  /**
+   * Системная инструкция для холста
+   * Добавляется к глобальной инструкции и применяется ко всем карточкам
+   */
+  systemPrompt: string | null;
+
   /** Загрузить данные холста по ID */
   loadFromFile: (canvasId?: string) => Promise<void>;
   /** Сохранить данные в файл */

@@ -50,6 +50,10 @@ export const useNodeUI = ({
   // --- QUOTE STATE ---
   const [isQuoteMode, setIsQuoteMode] = useState(false);
   const [selectedQuoteText, setSelectedQuoteText] = useState('');
+  
+  // Ref для отслеживания предыдущего значения isQuoteModeActive из store
+  // Используется для однонаправленной синхронизации (store → local)
+  const prevIsQuoteModeActiveRef = useRef<boolean | undefined>(data.isQuoteModeActive);
 
   // --- COPY STATE ---
   const [copied, setCopied] = useState(false);
@@ -72,15 +76,26 @@ export const useNodeUI = ({
     }
   }, [data.isAnswerExpanded, isAnswerExpanded, setIsAnswerExpanded]);
 
-  // Sync quote mode
+  // Sync quote mode - однонаправленная синхронизация (store → local)
+  // ВАЖНО: Реагируем ТОЛЬКО на изменения из store, а не на локальные изменения isQuoteMode.
+  // Это исправляет баг, когда после создания цитатной карточки кнопка "Цитировать" 
+  // переставала работать, потому что effect сразу сбрасывал локальный state обратно в false.
   useEffect(() => {
-    if (data.isQuoteModeActive !== undefined && data.isQuoteModeActive !== isQuoteMode) {
-      setIsQuoteMode(data.isQuoteModeActive);
-      if (data.isQuoteModeActive) {
-        setSelectedQuoteText('');
+    // Проверяем, реально ли изменилось значение в store
+    if (data.isQuoteModeActive !== prevIsQuoteModeActiveRef.current) {
+      // Запоминаем новое значение из store
+      prevIsQuoteModeActiveRef.current = data.isQuoteModeActive;
+      
+      // Синхронизируем локальный state с store (только если значение определено)
+      if (data.isQuoteModeActive !== undefined) {
+        setIsQuoteMode(data.isQuoteModeActive);
+        // При активации режима цитирования из store сбрасываем выделенный текст
+        if (data.isQuoteModeActive) {
+          setSelectedQuoteText('');
+        }
       }
     }
-  }, [data.isQuoteModeActive, isQuoteMode]);
+  }, [data.isQuoteModeActive]); // Убрали isQuoteMode из зависимостей!
 
   // Scroll observer
   useEffect(() => {
