@@ -119,6 +119,17 @@ export const en: TranslationKeys = {
     embeddingsModelChangeDescription: 'When changing the model, you need to clear the current index ({count} cards) and reindex, as different models create incompatible vectors.',
     clearAndChange: 'Clear and change',
     clearingIndex: 'Clearing index...',
+
+    // Context window
+    contextWindowSection: 'Model Context Window',
+    maxContextTokens: 'Maximum Context',
+    maxContextTokensDescription: 'Token limit for the selected model context window. Automatically detected for known models.',
+    autoDetected: 'Auto-detected',
+    autoDetectedDescription: 'Limit automatically determined based on the selected model.',
+    manualOverride: 'Override manually',
+    manualOverrideDescription: 'Specify your own limit if auto-detection is incorrect.',
+    tokensPlaceholder: 'Number of tokens',
+    unknownModel: 'Model not recognized, using default value.',
   },
 
   // ===========================================================================
@@ -239,6 +250,12 @@ export const en: TranslationKeys = {
 
     // Resize
     resizeCard: 'Resize card width',
+
+    // Context tokens
+    tokens: 'tokens',
+    contextUsage: 'Context usage',
+    tokensUsed: '{used} / {max} tokens ({percent}%)',
+    contextOverflow: 'Context exceeds model limit!',
   },
 
   // ===========================================================================
@@ -268,6 +285,10 @@ export const en: TranslationKeys = {
     response: 'Response:',
     quoteLabel: 'Quote:',
     excluded: 'Excluded from context',
+
+    // Labels for personal notes (NoteNode)
+    noteTitle: 'Title:',
+    noteContent: 'Content:',
   },
 
   // ===========================================================================
@@ -344,6 +365,49 @@ export const en: TranslationKeys = {
     quoteSelectionMode: 'Text selection mode',
     chars: 'chars',
     summarizing: 'Summarizing...',
+  },
+
+  // ===========================================================================
+  // READING MODE
+  // ===========================================================================
+  readingMode: {
+    title: 'Reading Mode',
+    openReadingMode: 'Open in reading mode',
+    close: 'Close',
+    
+    // Navigation
+    goToParent: 'Go to parent card',
+    goToChild: 'Go to child card',
+    toParent: 'To parent',
+    toChild: 'To child',
+    goBack: 'Back',
+    noParents: 'No parents',
+    noChildren: 'No children',
+    
+    // Multiple connections
+    selectParent: 'Select parent card',
+    selectChild: 'Select child card',
+    parentsCount: '{count} parents',
+    childrenCount: '{count} children',
+    
+    // Breadcrumb and progress
+    rootCard: 'Root',
+    currentCard: 'Current',
+    cardPosition: 'Card {current} of {total}',
+    
+    // Card types
+    aiCard: 'AI card',
+    noteCard: 'Note',
+    untitled: 'Untitled',
+    
+    // Mini-graph
+    graphNeighborhood: 'Card neighborhood',
+    
+    // Shortcuts
+    shortcuts: 'Keyboard shortcuts',
+    shortcutEscape: 'Escape — close',
+    shortcutArrows: 'Arrows ← → — navigate',
+    shortcutBackspace: 'Backspace — go back in history',
   },
 
   // ===========================================================================

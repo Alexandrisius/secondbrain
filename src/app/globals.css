@@ -734,6 +734,45 @@
     --tw-prose-invert-td-borders: hsl(var(--border));
   }
 
+  /* ВАЖНО: Принудительно отключаем overflow на prose внутри нод,
+     чтобы не создавался вложенный скролл. Скролл должен быть только
+     на родительском контейнере с max-h */
+  .neuro-node .prose {
+    overflow: visible !important;
+  }
+
+  /* Также отключаем overflow на всех дочерних элементах prose,
+     кроме pre блоков (для горизонтального скролла кода) */
+  .neuro-node .prose > *:not(pre) {
+    overflow: visible !important;
+  }
+
+  /* === NoteNode: Запрет вложенных скроллов ===
+     Гарантируем, что только .note-content-scroll имеет скролл,
+     а все дочерние элементы внутри него - нет */
+  .note-content-scroll > * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  
+  .note-content-scroll > * > * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  
+  /* Принудительно отключаем скролл в textarea внутри note-content-scroll */
+  .note-content-scroll textarea,
+  .note-content-scroll .neuro-textarea {
+    overflow: hidden !important;
+    max-height: none !important;
+  }
+  
+  /* Исключение для pre блоков - им нужен горизонтальный скролл */
+  .note-content-scroll pre {
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+  }
+
   /* Код в нодах */
   .neuro-node .prose code,
   .neuro-answer-section .prose code {
@@ -1237,5 +1276,296 @@
   /* --- Press эффект --- */
   .press-effect:active {
     transform: scale(0.98);
+  }
+}
+
+/* =============================================================================
+   READING MODE - ПОЛНОЭКРАННЫЙ РЕЖИМ ЧТЕНИЯ КАРТОЧЕК
+   ============================================================================= */
+
+@layer components {
+
+  /* --- Предотвращаем скролл body когда Reading Mode открыт --- */
+  body.reading-mode-open {
+    overflow: hidden !important;
+  }
+
+  /* --- Контейнер Reading Mode (рендерится через Portal) --- */
+  .reading-mode-backdrop {
+    /* Полноэкранный overlay */
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    
+    /* Flex для центрирования контента */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* Padding для отступов от краёв экрана */
+    padding: 1rem;
+  }
+
+  @media (min-width: 640px) {
+    .reading-mode-backdrop {
+      padding: 2rem;
+    }
+  }
+
+  /* --- Blur-фон за контентом --- */
+  .reading-mode-blur {
+    position: absolute;
+    inset: 0;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background-color: rgba(0, 0, 0, 0.6);
+  }
+
+  /* --- Карточка контента в Reading Mode --- */
+  .reading-mode-card {
+    position: relative;
+    z-index: 1;
+    
+    /* Размеры */
+    width: 100%;
+    max-width: 900px;
+    max-height: 85vh;
+    
+    /* Стили карточки */
+    background: hsl(var(--card));
+    border-radius: 1rem;
+    box-shadow: 
+      0 25px 50px -12px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(255, 255, 255, 0.1);
+    
+    /* Overflow для внутреннего скролла */
+    overflow: hidden;
+  }
+
+  /* --- Кнопка закрытия --- */
+  .reading-mode-close-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    
+    /* Размер и форма */
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    
+    /* Цвета */
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    border: none;
+    cursor: pointer;
+    
+    /* Flex для центрирования иконки */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* Transition */
+    transition: background-color 200ms ease, color 200ms ease, transform 150ms ease;
+  }
+
+  .reading-mode-close-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+  }
+
+  .reading-mode-close-btn:active {
+    transform: scale(0.95);
+  }
+
+  .reading-mode-close-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+  }
+
+  /* --- Навигационные кнопки (стрелки) --- */
+  .reading-mode-nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    
+    /* Размер и форма */
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 50%;
+    
+    /* Цвета */
+    background: hsl(var(--card) / 0.9);
+    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--border));
+    cursor: pointer;
+    
+    /* Flex для центрирования */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* Тень */
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.2);
+    
+    /* Transition */
+    transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  }
+
+  .reading-mode-nav-btn--left {
+    left: 1rem;
+  }
+
+  .reading-mode-nav-btn--right {
+    right: 1rem;
+  }
+
+  @media (min-width: 1024px) {
+    .reading-mode-nav-btn--left {
+      left: 2rem;
+    }
+    .reading-mode-nav-btn--right {
+      right: 2rem;
+    }
+  }
+
+  .reading-mode-nav-btn:hover:not(:disabled) {
+    transform: translateY(-50%) scale(1.1);
+    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.3);
+  }
+
+  .reading-mode-nav-btn:active:not(:disabled) {
+    transform: translateY(-50%) scale(0.95);
+  }
+
+  .reading-mode-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* --- Badge со счётчиком на кнопке --- */
+  .reading-mode-nav-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    
+    /* Размер */
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.375rem;
+    
+    /* Стили */
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(280 70% 60%));
+    color: white;
+    border-radius: 9999px;
+    
+    /* Текст */
+    font-size: 0.625rem;
+    font-weight: 600;
+    
+    /* Flex */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* --- Scrollable контент карточки --- */
+  .reading-mode-content {
+    overflow-y: auto;
+    max-height: 85vh;
+    padding: 1.5rem;
+  }
+
+  @media (min-width: 640px) {
+    .reading-mode-content {
+      padding: 2rem;
+    }
+  }
+
+  /* --- Увеличенная типографика для режима чтения --- */
+  .reading-mode-content .prose {
+    /* Увеличенный размер шрифта */
+    font-size: 1rem;
+    /* Увеличенный межстрочный интервал для комфортного чтения */
+    line-height: 1.8;
+  }
+
+  @media (min-width: 640px) {
+    .reading-mode-content .prose {
+      font-size: 1.0625rem;
+    }
+  }
+
+  .reading-mode-content .prose p {
+    margin-bottom: 1.25rem;
+  }
+
+  .reading-mode-content .prose h1,
+  .reading-mode-content .prose h2,
+  .reading-mode-content .prose h3 {
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  /* --- Header карточки в режиме чтения --- */
+  .reading-mode-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .reading-mode-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.4;
+    color: hsl(var(--foreground));
+  }
+
+  @media (min-width: 640px) {
+    .reading-mode-title {
+      font-size: 1.5rem;
+    }
+  }
+
+  /* --- Бейдж типа карточки --- */
+  .reading-mode-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-bottom: 0.75rem;
+  }
+
+  .reading-mode-type-badge--ai {
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+  }
+
+  .reading-mode-type-badge--note {
+    background: hsl(45 93% 47% / 0.15);
+    color: hsl(45 93% 35%);
+  }
+
+  .dark .reading-mode-type-badge--note {
+    background: hsl(45 93% 47% / 0.2);
+    color: hsl(45 93% 60%);
+  }
+
+  /* --- Секция цитаты в режиме чтения --- */
+  .reading-mode-quote {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background: hsl(var(--muted) / 0.5);
+    border-left: 4px solid hsl(var(--primary));
+  }
+
+  .reading-mode-quote blockquote {
+    font-style: italic;
+    color: hsl(var(--foreground) / 0.8);
+    padding-left: 0.5rem;
+    border-left: 2px solid hsl(var(--muted-foreground) / 0.3);
   }
 }

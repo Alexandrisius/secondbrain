@@ -40,6 +40,8 @@ import NoteNode from './NoteNode';
 import { SettingsModal, SettingsButton } from './SettingsModal';
 import { DonateModal, DonateButtonTrigger } from './DonateModal';
 import { SearchBar } from './SearchBar';
+import { ReadingModeModal } from './ReadingModeModal';
+import { useReadingModeStore } from '@/store/useReadingModeStore';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
 
@@ -293,6 +295,11 @@ export function CanvasContent() {
    * Вызывается по пробелу при выделенной карточке
    */
   const toggleSelectedNodesAnswerExpanded = useCanvasStore((s) => s.toggleSelectedNodesAnswerExpanded);
+
+  /**
+   * Action для открытия режима чтения
+   */
+  const openReadingMode = useReadingModeStore((s) => s.openReadingMode);
 
   // ===========================================================================
   // СОСТОЯНИЕ ПАКЕТНОЙ РЕГЕНЕРАЦИИ
@@ -738,8 +745,18 @@ export function CanvasContent() {
       }
 
       // =======================================================================
-      // SPACE - СВОРАЧИВАНИЕ/РАЗВОРАЧИВАНИЕ ОТВЕТНОЙ ЧАСТИ
+      // F2 - ОТКРЫТИЕ РЕЖИМА ЧТЕНИЯ
       // =======================================================================
+      if (event.key === 'F2') {
+        const nodeWithResponse = selectedNodes.find(n => n.data.response);
+        if (nodeWithResponse) {
+          event.preventDefault();
+          openReadingMode(nodeWithResponse.id);
+          console.log('[CanvasContent] F2: открытие режима чтения');
+        }
+        return;
+      }
+
       // =======================================================================
       // SPACE - СВОРАЧИВАНИЕ/РАЗВОРАЧИВАНИЕ ОТВЕТНОЙ ЧАСТИ (МАССОВОЕ)
       // =======================================================================
@@ -759,7 +776,7 @@ export function CanvasContent() {
     // ДО того, как оно достигнет React Flow и снимет выделение
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [nodes, createLinkedNodeRight, createSiblingNode, createNodeFromMultipleParents, toggleSelectedNodesAnswerExpanded, store]);
+  }, [nodes, createLinkedNodeRight, createSiblingNode, createNodeFromMultipleParents, toggleSelectedNodesAnswerExpanded, openReadingMode, store]);
 
   // ===========================================================================
   // ОБРАБОТЧИКИ
@@ -991,6 +1008,8 @@ export function CanvasContent() {
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, []);
 
+  // ===========================================================================
+  // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК F2 (РЕЖИМ ЧТЕНИЯ)
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК CTRL+Z / CTRL+Y (UNDO/REDO)
   // ===========================================================================
@@ -1506,6 +1525,9 @@ export function CanvasContent() {
         onClose={() => setIsSearchOpen(false)}
         onSelectResult={handleSearchResultSelect}
       />
+
+      {/* ----- РЕЖИМ ПОЛНОЭКРАННОГО ЧТЕНИЯ КАРТОЧЕК ----- */}
+      <ReadingModeModal />
 
       {/* ----- ИНДИКАТОР СОХРАНЕНИЯ, UNDO/REDO И КНОПКА РУЧНОГО СОХРАНЕНИЯ ----- */}
       <div className="absolute top-4 left-4 z-50 pointer-events-auto flex items-center gap-2">

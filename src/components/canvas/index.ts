@@ -25,3 +25,6 @@ export { ContextViewerModal } from './ContextViewerModal';
 
 // Модальное окно донатов/поддержки
 export { DonateModal, DonateButtonTrigger } from './DonateModal';
+
+// Режим полноэкранного чтения карточек
+export { ReadingModeModal } from './ReadingModeModal';

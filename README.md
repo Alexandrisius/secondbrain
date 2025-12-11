@@ -147,7 +147,9 @@ To use the application, **you need your own API key** from your chosen provider 
 - **Markdown**: React Markdown with GFM support
 
 ### Key Components
-- **NeuroNode**: AI-powered card with prompt/response
+- **NeuroNode**: Primary AI card component, refactored for performance and maintainability.
+  - **Hooks**: `useNodeGeneration` (AI logic), `useNodeContext` (context builder), `useNodeUI` (interaction).
+  - **Subcomponents**: `QuestionSection`, `AnswerSection`, `AnswerToolbar`.
 - **NoteNode**: Personal note card with title/content
 - **ContextViewerModal**: Hierarchical context viewer
 - **SearchBar**: Hybrid search with keyboard navigation

@@ -25,9 +25,11 @@ import {
     PlusCircle,
     X,
     GripVertical,
+    BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCanvasStore } from '@/store/useCanvasStore';
+import { useReadingModeStore } from '@/store/useReadingModeStore';
 import {
     useSettingsStore,
     selectApiKey,
@@ -61,6 +63,9 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     const clearQuoteModeActive = useCanvasStore((s) => s.clearQuoteModeActive);
     const pendingFocusNodeId = useCanvasStore((s) => s.pendingFocusNodeId);
     const clearPendingFocus = useCanvasStore((s) => s.clearPendingFocus);
+
+    // Action для открытия режима чтения
+    const openReadingMode = useReadingModeStore((s) => s.openReadingMode);
 
     // Settings for auto-summary
     const apiKey = useSettingsStore(selectApiKey);
@@ -101,6 +106,10 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     const contentScrollRef = useRef<HTMLDivElement>(null);
     const resizeStartXRef = useRef<number>(0);
     const resizeStartWidthRef = useRef<number>(DEFAULT_CARD_WIDTH);
+    
+    // Ref для отслеживания последнего суммаризированного контента
+    // Предотвращает бесконечный цикл суммаризации
+    const lastSummarizedContentRef = useRef<string>(data.response || '');
 
     // Scroll state for smart wheel handling
     const [hasVerticalScroll, setHasVerticalScroll] = useState(false);
@@ -155,8 +164,15 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
 
     // Auto-Summarize logic
     const generateSummary = useCallback(async (text: string) => {
-        if (!useSummarization || !text || text.length < 100 || !apiKey) {
-            if (text && text.length < 100) {
+        // Если текст пустой - очищаем summary
+        if (!text) {
+            updateNodeData(id, { summary: null, isSummarizing: false });
+            return;
+        }
+        
+        // Если суммаризация отключена или текст короткий - используем сам текст как summary
+        if (!useSummarization || text.length < 100 || !apiKey) {
+            if (text.length < 100) {
                 updateNodeData(id, { summary: text });
             }
             return;
@@ -194,13 +210,20 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     }, [id, updateNodeData, apiKey, apiBaseUrl, model, corporateMode, useSummarization]);
 
     // Trigger Summary when content changes (debounced)
+    // ВАЖНО: Используем ref для отслеживания последнего суммаризированного контента,
+    // а НЕ data.summary в зависимостях! Иначе возникает бесконечный цикл:
+    // content !== summary (всегда true) → generateSummary → summary обновился → 
+    // → эффект перезапустился → content !== summary (снова true) → бесконечный цикл
     useEffect(() => {
-        if (debouncedContent && debouncedContent !== data.summary) {
-            // Simple check to avoid re-summarizing if content hasn't changed meaningfully or is same as summary
-            // But data.summary is the OLD summary.
+        // Проверяем что контент изменился с момента последней суммаризации
+        // Включая случай когда контент стал пустым (для очистки summary)
+        if (debouncedContent !== lastSummarizedContentRef.current) {
+            // Сохраняем текущий контент как "суммаризированный" ДО вызова API
+            // чтобы предотвратить повторные вызовы при быстрых изменениях
+            lastSummarizedContentRef.current = debouncedContent;
             generateSummary(debouncedContent);
         }
-    }, [debouncedContent, data.summary, generateSummary]);
+    }, [debouncedContent, generateSummary]); // БЕЗ data.summary в зависимостях!
 
     // Resize Logic (Copy-paste from NeuroNode)
     useEffect(() => {
@@ -335,6 +358,13 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
         }
     }, [id, data.isQuoteModeActive, clearQuoteModeActive]);
 
+    /**
+     * Открытие режима чтения для текущей заметки
+     */
+    const handleOpenReadingMode = useCallback(() => {
+        openReadingMode(id);
+    }, [id, openReadingMode]);
+
     const handleTextSelection = useCallback(() => {
         if (!isQuoteMode) return;
         const selection = window.getSelection();
@@ -461,6 +491,20 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                                 </Button>
                             )}
                         </div>
+
+                        {/* Кнопка режима чтения */}
+                        {localContent && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleOpenReadingMode}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                className="h-8 w-8 p-0 nodrag text-amber-800 dark:text-amber-200 hover:bg-amber-200/50 dark:hover:bg-amber-900/50"
+                                title={t.readingMode?.openReadingMode || 'Режим чтения (F2)'}
+                            >
+                                <BookOpen className="w-4 h-4" />
+                            </Button>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -484,15 +528,16 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                     </div>
                 </div>
 
-                {/* CONTENT */}
+                {/* CONTENT - единственный контейнер со скроллом */}
                 <div
                     ref={contentScrollRef}
                     className={cn(
-                        "relative p-4 max-h-[400px] overflow-y-auto",
+                        "note-content-scroll relative p-4 overflow-y-auto overflow-x-hidden",
                         !isEditingContent && !isQuoteMode && "cursor-grab",
                         // Динамически добавляем nowheel только при наличии скролла
                         hasVerticalScroll && 'nowheel'
                     )}
+                    style={{ maxHeight: 400 }}
                     onDoubleClick={handleContentDoubleClick}
                 >
                     {isQuoteMode ? (
@@ -500,14 +545,15 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             ref={contentDisplayRef}
                             onMouseUp={handleTextSelection}
                             className={cn(
-                                'prose prose-sm dark:prose-invert max-w-none min-h-[100px] p-2 bg-transparent select-text cursor-text',
-                                'quote-mode-active nodrag'
+                                'relative', // Для позиционирования индикатора режима
+                                'prose prose-sm dark:prose-invert max-w-none',
+                                'select-text cursor-text quote-mode-active nodrag'
                             )}
                         >
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                 {localContent || `*${t.noteNode?.emptyNote || 'Empty note'}*`}
                             </ReactMarkdown>
-                            <div className="absolute top-2 right-2 bg-amber-200 text-amber-900 text-xs px-2 py-1 rounded shadow">
+                            <div className="absolute top-0 right-0 bg-amber-200 text-amber-900 text-xs px-2 py-1 rounded shadow">
                                 {t.noteNode?.quoteSelectionMode || 'Text selection mode'}
                             </div>
                         </div>
@@ -521,13 +567,13 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             placeholder={t.noteNode?.contentPlaceholder || 'Write your note...'}
                             minRows={5}
                             className={cn(
-                                'w-full resize-none bg-transparent border-none p-2',
+                                'w-full resize-none bg-transparent border-none p-0 overflow-hidden',
                                 'text-sm text-foreground focus:outline-none focus:ring-0',
                                 'nodrag neuro-textarea'
                             )}
                         />
                     ) : (
-                        <div className="prose prose-sm dark:prose-invert max-w-none min-h-[100px] p-2">
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
                             {localContent ? (
                                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                     {localContent}

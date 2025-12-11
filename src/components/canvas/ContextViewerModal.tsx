@@ -68,6 +68,8 @@ interface ContextViewerModalProps {
  */
 interface UiContextBlock extends ContextBlock {
   quoteContent?: string;
+  /** Тип ноды: 'neuro' (AI-карточка) или 'note' (личная заметка) */
+  nodeType?: 'neuro' | 'note';
 }
 
 // =============================================================================
@@ -283,6 +285,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           quoteContent,
           level: 0,
           levelName: getLevelName(0, index, directParents.length),
+          // Сохраняем тип ноды для различения AI-карточек и личных заметок
+          nodeType: parent.type as 'neuro' | 'note',
         });
       });
 
@@ -384,6 +388,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           quoteContent,
           level: index + 1, // +1 потому что level 0 = прямые родители
           levelName: getLevelName(index + 1),
+          // Сохраняем тип ноды для различения AI-карточек и личных заметок
+          nodeType: ancestor.type as 'neuro' | 'note',
         });
       });
 
@@ -533,11 +539,12 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                     {/* Контейнер контента, скрываемый при сворачивании */}
                     {!isCollapsed && (
                       <>
-                        {/* Вопрос (prompt) */}
+                        {/* Вопрос (prompt) или Название заметки */}
                         {block.prompt && (
                           <div className="mb-3 p-2 rounded bg-muted/50">
                             <div className="text-xs text-muted-foreground mb-1 font-medium">
-                              {t.contextModal.question}
+                              {/* Для личных заметок показываем "Название:", для AI-карточек - "Вопрос:" */}
+                              {block.nodeType === 'note' ? t.contextModal.noteTitle : t.contextModal.question}
                             </div>
                             <div className="text-sm">{block.prompt}</div>
                           </div>
@@ -566,9 +573,12 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                           {block.content && (
                             <div>
                               <div className="text-xs text-muted-foreground mb-1 font-medium">
-                                {block.type === 'quote'
-                                  ? (block.level === 0 ? t.contextModal.response : t.contextModal.summary)
-                                  : (block.type === 'summary' ? t.contextModal.summary : t.contextModal.response)}
+                                {/* Для личных заметок показываем "Содержание:", для AI-карточек - логику с типами */}
+                                {block.nodeType === 'note'
+                                  ? t.contextModal.noteContent
+                                  : (block.type === 'quote'
+                                    ? (block.level === 0 ? t.contextModal.response : t.contextModal.summary)
+                                    : (block.type === 'summary' ? t.contextModal.summary : t.contextModal.response))}
                               </div>
                               <div
                                 className={cn(
