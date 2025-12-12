@@ -525,7 +525,10 @@ export const useSettingsStore = create<SettingsStore>()(
        * @param width - Ширина в пикселях
        */
       setDefaultCardWidth: (width: number) => {
-        set({ defaultCardWidth: width });
+        // Ограничиваем значение в допустимом диапазоне [300, 1200]
+        // чтобы предотвратить поломку верстки при некорректных значениях
+        const clampedWidth = Math.max(300, Math.min(width, 1200));
+        set({ defaultCardWidth: clampedWidth });
       },
       
       /**
