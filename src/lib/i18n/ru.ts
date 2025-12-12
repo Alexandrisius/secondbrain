@@ -117,6 +117,8 @@ export const ru = {
     embeddingsModelChangeDescription: 'При смене модели необходимо очистить текущий индекс ({count} карточек) и переиндексировать заново, так как разные модели создают несовместимые векторы.',
     clearAndChange: 'Очистить и сменить',
     clearingIndex: 'Очистка индекса...',
+    reindexingCards: 'Переиндексация карточек...',
+    reindexingProgress: '{current} / {total}',
 
     // Контекстное окно
     contextWindowSection: 'Контекстное окно модели',

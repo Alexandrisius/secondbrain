@@ -47,6 +47,9 @@ import {
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
 import { clearAllEmbeddings, getEmbeddingsCount } from '@/lib/db/embeddings';
+import { useCanvasStore } from '@/store/useCanvasStore';
+import { useWorkspaceStore } from '@/store/useWorkspaceStore';
+import { reindexCanvasCards } from '@/lib/search/semantic';
 
 // =============================================================================
 // КОНСТАНТЫ
@@ -244,6 +247,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Количество проиндексированных карточек
   const [embeddingsCount, setEmbeddingsCount] = useState(0);
   
+  // Состояние переиндексации после смены модели
+  const [isReindexing, setIsReindexing] = useState(false);
+  
+  // Прогресс переиндексации: { current: число, total: число }
+  const [reindexProgress, setReindexProgress] = useState({ current: 0, total: 0 });
+  
   // ===========================================================================
   // STORE
   // ===========================================================================
@@ -268,6 +277,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
   const setEmbeddingsModel = useSettingsStore(selectSetEmbeddingsModel);
   const resetSettings = useSettingsStore(selectResetSettings);
+  
+  // Получаем данные для переиндексации из других stores
+  const nodes = useCanvasStore((s) => s.nodes);
+  const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
   
   // ===========================================================================
   // ЭФФЕКТЫ
@@ -365,7 +378,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   
   /**
    * Подтверждение смены модели эмбеддингов
-   * Очищает индекс и применяет новую модель
+   * Очищает индекс, применяет новую модель и запускает переиндексацию
    */
   const handleConfirmEmbeddingsModelChange = async () => {
     if (!pendingEmbeddingsModel) return;
@@ -376,17 +389,65 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       // Очищаем все эмбеддинги
       await clearAllEmbeddings();
       
-      // Применяем новую модель
-      setEmbeddingsModel(pendingEmbeddingsModel);
+      // Сохраняем новую модель для использования в переиндексации
+      const newModel = pendingEmbeddingsModel;
       
-      // Обновляем счётчик
+      // Применяем новую модель
+      setEmbeddingsModel(newModel);
+      
+      // Обновляем счётчик (пока 0, будет обновлён после переиндексации)
       setEmbeddingsCount(0);
       
       // Закрываем диалог подтверждения
       setPendingEmbeddingsModel(null);
+      
+      // Завершаем процесс очистки
+      setIsClearingEmbeddings(false);
+      
+      // =========================================================================
+      // АВТОМАТИЧЕСКАЯ ПЕРЕИНДЕКСАЦИЯ
+      // Если есть API ключ и активный холст - запускаем переиндексацию
+      // =========================================================================
+      if (apiKey && activeCanvasId && nodes.length > 0) {
+        // Фильтруем только карточки с ответами (их имеет смысл индексировать)
+        const cardsWithResponse = nodes.filter((n) => n.data.response);
+        
+        if (cardsWithResponse.length > 0) {
+          console.log(`[SettingsModal] Запуск переиндексации ${cardsWithResponse.length} карточек с моделью ${newModel}`);
+          
+          setIsReindexing(true);
+          setReindexProgress({ current: 0, total: cardsWithResponse.length });
+          
+          try {
+            // Запускаем переиндексацию с новой моделью
+            const indexedCount = await reindexCanvasCards(
+              activeCanvasId,
+              nodes,
+              apiKey,
+              embeddingsBaseUrl,
+              (current, total) => {
+                // Обновляем прогресс переиндексации
+                setReindexProgress({ current, total });
+              },
+              corporateMode,
+              newModel // Используем новую модель!
+            );
+            
+            // Обновляем счётчик проиндексированных карточек
+            setEmbeddingsCount(indexedCount);
+            
+            console.log(`[SettingsModal] Переиндексация завершена: ${indexedCount} карточек`);
+          } catch (reindexError) {
+            console.error('[SettingsModal] Ошибка переиндексации:', reindexError);
+          } finally {
+            setIsReindexing(false);
+            setReindexProgress({ current: 0, total: 0 });
+          }
+        }
+      }
+      
     } catch (error) {
       console.error('[SettingsModal] Ошибка очистки эмбеддингов:', error);
-    } finally {
       setIsClearingEmbeddings(false);
     }
   };
@@ -720,10 +781,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ) : (
                 <>
                   {/* Выпадающий список моделей эмбеддингов */}
+                  {/* Показываем pendingEmbeddingsModel если есть (выбранная, но не подтверждённая модель) */}
                   <select
-                    value={embeddingsModel}
+                    value={pendingEmbeddingsModel || embeddingsModel}
                     onChange={(e) => handleEmbeddingsModelChange(e.target.value)}
                     className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    disabled={isReindexing || isClearingEmbeddings}
                   >
                     {API_PROVIDERS[apiProvider].embeddingsModels.map((model) => (
                       <option key={model.id} value={model.id}>
@@ -734,8 +797,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   
                   {/* Информация о текущей модели */}
                   {(() => {
+                    // Показываем информацию о выбранной модели (pending или текущей)
+                    const displayModelId = pendingEmbeddingsModel || embeddingsModel;
                     const currentModel = API_PROVIDERS[apiProvider].embeddingsModels.find(
-                      (m) => m.id === embeddingsModel
+                      (m) => m.id === displayModelId
                     );
                     return currentModel ? (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded bg-muted/50">
@@ -791,6 +856,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </>
                     )}
                   </Button>
+                </div>
+              </div>
+            )}
+            
+            {/* Индикатор переиндексации */}
+            {isReindexing && (
+              <div className="p-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50 space-y-3">
+                <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <div className="flex-1">
+                    <p className="font-medium">{t.settings.reindexingCards}</p>
+                    <p className="text-sm opacity-90">
+                      {t.settings.reindexingProgress
+                        .replace('{current}', String(reindexProgress.current))
+                        .replace('{total}', String(reindexProgress.total))}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Прогресс-бар */}
+                <div className="w-full h-2 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 transition-all duration-200"
+                    style={{
+                      width: reindexProgress.total > 0
+                        ? `${(reindexProgress.current / reindexProgress.total) * 100}%`
+                        : '0%'
+                    }}
+                  />
                 </div>
               </div>
             )}

@@ -90,13 +90,19 @@ export const API_PROVIDERS: Record<ApiProvider, ApiProviderConfig> = {
     embeddingsUrl: 'https://openrouter.ai/api/v1',
     supportsEmbeddings: true,
     description: 'Агрегатор моделей (GPT, Claude, Llama и др.)',
-    defaultEmbeddingsModel: 'intfloat/multilingual-e5-large',
+    // Qwen3 Embedding 8B - мощная мультиязычная модель с высокой размерностью
+    defaultEmbeddingsModel: 'qwen/qwen3-embedding-8b',
     embeddingsModels: [
-      { id: 'intfloat/multilingual-e5-large', name: 'Multilingual E5 Large', dimension: 1024, description: '90+ языков (рекомендуется)' },
+      // Qwen3 - новейшая модель от Alibaba, отличное качество для русского и английского
+      { id: 'qwen/qwen3-embedding-8b', name: 'Qwen3 Embedding 8B', dimension: 4096, description: 'Мощная мультиязычная (рекомендуется)' },
+      // Multilingual E5 - хорошая альтернатива для 90+ языков
+      { id: 'intfloat/multilingual-e5-large', name: 'Multilingual E5 Large', dimension: 1024, description: '90+ языков, компактная' },
       { id: 'intfloat/e5-large-v2', name: 'E5 Large v2', dimension: 1024, description: 'Высокое качество, английский' },
       { id: 'intfloat/e5-base-v2', name: 'E5 Base v2', dimension: 768, description: 'Баланс скорости и качества' },
+      // BAAI BGE - качественные модели для английского
       { id: 'baai/bge-large-en-v1.5', name: 'BGE Large EN v1.5', dimension: 1024, description: 'BAAI, английский' },
       { id: 'baai/bge-base-en-v1.5', name: 'BGE Base EN v1.5', dimension: 768, description: 'BAAI, компактная' },
+      // GTE - модели от Thenlper
       { id: 'thenlper/gte-large', name: 'GTE Large', dimension: 1024, description: 'Thenlper, 1024-dim' },
       { id: 'thenlper/gte-base', name: 'GTE Base', dimension: 768, description: 'Thenlper, компактная' },
     ],

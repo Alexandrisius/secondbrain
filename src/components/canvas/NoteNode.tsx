@@ -37,6 +37,8 @@ import {
     selectModel,
     selectUseSummarization,
     selectCorporateMode,
+    selectEmbeddingsBaseUrl,
+    selectEmbeddingsModel,
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
@@ -67,12 +69,14 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     // Action для открытия режима чтения
     const openReadingMode = useReadingModeStore((s) => s.openReadingMode);
 
-    // Settings for auto-summary
+    // Settings for auto-summary and embeddings
     const apiKey = useSettingsStore(selectApiKey);
     const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
     const model = useSettingsStore(selectModel);
     const useSummarization = useSettingsStore(selectUseSummarization);
     const corporateMode = useSettingsStore(selectCorporateMode);
+    const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
+    const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
 
     // ===========================================================================
     // LOCAL STATE
@@ -110,6 +114,12 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     // Ref для отслеживания последнего суммаризированного контента
     // Предотвращает бесконечный цикл суммаризации
     const lastSummarizedContentRef = useRef<string>(data.response || '');
+    
+    // Ref для отслеживания проиндексированного контента
+    const lastIndexedDataRef = useRef<{ title: string; content: string }>({
+        title: data.prompt || '',
+        content: data.response || ''
+    });
 
     // Scroll state for smart wheel handling
     const [hasVerticalScroll, setHasVerticalScroll] = useState(false);
@@ -153,14 +163,18 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
         if (debouncedTitle !== data.prompt) {
             updateNodeData(id, { prompt: debouncedTitle });
         }
-    }, [debouncedTitle, data.prompt, id, updateNodeData]);
+        // Убираем data.prompt из зависимостей, чтобы избежать перезаписи внешних изменений
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedTitle, id, updateNodeData]);
 
     // Save Content on Debounce
     useEffect(() => {
         if (debouncedContent !== data.response) {
             updateNodeData(id, { response: debouncedContent });
         }
-    }, [debouncedContent, data.response, id, updateNodeData]);
+        // Убираем data.response из зависимостей, чтобы избежать перезаписи внешних изменений
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedContent, id, updateNodeData]);
 
     // Auto-Summarize logic
     const generateSummary = useCallback(async (text: string) => {
@@ -224,6 +238,46 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
             generateSummary(debouncedContent);
         }
     }, [debouncedContent, generateSummary]); // БЕЗ data.summary в зависимостях!
+
+    // Auto-Embedding logic (background)
+    const handleGenerateEmbedding = useCallback(async (title: string, content: string) => {
+        if (!apiKey || !embeddingsBaseUrl || !embeddingsModel) return;
+
+        try {
+            const { generateAndSaveEmbedding } = await import('@/lib/search/semantic');
+            const { useWorkspaceStore } = await import('@/store/useWorkspaceStore');
+            const canvasId = useWorkspaceStore.getState().activeCanvasId;
+            
+            if (canvasId) {
+                await generateAndSaveEmbedding(
+                    id,
+                    canvasId,
+                    title,
+                    content,
+                    apiKey,
+                    embeddingsBaseUrl,
+                    corporateMode,
+                    embeddingsModel
+                );
+                console.log('[NoteNode] Эмбеддинг обновлён:', id);
+            }
+        } catch (err) {
+            console.error('[NoteNode] Ошибка эмбеддинга:', err);
+        }
+    }, [id, apiKey, embeddingsBaseUrl, embeddingsModel, corporateMode]);
+
+    // Trigger Embedding when content or title changes (debounced)
+    useEffect(() => {
+        const last = lastIndexedDataRef.current;
+        // Если изменился заголовок или контент (и контент не пустой)
+        if ((debouncedTitle !== last.title || debouncedContent !== last.content) && debouncedContent.trim()) {
+            lastIndexedDataRef.current = {
+                title: debouncedTitle,
+                content: debouncedContent
+            };
+            handleGenerateEmbedding(debouncedTitle, debouncedContent);
+        }
+    }, [debouncedTitle, debouncedContent, handleGenerateEmbedding]);
 
     // Resize Logic (Copy-paste from NeuroNode)
     useEffect(() => {

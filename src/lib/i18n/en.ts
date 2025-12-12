@@ -119,6 +119,8 @@ export const en: TranslationKeys = {
     embeddingsModelChangeDescription: 'When changing the model, you need to clear the current index ({count} cards) and reindex, as different models create incompatible vectors.',
     clearAndChange: 'Clear and change',
     clearingIndex: 'Clearing index...',
+    reindexingCards: 'Reindexing cards...',
+    reindexingProgress: '{current} / {total}',
 
     // Context window
     contextWindowSection: 'Model Context Window',

@@ -14,12 +14,13 @@
 
 'use client';
 
-import React, { useEffect, useCallback, useMemo } from 'react';
+import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Edit2, Save, RotateCcw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import TextareaAutosize from 'react-textarea-autosize';
 
 import { useReadingModeStore } from '@/store/useReadingModeStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
@@ -80,7 +81,16 @@ export function ReadingModeModal() {
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   
+  // ===========================================================================
+  // LOCAL STATE FOR EDITING
+  // ===========================================================================
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [localTitle, setLocalTitle] = useState('');
+  const [localContent, setLocalContent] = useState('');
+
   // ===========================================================================
   // ВЫЧИСЛЯЕМЫЕ ЗНАЧЕНИЯ
   // ===========================================================================
@@ -188,6 +198,35 @@ export function ReadingModeModal() {
   // ОБРАБОТЧИКИ
   // ===========================================================================
   
+  /**
+   * Начало редактирования (для NoteNode)
+   */
+  const handleStartEditing = useCallback(() => {
+    if (!currentNode) return;
+    setLocalTitle(currentNode.data.prompt || '');
+    setLocalContent(currentNode.data.response || '');
+    setIsEditing(true);
+  }, [currentNode]);
+
+  /**
+   * Отмена редактирования
+   */
+  const handleCancelEditing = useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
+  /**
+   * Сохранение изменений
+   */
+  const handleSaveEditing = useCallback(() => {
+    if (!currentNodeId) return;
+    updateNodeData(currentNodeId, {
+        prompt: localTitle,
+        response: localContent
+    });
+    setIsEditing(false);
+  }, [currentNodeId, localTitle, localContent, updateNodeData]);
+
   /**
    * Переход к родительской карточке (←)
    * При множественных родителях - открываем sidebar для выбора
@@ -301,6 +340,13 @@ export function ReadingModeModal() {
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
+
+  /**
+   * Сброс режима редактирования при смене карточки
+   */
+  useEffect(() => {
+    setIsEditing(false);
+  }, [currentNodeId]);
   
   /**
    * Снятие выделения с карточек при открытии режима чтения
@@ -589,43 +635,86 @@ export function ReadingModeModal() {
                   HEADER - Тип карточки + Заголовок
                   ============================================================ */}
               <div className="mb-6">
-                {/* Бейдж типа карточки */}
-                <div className={cn(
-                  'inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-3',
-                  isNoteNode
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                    : 'bg-primary/10 text-primary'
-                )}>
-                  {isNoteNode ? (
-                    <>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" 
-                        />
-                      </svg>
-                      <span>{t.readingMode?.noteCard || 'Заметка'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                          d="M13 10V3L4 14h7v7l9-11h-7z" 
-                        />
-                      </svg>
-                      <span>AI карточка</span>
-                    </>
-                  )}
+                <div className="flex items-center justify-between mb-3">
+                    {/* Бейдж типа карточки */}
+                    <div className={cn(
+                      'inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium',
+                      isNoteNode
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                        : 'bg-primary/10 text-primary'
+                    )}>
+                      {isNoteNode ? (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" 
+                            />
+                          </svg>
+                          <span>{t.readingMode?.noteCard || 'Заметка'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                              d="M13 10V3L4 14h7v7l9-11h-7z" 
+                            />
+                          </svg>
+                          <span>AI карточка</span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* ACTIONS FOR NOTE NODE */}
+                    {isNoteNode && (
+                        <div className="flex items-center gap-2">
+                            {isEditing ? (
+                                <>
+                                    <button 
+                                        onClick={handleCancelEditing}
+                                        className="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                                        title={t.common.cancel || 'Отмена'}
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                        onClick={handleSaveEditing}
+                                        className="p-1.5 rounded-full bg-primary/10 hover:bg-primary/20 text-primary transition-colors"
+                                        title={t.common.save || 'Сохранить'}
+                                    >
+                                        <Save className="w-4 h-4" />
+                                    </button>
+                                </>
+                            ) : (
+                                <button 
+                                    onClick={handleStartEditing}
+                                    className="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                                    title={t.common.edit || 'Редактировать'}
+                                >
+                                    <Edit2 className="w-4 h-4" />
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
                 
                 {/* Заголовок (prompt) */}
-                {currentNode.data.prompt && (
-                  <h1 className={cn(
-                    'text-xl sm:text-2xl font-bold text-foreground',
-                    // Увеличенный line-height для удобства чтения
-                    'leading-relaxed'
-                  )}>
-                    {currentNode.data.prompt}
-                  </h1>
+                {isEditing ? (
+                    <TextareaAutosize 
+                        value={localTitle} 
+                        onChange={e => setLocalTitle(e.target.value)}
+                        className="w-full text-xl sm:text-2xl font-bold bg-transparent border-b border-border focus:outline-none resize-none p-0 mb-2"
+                        placeholder={t.noteNode?.titlePlaceholder || 'Заголовок'}
+                    />
+                ) : (
+                    currentNode.data.prompt && (
+                      <h1 className={cn(
+                        'text-xl sm:text-2xl font-bold text-foreground',
+                        // Увеличенный line-height для удобства чтения
+                        'leading-relaxed'
+                      )}>
+                        {currentNode.data.prompt}
+                      </h1>
+                    )
                 )}
               </div>
               
@@ -655,27 +744,37 @@ export function ReadingModeModal() {
               {/* ============================================================
                   ОСНОВНОЙ КОНТЕНТ (response)
                   ============================================================ */}
-              {currentNode.data.response && (
+              {(currentNode.data.response || isEditing) && (
                 <div className={cn(
                   // Prose стили для Markdown
                   'prose prose-sm sm:prose-base dark:prose-invert max-w-none',
                   // Увеличенный размер шрифта и межстрочный интервал для чтения
-                  'prose-p:text-base prose-p:leading-[1.8]',
-                  'prose-headings:mt-6 prose-headings:mb-3',
-                  'prose-ul:my-4 prose-ol:my-4',
-                  'prose-li:my-1',
+                  !isEditing && 'prose-p:text-base prose-p:leading-[1.8]',
+                  !isEditing && 'prose-headings:mt-6 prose-headings:mb-3',
+                  !isEditing && 'prose-ul:my-4 prose-ol:my-4',
+                  !isEditing && 'prose-li:my-1',
                   // Код
-                  'prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded',
-                  'prose-pre:bg-muted prose-pre:p-4'
+                  !isEditing && 'prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded',
+                  !isEditing && 'prose-pre:bg-muted prose-pre:p-4'
                 )}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {currentNode.data.response}
-                  </ReactMarkdown>
+                  {isEditing ? (
+                      <TextareaAutosize 
+                          value={localContent}
+                          onChange={e => setLocalContent(e.target.value)}
+                          minRows={10}
+                          className="w-full bg-transparent border-none focus:outline-none resize-none text-base leading-relaxed p-0"
+                          placeholder={t.noteNode?.contentPlaceholder || 'Write your note...'}
+                      />
+                   ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {currentNode.data.response}
+                      </ReactMarkdown>
+                   )}
                 </div>
               )}
               
               {/* Placeholder если нет контента */}
-              {!currentNode.data.response && !currentNode.data.prompt && (
+              {!currentNode.data.response && !currentNode.data.prompt && !isEditing && (
                 <div className="text-center py-12 text-muted-foreground">
                   <p>{t.noteNode?.emptyNote || 'Пустая карточка'}</p>
                 </div>
