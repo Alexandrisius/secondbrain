@@ -245,6 +245,14 @@ export interface AppSettings {
    * При смене модели требуется переиндексация базы!
    */
   embeddingsModel: string;
+
+  /**
+   * Ширина карточек по умолчанию (в пикселях)
+   * 
+   * Используется при создании новых карточек.
+   * По умолчанию: 400
+   */
+  defaultCardWidth: number;
 }
 
 /**
@@ -308,6 +316,12 @@ export interface SettingsStore extends AppSettings {
    * @param model - ID модели эмбеддингов
    */
   setEmbeddingsModel: (model: string) => void;
+
+  /**
+   * Установить ширину карточек по умолчанию
+   * @param width - Ширина в пикселях
+   */
+  setDefaultCardWidth: (width: number) => void;
   
   /**
    * Сбросить все настройки к значениям по умолчанию
@@ -357,6 +371,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   corporateMode: false,
   // Модель эмбеддингов по умолчанию из конфигурации провайдера
   embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
+  // Ширина карточек по умолчанию - 400px
+  defaultCardWidth: 400,
 };
 
 // =============================================================================
@@ -502,6 +518,15 @@ export const useSettingsStore = create<SettingsStore>()(
       setEmbeddingsModel: (model: string) => {
         set({ embeddingsModel: model });
       },
+
+      /**
+       * Установить ширину карточек по умолчанию
+       * 
+       * @param width - Ширина в пикселях
+       */
+      setDefaultCardWidth: (width: number) => {
+        set({ defaultCardWidth: width });
+      },
       
       /**
        * Сбросить все настройки к значениям по умолчанию
@@ -518,8 +543,8 @@ export const useSettingsStore = create<SettingsStore>()(
       name: 'secondbrain-settings',
       
       // Версия для миграции при изменении структуры
-      // ВАЖНО: увеличена с 5 до 6 при добавлении выбора модели эмбеддингов
-      version: 6,
+      // ВАЖНО: увеличена с 6 до 7 при добавлении defaultCardWidth
+      version: 7,
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {
@@ -538,6 +563,7 @@ export const useSettingsStore = create<SettingsStore>()(
             embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
+            defaultCardWidth: 400,
           };
         }
         
@@ -551,6 +577,7 @@ export const useSettingsStore = create<SettingsStore>()(
             embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
+            defaultCardWidth: 400,
           };
         }
         
@@ -565,6 +592,7 @@ export const useSettingsStore = create<SettingsStore>()(
             embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
+            defaultCardWidth: 400,
           };
         }
         
@@ -575,6 +603,7 @@ export const useSettingsStore = create<SettingsStore>()(
             ...state,
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[provider].defaultEmbeddingsModel,
+            defaultCardWidth: 400,
           };
         }
         
@@ -586,6 +615,15 @@ export const useSettingsStore = create<SettingsStore>()(
           return {
             ...state,
             embeddingsModel: providerConfig?.defaultEmbeddingsModel || 'text-embedding-3-small',
+            defaultCardWidth: 400,
+          };
+        }
+
+        // Миграция с версии 6 на версию 7: добавляем defaultCardWidth
+        if (version < 7) {
+          return {
+            ...state,
+            defaultCardWidth: 400,
           };
         }
         
@@ -718,6 +756,19 @@ export const selectEmbeddingsModel = (state: SettingsStore) => state.embeddingsM
  * Селектор для получения функции изменения модели эмбеддингов
  */
 export const selectSetEmbeddingsModel = (state: SettingsStore) => state.setEmbeddingsModel;
+
+/**
+ * Селектор для получения ширины карточек по умолчанию
+ * 
+ * @example
+ * const defaultCardWidth = useSettingsStore(selectDefaultCardWidth);
+ */
+export const selectDefaultCardWidth = (state: SettingsStore) => state.defaultCardWidth;
+
+/**
+ * Селектор для получения функции изменения ширины карточек
+ */
+export const selectSetDefaultCardWidth = (state: SettingsStore) => state.setDefaultCardWidth;
 
 /**
  * Селектор для получения функции сброса настроек

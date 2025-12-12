@@ -19,7 +19,7 @@ interface UseNodeUIProps {
 }
 
 const MIN_CARD_WIDTH = 300;
-const MAX_CARD_WIDTH = 800;
+const MAX_CARD_WIDTH = 1200;
 const DEFAULT_CARD_WIDTH = 400;
 
 export const useNodeUI = ({
@@ -64,8 +64,11 @@ export const useNodeUI = ({
 
   // Sync width
   useEffect(() => {
-    if (data.width !== undefined && data.width !== resizeWidth && !isResizing) {
-      setResizeWidth(data.width);
+    if (!isResizing) {
+      // Если ширина задана в данных, используем её
+      if (data.width !== undefined && resizeWidth !== data.width) {
+        setResizeWidth(data.width);
+      }
     }
   }, [data.width, isResizing, resizeWidth]);
 

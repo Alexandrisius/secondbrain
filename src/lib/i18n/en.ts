@@ -85,6 +85,11 @@ export const en: TranslationKeys = {
     russian: 'Русский',
     english: 'English',
 
+    // Interface
+    interfaceSection: 'Interface',
+    defaultCardWidth: 'Default Card Width',
+    defaultCardWidthDescription: 'Specify the width (in pixels) for new cards.',
+
     // Reset
     resetSettings: 'Reset Settings',
 

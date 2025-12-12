@@ -83,6 +83,11 @@ export const ru = {
     russian: 'Русский',
     english: 'English',
 
+    // Интерфейс
+    interfaceSection: 'Интерфейс',
+    defaultCardWidth: 'Ширина карточек',
+    defaultCardWidthDescription: 'Укажите ширину (в пикселях) для новых карточек.',
+
     // Сброс
     resetSettings: 'Сбросить настройки',
 

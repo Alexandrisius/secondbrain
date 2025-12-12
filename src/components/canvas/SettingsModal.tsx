@@ -10,7 +10,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2, Monitor, LayoutTemplate } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +40,8 @@ import {
   selectSetCorporateMode,
   selectEmbeddingsModel,
   selectSetEmbeddingsModel,
+  selectDefaultCardWidth,
+  selectSetDefaultCardWidth,
   selectResetSettings,
   API_PROVIDERS,
   type Language,
@@ -276,6 +278,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setCorporateMode = useSettingsStore(selectSetCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
   const setEmbeddingsModel = useSettingsStore(selectSetEmbeddingsModel);
+  const defaultCardWidth = useSettingsStore(selectDefaultCardWidth);
+  const setDefaultCardWidth = useSettingsStore(selectSetDefaultCardWidth);
   const resetSettings = useSettingsStore(selectResetSettings);
   
   // Получаем данные для переиндексации из других stores
@@ -526,6 +530,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span className="font-medium">{lang.label}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* =============================================================== */}
+          {/* СЕКЦИЯ: ИНТЕРФЕЙС */}
+          {/* =============================================================== */}
+          
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            <Monitor className="w-4 h-4" />
+            {t.settings.interfaceSection}
+          </div>
+          
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <LayoutTemplate className="w-4 h-4 text-blue-500" />
+                {t.settings.defaultCardWidth}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.defaultCardWidthDescription}
+              </p>
+              
+              <div className="flex items-center gap-4">
+                 <Input 
+                   type="number" 
+                   min={300} 
+                   max={1200}
+                   step={10}
+                   value={defaultCardWidth} 
+                   onChange={(e) => setDefaultCardWidth(Number(e.target.value))}
+                   className="w-32"
+                 />
+                 <span className="text-sm text-muted-foreground">px</span>
+                 
+                 {/* Слайдер для удобства */}
+                 <input
+                   type="range"
+                   min={300}
+                   max={1200}
+                   step={10}
+                   value={defaultCardWidth}
+                   onChange={(e) => setDefaultCardWidth(Number(e.target.value))}
+                   className="flex-1 accent-primary h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                 />
               </div>
             </div>
           </div>

@@ -30,6 +30,7 @@ import type {
   NeuroEdge,
   NeuroNodeData,
 } from '@/types/canvas';
+import { useSettingsStore } from './useSettingsStore';
 
 // =============================================================================
 // ИМПОРТЫ ДЛЯ ОЧИСТКИ ПОИСКОВЫХ ИНДЕКСОВ ПРИ УДАЛЕНИИ КАРТОЧЕК
@@ -339,7 +340,8 @@ const createDefaultNodeData = (parentId?: string): NeuroNodeData => ({
   isAnswerExpanded: false, // По умолчанию ответная часть свёрнута
   mode: 'input',
   parentId,
-  width: undefined, // Используется дефолтная ширина
+  // Используем дефолтную ширину из настроек при создании
+  width: useSettingsStore.getState().defaultCardWidth,
   createdAt: Date.now(),
   updatedAt: Date.now(),
 
@@ -1433,7 +1435,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
 
           // Константы для позиционирования
-          const DEFAULT_WIDTH = 400;
+          const DEFAULT_WIDTH = useSettingsStore.getState().defaultCardWidth;
           const parentWidth = sourceNode.data.width ?? DEFAULT_WIDTH;
           const GAP = 100;         // Отступ между карточками
 
@@ -1596,7 +1598,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           // =======================================================================
 
           // Константы для позиционирования
-          const DEFAULT_WIDTH = 400;
+          const DEFAULT_WIDTH = useSettingsStore.getState().defaultCardWidth;
           const GAP = 100;         // Отступ между карточками
           const ESTIMATED_CARD_HEIGHT = 150; // Приблизительная высота карточки
 
@@ -1849,7 +1851,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
 
           // Константы для позиционирования (как в createLinkedNodeRight)
-          const DEFAULT_WIDTH = 400;
+          const DEFAULT_WIDTH = useSettingsStore.getState().defaultCardWidth;
           const parentWidth = sourceNode.data.width ?? DEFAULT_WIDTH;
           const GAP = 100;
 

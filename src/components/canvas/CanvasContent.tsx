@@ -44,6 +44,7 @@ import { SearchBar } from './SearchBar';
 import { ReadingModeModal } from './ReadingModeModal';
 import { SystemPromptModal, SystemPromptButton } from './SystemPromptModal';
 import { useReadingModeStore } from '@/store/useReadingModeStore';
+import { useSettingsStore, selectDefaultCardWidth } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
 
@@ -125,6 +126,7 @@ export function CanvasContent() {
   // ===========================================================================
 
   const { t, language } = useTranslation();
+  const defaultCardWidth = useSettingsStore(selectDefaultCardWidth);
 
   // ===========================================================================
   // REACT FLOW HOOKS
@@ -468,7 +470,7 @@ export function CanvasContent() {
       const timer = setTimeout(() => {
         // Центрируем на позиции ноды
         // Добавляем смещение на половину ширины карточки для точного центрирования
-        const CARD_WIDTH = 400;
+        const CARD_WIDTH = defaultCardWidth;
         const CARD_HEIGHT_ESTIMATE = 150;
 
         setCenter(
@@ -491,7 +493,7 @@ export function CanvasContent() {
       // Нода не найдена - сбрасываем
       clearPendingCenter();
     }
-  }, [pendingCenterNodeId, nodes, setCenter, clearPendingCenter]);
+  }, [pendingCenterNodeId, nodes, setCenter, clearPendingCenter, defaultCardWidth]);
 
   // ===========================================================================
   // ПРОГРАММНЫЙ PAN ПРИ ЗАЖАТОЙ ПКМ (работает даже на нодах)
@@ -1292,7 +1294,7 @@ export function CanvasContent() {
 
       // Карточка найдена - обрабатываем и сбрасываем
       if (targetNode) {
-        const CARD_WIDTH = 400;
+        const CARD_WIDTH = defaultCardWidth;
         const CARD_HEIGHT_ESTIMATE = 150;
         const targetX = targetNode.position.x + CARD_WIDTH / 2;
         const targetY = targetNode.position.y + CARD_HEIGHT_ESTIMATE / 2;
@@ -1320,7 +1322,7 @@ export function CanvasContent() {
       }
       // Если карточка НЕ найдена - НЕ сбрасываем, ждём загрузки правильных nodes
     }
-  }, [searchTargetNodeId, isLoading, nodes, setCenter, onNodesChange, setSearchTargetNodeId]);
+  }, [searchTargetNodeId, isLoading, nodes, setCenter, onNodesChange, setSearchTargetNodeId, defaultCardWidth]);
 
   /**
    * Обработчик выбора результата семантического поиска
@@ -1352,7 +1354,7 @@ export function CanvasContent() {
       // Карточка на текущем холсте - просто центрируемся
       const targetNode = nodes.find((n) => n.id === nodeId);
       if (targetNode) {
-        const CARD_WIDTH = 400;
+        const CARD_WIDTH = defaultCardWidth;
         const CARD_HEIGHT_ESTIMATE = 150;
 
         // Центрируем с плавной анимацией
@@ -1377,7 +1379,7 @@ export function CanvasContent() {
         console.log('[CanvasContent] Центрирование на карточке:', nodeId);
       }
     },
-    [activeCanvasId, nodes, setCenter, onNodesChange]
+    [activeCanvasId, nodes, setCenter, onNodesChange, defaultCardWidth]
   );
 
   // ===========================================================================

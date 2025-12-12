@@ -48,7 +48,7 @@ import { useDebounce } from 'use-debounce';
 type NoteNodeProps = NodeProps<NeuroNodeType>;
 
 const MIN_CARD_WIDTH = 300;
-const MAX_CARD_WIDTH = 800;
+const MAX_CARD_WIDTH = 1200;
 const DEFAULT_CARD_WIDTH = 400;
 
 const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
