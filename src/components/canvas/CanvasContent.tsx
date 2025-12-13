@@ -16,12 +16,14 @@ import {
   Controls,
   MiniMap,
   ConnectionLineType,
+  ViewportPortal,
   useReactFlow,
   useStoreApi,
   SelectionMode,
   type OnConnectEnd,
   type NodeTypes,
   type Edge,
+  type NodeChange,
   BackgroundVariant,
 } from '@xyflow/react';
 import { Save, RefreshCw, X, Loader2, Undo2, Redo2 } from 'lucide-react';
@@ -222,6 +224,46 @@ export function CanvasContent() {
    * Используется для блокировки выделения текста на других карточках
    */
   const [isConnecting, setIsConnecting] = useState(false);
+
+  // ===========================================================================
+  // SNAP / GUIDES: ВЫРАВНИВАНИЕ ПРИ ПЕРЕТАСКИВАНИИ КАРТОЧЕК
+  // ===========================================================================
+  /**
+   * ID ноды, которую пользователь сейчас ТАЩИТ мышью/тачем.
+   *
+   * Зачем нам это нужно:
+   * - React Flow присылает `onNodesChange` пачками, и при групповом перемещении
+   *   там может быть несколько нод с `type: 'position'`.
+   * - Чтобы snapping был предсказуемым, мы выбираем ОДНУ "опорную" ноду
+   *   (ту, которую пользователь "схватил") и выравниваем всю группу относительно неё.
+   */
+  const [activeDragNodeId, setActiveDragNodeId] = useState<string | null>(null);
+
+  /**
+   * Координаты пунктирных направляющих (в координатах ХОЛСТА / flow-coordinates).
+   *
+   * ВАЖНО: мы храним координаты именно в координатах холста, а не экрана, потому что:
+   * - ViewportPortal рисует в той же системе координат, что и ноды/связи.
+   * - Линии автоматически будут зумиться/панорамироваться вместе с холстом.
+   */
+  const [alignmentGuides, setAlignmentGuides] = useState<{
+    /** X координата вертикальной направляющей (если активна) */
+    verticalX: number | null;
+    /** Y координата горизонтальной направляющей (если активна) */
+    horizontalY: number | null;
+  }>({ verticalX: null, horizontalY: null });
+
+  /**
+   * Таймер для отложенного сброса состояния drag.
+   *
+   * Почему сбрасываем НЕ сразу в onNodeDragStop:
+   * - React Flow часто присылает финальный `onNodesChange` с type:'position'
+   *   уже после события mouseup, и у этого изменения бывает dragging:false.
+   * - Если мы мгновенно сбросим activeDragNodeId, то финальный апдейт
+   *   пройдёт без snapping, и карточка "чуть уедет" из идеального выравнивания.
+   * - Поэтому мы откладываем очистку на следующий тик event loop.
+   */
+  const dragStopCleanupTimeoutRef = useRef<number | null>(null);
 
   /**
    * Начальная точка выделения (экранные координаты)
@@ -841,7 +883,11 @@ export function CanvasContent() {
    */
   const handleNodeDragStart = useCallback(
     (_event: React.MouseEvent, node: NeuroNodeType) => {
-      // Если нода уже выделена - ничего не делаем
+      // Запоминаем "опорную" ноду для последующего snapping в onNodesChange
+      setActiveDragNodeId(node.id);
+
+      // Если нода уже выделена - не трогаем выделение,
+      // но активный drag всё равно фиксируем (важно для group-drag).
       if (node.selected) return;
 
       // Выделяем ноду через onNodesChange
@@ -850,6 +896,277 @@ export function CanvasContent() {
       ]);
     },
     [onNodesChange]
+  );
+
+  /**
+   * Завершение перетаскивания:
+   * - Сбрасываем activeDragNodeId (опорная нода больше не нужна)
+   * - Скрываем направляющие (пунктирные линии)
+   *
+   * ВАЖНО: не полагаемся на то, что React Flow обязательно пришлёт "последний"
+   * `onNodesChange` без dragging — проще гарантированно очистить UI здесь.
+   */
+  const handleNodeDragStop = useCallback(() => {
+    // На всякий случай очищаем предыдущий таймер, чтобы не было гонок.
+    if (dragStopCleanupTimeoutRef.current !== null) {
+      window.clearTimeout(dragStopCleanupTimeoutRef.current);
+      dragStopCleanupTimeoutRef.current = null;
+    }
+
+    // Откладываем сброс, чтобы финальный position-change (dragging:false)
+    // успел пройти через snapping-логику.
+    dragStopCleanupTimeoutRef.current = window.setTimeout(() => {
+      setActiveDragNodeId(null);
+      setAlignmentGuides({ verticalX: null, horizontalY: null });
+      dragStopCleanupTimeoutRef.current = null;
+    }, 0);
+  }, []);
+
+  /**
+   * Cleanup на размонтировании:
+   * предотвращает попытки setState после unmount.
+   */
+  useEffect(() => {
+    return () => {
+      if (dragStopCleanupTimeoutRef.current !== null) {
+        window.clearTimeout(dragStopCleanupTimeoutRef.current);
+        dragStopCleanupTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  /**
+   * Обёртка над store.onNodesChange, которая добавляет snapping (привязку)
+   * при перетаскивании карточек.
+   *
+   * Что мы делаем:
+   * - React Flow присылает изменения позиций нод во время drag как NodeChange типа 'position'
+   * - У таких изменений есть флаг dragging=true
+   * - Мы вычисляем, насколько близко "опорная" карточка подошла к осям других карточек
+   * - Если близко — подправляем координаты ВСЕХ перетаскиваемых нод так, чтобы они выровнялись
+   * - Параллельно сохраняем координаты направляющих (alignmentGuides) для UI
+   *
+   * ВАЖНЫЕ ДЕТАЛИ:
+   * 1) Порог snapping задан в ЭКРАННЫХ пикселях (10px), но position нод — в координатах ХОЛСТА.
+   *    Поэтому мы переводим порог в координаты холста через zoom: thresholdFlow = 10 / zoom.
+   * 2) По X мы выравниваемся по любой стороне: left / center / right.
+   * 3) По Y выравниваемся только по center (как вы попросили).
+   * 4) При групповом перетаскивании (несколько selected нод) мы:
+   *    - выбираем одну "опорную" ноду (ту, что пользователь схватил)
+   *    - вычисляем delta (сколько надо сдвинуть)
+   *    - применяем delta ко ВСЕМ dragging нодам, чтобы группа сохранила относительное расположение.
+   */
+  const handleNodesChangeWithSnap = useCallback(
+    (changes: NodeChange<NeuroNodeType>[]) => {
+      /**
+       * Собираем все изменения позиции.
+       *
+       * ВАЖНО про dragging:
+       * - Во время активного drag: обычно приходят position-changes с dragging:true
+       * - На отпускании мыши: нередко приходит финальный position-change с dragging:false
+       *
+       * Наша цель: если drag-сессия активна (activeDragNodeId !== null), то
+       * применить snapping и к финальному апдейту, чтобы карточка не "уезжала".
+       */
+      const positionChanges = changes.filter((c) => c.type === 'position') as Array<
+        NodeChange<NeuroNodeType> & {
+          type: 'position';
+          dragging?: boolean;
+          position: { x: number; y: number };
+        }
+      >;
+
+      // Отдельно смотрим, есть ли среди position-changes явные dragging:true.
+      const positionChangesWhileDragging = positionChanges.filter((c) =>
+        Boolean((c as unknown as { dragging?: boolean }).dragging)
+      );
+
+      // Определяем: нужно ли вообще включать snapping-логику для этой пачки.
+      // 1) Если есть dragging:true — это активный drag (обычный случай).
+      // 2) Если dragging:true нет, но activeDragNodeId ещё НЕ сброшен —
+      //    считаем, что это финальный апдейт drag-сессии (после mouseup).
+      const shouldSnapNow =
+        positionChangesWhileDragging.length > 0 || (activeDragNodeId !== null && positionChanges.length > 0);
+
+      if (!shouldSnapNow) {
+        // Вне drag-сессии: просто прокидываем изменения.
+        // Направляющие на всякий случай скрываем (если вдруг остались).
+        setAlignmentGuides({ verticalX: null, horizontalY: null });
+        onNodesChange(changes);
+        return;
+      }
+
+      // Ноды, которые "двигаются" в этой пачке:
+      // - если есть dragging:true — используем только их (точнее для параллельных апдейтов)
+      // - иначе (финальный апдейт) — используем все position-changes
+      const movingPositionChanges =
+        positionChangesWhileDragging.length > 0 ? positionChangesWhileDragging : positionChanges;
+
+      const movingIds = new Set(movingPositionChanges.map((c) => c.id));
+
+      // Опорная нода — та, которую пользователь схватил.
+      // Если по какой-то причине её нет среди dragging (редкий кейс) — берём первую из списка.
+      const anchorId =
+        (activeDragNodeId && movingIds.has(activeDragNodeId))
+          ? activeDragNodeId
+          : movingPositionChanges[0].id;
+
+      const anchorNode = nodes.find((n) => n.id === anchorId);
+      const anchorChange = movingPositionChanges.find((c) => c.id === anchorId);
+
+      // Безопасность: если не нашли опорную ноду/изменение — ничего не делаем.
+      if (!anchorNode || !anchorChange) {
+        setAlignmentGuides({ verticalX: null, horizontalY: null });
+        onNodesChange(changes);
+        return;
+      }
+
+      // Текущий zoom нужен для перевода порога из экранных px в координаты холста.
+      const viewport = getViewport();
+      const safeZoom = Math.max(0.0001, viewport.zoom || 1);
+
+      // Порог snapping: 10px на экране => 10/zoom в координатах холста.
+      const SNAP_THRESHOLD_SCREEN_PX = 10;
+      const snapThresholdFlow = SNAP_THRESHOLD_SCREEN_PX / safeZoom;
+
+      // Размеры опорной ноды:
+      // - width может быть задан пользователем (data.width) или измерен React Flow (measured.width)
+      // - height мы берём из measured.height, а если нет — используем оценку 150 (как в проекте)
+      const anchorWidth =
+        anchorNode.measured?.width ??
+        (typeof anchorNode.data?.width === 'number' ? anchorNode.data.width : undefined) ??
+        defaultCardWidth;
+      const anchorHeight =
+        anchorNode.measured?.height ?? 150;
+
+      // ТЕКУЩАЯ позиция опорной ноды во время drag берётся из changes (anchorChange.position),
+      // а не из nodes[] (там может быть "предыдущий" state).
+      const anchorPos = anchorChange.position;
+
+      // Оси опорной ноды, которые мы хотим совместить с осями других карточек.
+      const anchorAxesX = {
+        left: anchorPos.x,
+        center: anchorPos.x + anchorWidth / 2,
+        right: anchorPos.x + anchorWidth,
+      };
+      const anchorAxisYCenter = anchorPos.y + anchorHeight / 2;
+
+      // Лучший кандидат по X и по Y.
+      // deltaX/deltaY — насколько надо сдвинуть ВСЮ группу (в координатах холста).
+      let bestX: { delta: number; guideX: number } | null = null;
+      let bestY: { delta: number; guideY: number } | null = null;
+
+      // Проходим по всем нодам, кроме тех, что сейчас перетаскиваются,
+      // и собираем цели для выравнивания.
+      for (const target of nodes) {
+        if (movingIds.has(target.id)) continue;
+
+        const targetWidth =
+          target.measured?.width ??
+          (typeof target.data?.width === 'number' ? target.data.width : undefined) ??
+          defaultCardWidth;
+        const targetHeight =
+          target.measured?.height ?? 150;
+
+        // Цели по X (вертикальные оси): left/center/right
+        const targetAxesX = [
+          target.position.x,
+          target.position.x + targetWidth / 2,
+          target.position.x + targetWidth,
+        ];
+
+        // Цель по Y (горизонтальная ось): только center
+        const targetAxisYCenter = target.position.y + targetHeight / 2;
+
+        // --- По X: проверяем все комбинации (опорная: left/center/right) vs (цель: left/center/right)
+        for (const targetX of targetAxesX) {
+          // Опорная нода может выравниваться любой своей стороной
+          // относительно любой вертикальной оси другой карточки.
+          const candidates: Array<{ delta: number; guideX: number }> = [
+            { delta: targetX - anchorAxesX.left, guideX: targetX },
+            { delta: targetX - anchorAxesX.center, guideX: targetX },
+            { delta: targetX - anchorAxesX.right, guideX: targetX },
+          ];
+
+          for (const c of candidates) {
+            const dist = Math.abs(c.delta);
+            if (dist > snapThresholdFlow) continue;
+            if (!bestX || dist < Math.abs(bestX.delta)) {
+              bestX = c;
+            }
+          }
+        }
+
+        // --- По Y: только center-to-center
+        {
+          const delta = targetAxisYCenter - anchorAxisYCenter;
+          const dist = Math.abs(delta);
+          if (dist <= snapThresholdFlow) {
+            if (!bestY || dist < Math.abs(bestY.delta)) {
+              bestY = { delta, guideY: targetAxisYCenter };
+            }
+          }
+        }
+      }
+
+      // Итоговые смещения (если не нашли кандидата — 0).
+      const deltaX = bestX?.delta ?? 0;
+      const deltaY = bestY?.delta ?? 0;
+
+      // Обновляем UI-направляющие:
+      // - показываем линию только если реально есть snap-кандидат
+      // - иначе скрываем
+      setAlignmentGuides({
+        verticalX: bestX ? bestX.guideX : null,
+        horizontalY: bestY ? bestY.guideY : null,
+      });
+
+      // Если deltaX/deltaY = 0, то можно не создавать новых объектов изменений,
+      // но мы всё равно пропускаем через store, чтобы позиция обновилась.
+      if (deltaX === 0 && deltaY === 0) {
+        onNodesChange(changes);
+        return;
+      }
+
+      // Создаём модифицированный массив changes:
+      // корректируем только те изменения, которые относятся к moving-позициям.
+      const modifiedChanges: NodeChange<NeuroNodeType>[] = changes.map((c) => {
+        if (c.type !== 'position') return c;
+
+        // Во время активного drag: корректируем dragging:true
+        // На финальном апдейте (dragging:false): корректируем все moved позиции,
+        // пока activeDragNodeId ещё установлен (см. shouldSnapNow выше).
+        if (!movingIds.has(c.id)) return c;
+
+        // ВАЖНО: корректируем позицию в координатах ХОЛСТА.
+        // Это позволяет нодам "прилипать" точно к оси цели.
+        // React Flow гарантирует наличие position для type:'position' (в наших кейсах drag).
+        // Но оставляем проверку на всякий случай, чтобы не словить runtime-ошибку
+        // при каких-то экзотических обновлениях.
+        const pos = c.position;
+        if (!pos) return c;
+
+        return {
+          // ВАЖНО: избегаем `as any`, чтобы сборка Next (eslint) не падала.
+          // Spread сохраняет все поля, которые React Flow ожидает увидеть в change-объекте.
+          ...c,
+          position: {
+            x: pos.x + deltaX,
+            y: pos.y + deltaY,
+          },
+        };
+      });
+
+      // Прокидываем изменения в store (там applyNodeChanges и прочая логика).
+      onNodesChange(modifiedChanges);
+    },
+    [
+      nodes,
+      onNodesChange,
+      activeDragNodeId,
+      defaultCardWidth,
+      getViewport,
+    ]
   );
 
   /**
@@ -1436,12 +1753,13 @@ export function CanvasContent() {
         nodeTypes={nodeTypes}
 
         // === CALLBACKS ДЛЯ ИЗМЕНЕНИЙ ===
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChangeWithSnap}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
 
         // === АВТОВЫДЕЛЕНИЕ ПРИ ПЕРЕТАСКИВАНИИ ===
         onNodeDragStart={handleNodeDragStart}
+        onNodeDragStop={handleNodeDragStop}
 
         // === DRAG-TO-CREATE И БЛОКИРОВКА ВЫДЕЛЕНИЯ ===
         onConnectStart={handleConnectStart}
@@ -1495,6 +1813,48 @@ export function CanvasContent() {
         nodesConnectable
         elementsSelectable
       >
+        {/* =======================================================================
+            SNAP GUIDES: ПУНКТИРНЫЕ НАПРАВЛЯЮЩИЕ ДЛЯ ВЫРАВНИВАНИЯ
+            -----------------------------------------------------------------------
+            Рисуем линии через ViewportPortal, чтобы:
+            - Координаты были в системе координат ХОЛСТА (flow-coordinates)
+            - Линии автоматически панорамировались/зумировались вместе с холстом
+            - Мы могли легко рисовать "бесконечные" линии, не привязываясь к viewport
+
+            ВАЖНО: pointerEvents='none' — иначе линии будут перехватывать клики/drag.
+            ======================================================================= */}
+        <ViewportPortal>
+          {/* Вертикальная направляющая (X): показывается при snap по X */}
+          {alignmentGuides.verticalX !== null && (
+            <div
+              style={{
+                position: 'absolute',
+                left: alignmentGuides.verticalX,
+                top: -1_000_000,
+                height: 2_000_000,
+                borderLeft: '1px dashed hsl(var(--primary) / 0.6)',
+                pointerEvents: 'none',
+                zIndex: 9999,
+              }}
+            />
+          )}
+
+          {/* Горизонтальная направляющая (Y): показывается при snap по Y */}
+          {alignmentGuides.horizontalY !== null && (
+            <div
+              style={{
+                position: 'absolute',
+                top: alignmentGuides.horizontalY,
+                left: -1_000_000,
+                width: 2_000_000,
+                borderTop: '1px dashed hsl(var(--primary) / 0.6)',
+                pointerEvents: 'none',
+                zIndex: 9999,
+              }}
+            />
+          )}
+        </ViewportPortal>
+
         {/* ----- ФОНОВАЯ СЕТКА С ТОЧКАМИ ----- */}
         {/* Увеличены точки для лучшей видимости */}
         <Background
