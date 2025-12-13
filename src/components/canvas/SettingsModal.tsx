@@ -40,6 +40,8 @@ import {
   selectSetCorporateMode,
   selectEmbeddingsModel,
   selectSetEmbeddingsModel,
+  selectNeuroSearchMinSimilarity,
+  selectSetNeuroSearchMinSimilarity,
   selectDefaultCardWidth,
   selectSetDefaultCardWidth,
   selectResetSettings,
@@ -278,6 +280,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setCorporateMode = useSettingsStore(selectSetCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
   const setEmbeddingsModel = useSettingsStore(selectSetEmbeddingsModel);
+  const neuroSearchMinSimilarity = useSettingsStore(selectNeuroSearchMinSimilarity);
+  const setNeuroSearchMinSimilarity = useSettingsStore(selectSetNeuroSearchMinSimilarity);
   const defaultCardWidth = useSettingsStore(selectDefaultCardWidth);
   const setDefaultCardWidth = useSettingsStore(selectSetDefaultCardWidth);
   const resetSettings = useSettingsStore(selectResetSettings);
@@ -937,6 +941,61 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* =============================================================== */}
+          {/* СЕКЦИЯ: NEUROSEARCH (ЧУВСТВИТЕЛЬНОСТЬ) */}
+          {/* =============================================================== */}
+          
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Search className="w-4 h-4 text-purple-500" />
+                {t.settings.neuroSearchSensitivity}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.neuroSearchSensitivityDescription}
+              </p>
+
+              {/*
+                Настройка minSimilarity (0..1)
+
+                UX:
+                - Даём одновременно input + slider.
+                - Пользователь быстро “крутит” слайдером, а точное значение добивает в input.
+
+                Технически:
+                - Значение хранится в useSettingsStore и clamp'ится в [0, 1].
+                - Это значение мы используем в NeuroSearch как `minSimilarity`.
+              */}
+              <div className="flex items-center gap-4">
+                <Input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={Number(neuroSearchMinSimilarity.toFixed(2))}
+                  onChange={(e) => setNeuroSearchMinSimilarity(Number(e.target.value))}
+                  className="w-32"
+                />
+                <span className="text-sm text-muted-foreground">min</span>
+
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={neuroSearchMinSimilarity}
+                  onChange={(e) => setNeuroSearchMinSimilarity(Number(e.target.value))}
+                  className="flex-1 accent-primary h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{t.settings.neuroSearchSensitivityLow}</span>
+                <span>{t.settings.neuroSearchSensitivityHigh}</span>
+              </div>
+            </div>
           </div>
           
           {/* =============================================================== */}

@@ -133,7 +133,7 @@ export const useNodeInput = ({
       handleGenerate();
       return;
     }
-  }, [data.response, data.parentId, isGenerating, id, createLinkedNodeRight, createSiblingNode, handleGenerate, setIsAnswerExpanded]);
+  }, [data.response, data.parentId, isGenerating, id, createLinkedNodeRight, createSiblingNode, handleGenerate, setIsAnswerExpanded, updateNodeData]);
 
   return {
     textareaRef,

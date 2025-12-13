@@ -1,7 +1,6 @@
 import React from 'react';
 import { Brain } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useTranslation } from '@/lib/i18n';
 
 interface NeuroSearchButtonProps {
   isEnabled: boolean;
@@ -20,8 +19,6 @@ export const NeuroSearchButton: React.FC<NeuroSearchButtonProps> = ({
   isStale = false, // Значение по умолчанию
   hasExcluded = false,
 }) => {
-  const { t } = useTranslation();
-
   return (
     <button
       onClick={onToggle}

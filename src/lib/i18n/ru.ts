@@ -125,6 +125,12 @@ export const ru = {
     reindexingCards: 'Переиндексация карточек...',
     reindexingProgress: '{current} / {total}',
 
+    // NeuroSearch sensitivity
+    neuroSearchSensitivity: 'Чувствительность NeuroSearch',
+    neuroSearchSensitivityDescription: 'Минимальный порог семантической близости (0..1). Меньше = больше результатов (больше шума), больше = меньше результатов (строже).',
+    neuroSearchSensitivityLow: 'Больше результатов',
+    neuroSearchSensitivityHigh: 'Строже',
+
     // Контекстное окно
     contextWindowSection: 'Контекстное окно модели',
     maxContextTokens: 'Максимальный контекст',

@@ -12,17 +12,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { SearchResult } from '@/types/embeddings';
 
-/**
- * Снимок состояния подключённой карточки на момент поиска
- * Используется для определения устаревания результатов NeuroSearch
- */
-interface SourceNodeSnapshot {
-  /** ID карточки-источника */
-  nodeId: string;
-  /** Временная метка updatedAt карточки на момент поиска */
-  updatedAt: number;
-}
-
 interface NeuroSearchState {
   /**
    * Search results keyed by node ID.
@@ -86,6 +75,17 @@ interface NeuroSearchState {
    * @returns Record<sourceNodeId, updatedAt> или пустой объект
    */
   getSourceNodesSnapshot: (nodeId: string) => Record<string, number>;
+
+  /**
+   * Очистить результаты поиска, связанные с удалённым холстом
+   * 
+   * Удаляет из всех массивов результатов поиска те элементы,
+   * которые ссылаются на удалённый холст (по canvasId).
+   * Также очищает соответствующие снимки состояния.
+   * 
+   * @param canvasId - ID удалённого холста
+   */
+  clearResultsForCanvas: (canvasId: string) => void;
 }
 
 export const useNeuroSearchStore = create<NeuroSearchState>()(
@@ -163,6 +163,65 @@ export const useNeuroSearchStore = create<NeuroSearchState>()(
         const state = get();
         return state.sourceNodesSnapshot[nodeId] || {};
       },
+
+      /**
+       * Очистить результаты поиска, связанные с удалённым холстом
+       * 
+       * Проходит по всем сохранённым результатам поиска и:
+       * 1. Удаляет результаты, которые ссылаются на удалённый холст (по canvasId)
+       * 2. Очищает соответствующие снимки состояния
+       * 
+       * Это предотвращает появление "призраков" в кэше поиска
+       * при переходе к удалённым карточкам.
+       * 
+       * @param canvasId - ID удалённого холста
+       */
+      clearResultsForCanvas: (canvasId) =>
+        set((state) => {
+          const newResults: Record<string, typeof state.results[string]> = {};
+          const newUpdatedAt: Record<string, number> = {};
+          const newSnapshot: Record<string, Record<string, number>> = {};
+          
+          // Проходим по всем записям результатов поиска
+          for (const [nodeId, results] of Object.entries(state.results)) {
+            // Фильтруем результаты, оставляя только те, что не принадлежат удалённому холсту
+            const filteredResults = results.filter(
+              (result) => result.canvasId !== canvasId
+            );
+            
+            // Если после фильтрации остались результаты - сохраняем их
+            if (filteredResults.length > 0) {
+              newResults[nodeId] = filteredResults;
+              
+              // Сохраняем timestamp если был
+              if (state.resultsUpdatedAt[nodeId]) {
+                newUpdatedAt[nodeId] = state.resultsUpdatedAt[nodeId];
+              }
+              
+              // Обновляем снимок состояния, удаляя записи для удалённого холста
+              if (state.sourceNodesSnapshot[nodeId]) {
+                const filteredSnapshot: Record<string, number> = {};
+                for (const [sourceNodeId, updatedAt] of Object.entries(state.sourceNodesSnapshot[nodeId])) {
+                  // Оставляем только те записи, которые ещё есть в отфильтрованных результатах
+                  if (filteredResults.some(r => r.nodeId === sourceNodeId)) {
+                    filteredSnapshot[sourceNodeId] = updatedAt;
+                  }
+                }
+                if (Object.keys(filteredSnapshot).length > 0) {
+                  newSnapshot[nodeId] = filteredSnapshot;
+                }
+              }
+            }
+          }
+          
+          console.log(`[NeuroSearchStore] Очищены результаты поиска для холста ${canvasId}`);
+          
+          return {
+            results: newResults,
+            resultsUpdatedAt: newUpdatedAt,
+            sourceNodesSnapshot: newSnapshot,
+          };
+        }),
     }),
     {
       name: 'neuro-search-storage', // unique name for localStorage

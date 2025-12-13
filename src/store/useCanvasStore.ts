@@ -36,7 +36,11 @@ import { useSettingsStore } from './useSettingsStore';
 // ИМПОРТЫ ДЛЯ ОЧИСТКИ ПОИСКОВЫХ ИНДЕКСОВ ПРИ УДАЛЕНИИ КАРТОЧЕК
 // =============================================================================
 
-import { deleteEmbedding, syncEmbeddingsWithCanvas } from '@/lib/db/embeddings';
+import {
+  deleteEmbedding,
+  syncEmbeddingsWithCanvas,
+  syncEmbeddingChunksWithCanvas,
+} from '@/lib/db/embeddings';
 import { getGlobalHybridEngine } from '@/lib/search';
 
 // =============================================================================
@@ -929,22 +933,36 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           const responseChanged = newResponse !== undefined && newResponse !== oldResponse;
 
           // Флаги: изменились ли настройки контекста (исключения или NeuroSearch)
-          // ВАЖНО: Сравниваем только непустые массивы, игнорируя undefined ↔ []
+          // ВАЖНО:
+          // - Для обоих массивов (excludedContextNodeIds / neuroSearchNodeIds) считаем
+          //   `undefined` и `[]` эквивалентными ("ничего не исключено"/"нейропоиск не используется").
+          // - Но при этом мы ДОЛЖНЫ уметь отличить:
+          //   1) "поле не передали в patch" (не меняем)
+          //   2) "поле явно очистили" (это изменение, если раньше там было что-то непустое)
+          //
+          // Поэтому:
+          // - Используем `hasOwnProperty` для определения намерения изменить поле
+          // - Сравниваем нормализованные массивы, а переходы пустое↔пустое игнорируем
           const oldExcluded = oldNode?.data.excludedContextNodeIds || [];
-          const newExcluded = data.excludedContextNodeIds;
-          // Изменение только если явно передан новый массив и он отличается от старого
-          const excludedChanged = newExcluded !== undefined && 
-            JSON.stringify(oldExcluded) !== JSON.stringify(newExcluded) &&
-            // Игнорируем переход [] → undefined или undefined → []
-            !(oldExcluded.length === 0 && (!newExcluded || newExcluded.length === 0));
+          const hasExcludedPatch = Object.prototype.hasOwnProperty.call(data, 'excludedContextNodeIds');
+          const newExcludedRaw = data.excludedContextNodeIds;
+          const newExcludedNormalized = (newExcludedRaw || []);
+          // Изменение только если поле действительно патчится и массив отличается от старого
+          const excludedChanged = hasExcludedPatch &&
+            JSON.stringify(oldExcluded) !== JSON.stringify(newExcludedNormalized) &&
+            // Игнорируем переход пустое → пустое (undefined ↔ [])
+            !(oldExcluded.length === 0 && newExcludedNormalized.length === 0);
 
           const oldNeuroSearch = oldNode?.data.neuroSearchNodeIds || [];
-          const newNeuroSearch = data.neuroSearchNodeIds;
-          // Изменение только если явно передан новый массив и он отличается от старого
-          const neuroSearchChanged = newNeuroSearch !== undefined && 
-            JSON.stringify(oldNeuroSearch) !== JSON.stringify(newNeuroSearch) &&
-            // Игнорируем переход [] → undefined или undefined → []
-            !(oldNeuroSearch.length === 0 && (!newNeuroSearch || newNeuroSearch.length === 0));
+          const hasNeuroSearchPatch = Object.prototype.hasOwnProperty.call(data, 'neuroSearchNodeIds');
+          const newNeuroSearchRaw = data.neuroSearchNodeIds;
+          const newNeuroSearchNormalized = (newNeuroSearchRaw || []);
+          // Изменение только если поле действительно патчится и массив отличается от старого
+          // (включая важный кейс: [a,b] → undefined, т.е. выключение NeuroSearch)
+          const neuroSearchChanged = hasNeuroSearchPatch &&
+            JSON.stringify(oldNeuroSearch) !== JSON.stringify(newNeuroSearchNormalized) &&
+            // Игнорируем переход пустое → пустое (undefined ↔ [])
+            !(oldNeuroSearch.length === 0 && newNeuroSearchNormalized.length === 0);
           
           const contextConfigChanged = excludedChanged || neuroSearchChanged;
 
@@ -2808,6 +2826,11 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             const existingNodeIds = loadedNodes.map((n: NeuroNode) => n.id);
             syncEmbeddingsWithCanvas(targetCanvasId, existingNodeIds).catch((error) => {
               console.error('[Canvas Store] Ошибка синхронизации эмбеддингов:', error);
+            });
+            // Также синхронизируем multi-vector чанки (если включены/созданы).
+            // Это критично, потому что теперь одна карточка может иметь несколько записей в IndexedDB.
+            syncEmbeddingChunksWithCanvas(targetCanvasId, existingNodeIds).catch((error) => {
+              console.error('[Canvas Store] Ошибка синхронизации chunk-эмбеддингов:', error);
             });
           } catch (error) {
             console.error('[Canvas Store] Ошибка загрузки:', error);

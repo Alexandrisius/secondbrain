@@ -41,7 +41,7 @@ import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
 
 type NeuroNodeProps = NodeProps<NeuroNodeType>;
 
-const EMPTY_ARRAY: any[] = [];
+const EMPTY_ARRAY: import('@/types/embeddings').SearchResult[] = [];
 
 const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // --- STORE ACTIONS ---

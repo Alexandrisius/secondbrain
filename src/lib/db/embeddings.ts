@@ -46,6 +46,80 @@ export interface EmbeddingRecord {
 }
 
 // =============================================================================
+// ТИП ДЛЯ MULTI-VECTOR (CHUNK) ЭМБЕДДИНГОВ
+// =============================================================================
+
+/**
+ * Запись эмбеддинга для фрагмента (чанка) ответа карточки.
+ *
+ * Зачем это нужно:
+ * - “Одна карточка = один вектор” плохо работает на длинных ответах:
+ *   нужная деталь может быть “спрятана” в одном разделе и размывается общим смыслом.
+ * - Multi-vector подход: создаём несколько эмбеддингов по разным фрагментам ответа
+ *   и используем их ТОЛЬКО для скоринга (поиска релевантности).
+ *
+ * ВАЖНОЕ ТРЕБОВАНИЕ ПРОЕКТА:
+ * - Если совпал хотя бы 1 чанк, мы подключаем всю карточку как виртуального родителя,
+ *   то есть в контекст LLM подмешивается ПОЛНЫЙ ответ карточки.
+ * - Поэтому `chunkText` здесь хранится для отладки/опционального UI,
+ *   но “источником правды” для полного текста остаётся каноническая запись `EmbeddingRecord`
+ *   (где `responsePreview` хранит полный ответ).
+ */
+export interface EmbeddingChunkRecord {
+  /**
+   * Уникальный ID чанка.
+   *
+   * Обычно формируется как `${nodeId}::c${chunkIndex}` — так:
+   * - легко дебажить,
+   * - легко удалять “все чанки ноды” по nodeId,
+   * - не конфликтует с канонической записью, у которой id == nodeId.
+   */
+  id: string;
+
+  /** ID ноды (карточки) */
+  nodeId: string;
+
+  /** ID холста */
+  canvasId: string;
+
+  /** Индекс чанка внутри карточки (0..chunkTotal-1) */
+  chunkIndex: number;
+
+  /** Общее число чанков для этой карточки (для UI/отладки) */
+  chunkTotal: number;
+
+  /**
+   * Путь заголовков markdown (контекст раздела), где лежит чанк.
+   * Это маленькое поле, но сильно помогает дебажить “почему совпало”.
+   */
+  headingPath: string;
+
+  /**
+   * Текст чанка (обычно markdown-фрагмент ответа).
+   *
+   * ВАЖНО:
+   * - Это НЕ то, что мы подмешиваем в LLM контекст для виртуального родителя.
+   * - Это хранится для:
+   *   1) возможного UI “где совпало”,
+   *   2) диагностики качества чанкинга,
+   *   3) деградации в крайних случаях (если канонический full response отсутствует).
+   */
+  chunkText: string;
+
+  /** Промпт карточки (для UI результатов) */
+  prompt: string;
+
+  /** Вектор эмбеддинга этого чанка */
+  embedding: number[];
+
+  /** Временная метка обновления чанка */
+  updatedAt: number;
+
+  /** Размерность вектора (зависит от модели) */
+  dimension: number;
+}
+
+// =============================================================================
 // КЛАСС БАЗЫ ДАННЫХ
 // =============================================================================
 
@@ -62,6 +136,12 @@ class EmbeddingsDatabase extends Dexie {
    */
   embeddings!: Table<EmbeddingRecord, string>;
 
+  /**
+   * Таблица чанков (multi-vector) для длинных ответов
+   * Индексы: id (primary), nodeId, canvasId, updatedAt
+   */
+  embeddingChunks!: Table<EmbeddingChunkRecord, string>;
+
   constructor() {
     super('NeuroCanvasEmbeddings');
     
@@ -73,6 +153,19 @@ class EmbeddingsDatabase extends Dexie {
       // - canvasId: для поиска всех эмбеддингов холста
       // - updatedAt: для сортировки и очистки старых
       embeddings: 'id, nodeId, canvasId, updatedAt',
+    });
+
+    /**
+     * Версия 2: добавляем таблицу чанков (multi-vector).
+     *
+     * ВАЖНО:
+     * - Dexie требует перечислить ВСЕ таблицы для версии.
+     * - Мы не меняем схему embeddings (чтобы не ломать существующие данные).
+     * - Просто добавляем новую таблицу embeddingChunks.
+     */
+    this.version(2).stores({
+      embeddings: 'id, nodeId, canvasId, updatedAt',
+      embeddingChunks: 'id, nodeId, canvasId, updatedAt',
     });
   }
 }
@@ -197,8 +290,11 @@ export async function getAllEmbeddings(): Promise<EmbeddingRecord[]> {
  */
 export async function deleteEmbedding(nodeId: string): Promise<void> {
   const database = getDatabase();
+  // ВАЖНО: удаляем и канонический эмбеддинг, и все chunk-эмбеддинги этой карточки,
+  // чтобы не оставлять “призраков” в NeuroSearch.
   await database.embeddings.delete(nodeId);
-  console.log(`[EmbeddingsDB] Удалён эмбеддинг для ноды ${nodeId}`);
+  await database.embeddingChunks.where('nodeId').equals(nodeId).delete();
+  console.log(`[EmbeddingsDB] Удалён эмбеддинг и чанки для ноды ${nodeId}`);
 }
 
 /**
@@ -211,9 +307,13 @@ export async function deleteEmbedding(nodeId: string): Promise<void> {
  */
 export async function deleteEmbeddingsByCanvas(canvasId: string): Promise<number> {
   const database = getDatabase();
-  const count = await database.embeddings.where('canvasId').equals(canvasId).delete();
-  console.log(`[EmbeddingsDB] Удалено ${count} эмбеддингов для холста ${canvasId}`);
-  return count;
+  // Удаляем и канонические эмбеддинги, и chunk-эмбеддинги
+  const embeddingsCount = await database.embeddings.where('canvasId').equals(canvasId).delete();
+  const chunksCount = await database.embeddingChunks.where('canvasId').equals(canvasId).delete();
+  console.log(
+    `[EmbeddingsDB] Удалено ${embeddingsCount} эмбеддингов и ${chunksCount} чанков для холста ${canvasId}`
+  );
+  return embeddingsCount + chunksCount;
 }
 
 /**
@@ -257,7 +357,117 @@ export async function getEmbeddingsCountByCanvas(canvasId: string): Promise<numb
 export async function clearAllEmbeddings(): Promise<void> {
   const database = getDatabase();
   await database.embeddings.clear();
-  console.log('[EmbeddingsDB] Все эмбеддинги удалены');
+  await database.embeddingChunks.clear();
+  console.log('[EmbeddingsDB] Все эмбеддинги (включая чанки) удалены');
+}
+
+// =============================================================================
+// CRUD ДЛЯ CHUNK ЭМБЕДДИНГОВ (MULTI-VECTOR)
+// =============================================================================
+
+/**
+ * Сохранить чанки эмбеддингов для одной ноды.
+ *
+ * Стратегия: “replace-all”.
+ * - Перед сохранением удаляем старые чанки этой ноды, чтобы:
+ *   1) не копить мусор при переиндексации,
+ *   2) избежать ситуаций, когда old chunks смешиваются с new chunks.
+ */
+export async function saveEmbeddingChunksForNode(
+  nodeId: string,
+  canvasId: string,
+  chunks: Array<{
+    chunkIndex: number;
+    chunkTotal: number;
+    headingPath: string;
+    chunkText: string;
+    prompt: string;
+    embedding: number[];
+  }>
+): Promise<void> {
+  const database = getDatabase();
+
+  // Если чанков нет — просто очищаем старые и выходим
+  if (!chunks.length) {
+    await database.embeddingChunks.where('nodeId').equals(nodeId).delete();
+    return;
+  }
+
+  // Удаляем старые чанки этой ноды
+  await database.embeddingChunks.where('nodeId').equals(nodeId).delete();
+
+  // Формируем записи
+  const now = Date.now();
+  const records: EmbeddingChunkRecord[] = chunks.map((c) => ({
+    id: `${nodeId}::c${c.chunkIndex}`,
+    nodeId,
+    canvasId,
+    chunkIndex: c.chunkIndex,
+    chunkTotal: c.chunkTotal,
+    headingPath: c.headingPath,
+    chunkText: c.chunkText,
+    prompt: c.prompt,
+    embedding: c.embedding,
+    updatedAt: now,
+    dimension: c.embedding.length,
+  }));
+
+  // bulkPut быстрее, чем put по одному
+  await database.embeddingChunks.bulkPut(records);
+  console.log(`[EmbeddingsDB] Сохранено ${records.length} chunk-эмбеддингов для ноды ${nodeId}`);
+}
+
+/**
+ * Получить все chunk-эмбеддинги для холста.
+ */
+export async function getEmbeddingChunksByCanvas(canvasId: string): Promise<EmbeddingChunkRecord[]> {
+  const database = getDatabase();
+  return database.embeddingChunks.where('canvasId').equals(canvasId).toArray();
+}
+
+/**
+ * Получить все chunk-эмбеддинги (глобально).
+ */
+export async function getAllEmbeddingChunks(): Promise<EmbeddingChunkRecord[]> {
+  const database = getDatabase();
+  return database.embeddingChunks.toArray();
+}
+
+/**
+ * Удалить все chunk-эмбеддинги конкретной ноды.
+ */
+export async function deleteEmbeddingChunksByNode(nodeId: string): Promise<number> {
+  const database = getDatabase();
+  return database.embeddingChunks.where('nodeId').equals(nodeId).delete();
+}
+
+/**
+ * Синхронизировать chunk-эмбеддинги с нодами холста (удалить “призраков”).
+ *
+ * Похоже на syncEmbeddingsWithCanvas(), но для таблицы embeddingChunks.
+ */
+export async function syncEmbeddingChunksWithCanvas(
+  canvasId: string,
+  existingNodeIds: string[]
+): Promise<number> {
+  const database = getDatabase();
+
+  // Получаем все чанки холста
+  const chunks = await getEmbeddingChunksByCanvas(canvasId);
+
+  const existingSet = new Set(existingNodeIds);
+  const orphanedChunkIds = chunks
+    .filter((c) => !existingSet.has(c.nodeId))
+    .map((c) => c.id);
+
+  if (orphanedChunkIds.length > 0) {
+    await database.embeddingChunks.bulkDelete(orphanedChunkIds);
+    console.log(
+      `[EmbeddingsDB] Удалено ${orphanedChunkIds.length} осиротевших chunk-эмбеддингов для холста ${canvasId}`
+    );
+  }
+
+  return orphanedChunkIds.length;
 }
 
 /**

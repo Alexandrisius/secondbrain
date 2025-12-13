@@ -41,15 +41,12 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useSettingsStore, selectUseSummarization } from '@/store/useSettingsStore';
-import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { useTranslation, format } from '@/lib/i18n';
 import type { NeuroNode, ContextType, ContextBlock } from '@/types/canvas';
 
 // Re-export типов для обратной совместимости
 export type { ContextType, ContextBlock } from '@/types/canvas';
-
-const EMPTY_ARRAY: any[] = [];
 
 /**
  * Props компонента ContextViewerModal
@@ -149,11 +146,109 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
   neuroSearchResults = [], // Значение по умолчанию
 }) => {
     // ===========================================================================
+    // REFS ДЛЯ СКРОЛЛА
+    // ===========================================================================
+    /**
+     * ref на DOM-элемент контейнера модалки (Radix DialogContent).
+     *
+     * Почему нужен ref:
+     * - нам нужно повесить "настоящий" нативный wheel-listener с `{ passive: false }`,
+     *   чтобы `preventDefault()` гарантированно работал.
+     * - В React/Synthetic events wheel может быть пассивным (в зависимости от версии/настроек),
+     *   и тогда `preventDefault()` либо не сработает, либо вызовет warning.
+     */
+    const dialogContentRef = React.useRef<HTMLDivElement | null>(null);
+
+    /**
+     * ref на ВНЕШНИЙ (главный) scroll-контейнер контекстного окна.
+     *
+     * Это тот список карточек/предков, который должен прокручиваться
+     * колёсиком мыши "почти везде" внутри модалки (за исключением внутреннего скролла карточки).
+     */
+    const outerScrollRef = React.useRef<HTMLDivElement | null>(null);
+
+    // ===========================================================================
     // STATE
     // ===========================================================================
 
     // Состояние свернутых блоков
     const [collapsedBlockIds, setCollapsedBlockIds] = React.useState<Set<string>>(new Set());
+
+    // ===========================================================================
+    // UX: ЕДИНЫЙ СКРОЛЛ КОЛЁСИКОМ ДЛЯ "ВНЕШНЕГО" КОНТЕНТ-ОКНА
+    // ===========================================================================
+    /**
+     * Проблема (как описано в задаче):
+     * - В модалке есть ДВА вертикальных скролла:
+     *   1) внешний: список блоков контекста/карточек
+     *   2) внутренний: прокрутка длинного Markdown-контента внутри конкретной карточки
+     * - Сейчас внешний скролл можно крутить колёсиком только когда курсор стоит строго
+     *   над его scroll-областью (она получается узкой), и это неудобно.
+     *
+     * Решение:
+     * - Перехватываем wheel-событие на контейнере модалки (capture-фаза),
+     *   и если курсор НЕ находится внутри "внутреннего скролла карточки",
+     *   то принудительно прокручиваем внешний контейнер.
+     * - Если курсор над внутренним скроллом карточки — ничего не перехватываем,
+     *   чтобы внутренняя прокрутка работала как обычно.
+     *
+     * Важно:
+     * - Используем нативный addEventListener с `{ passive: false }`, иначе preventDefault может не сработать.
+     * - Не перехватываем Ctrl+Wheel (чтобы не ломать zoom в браузере).
+     */
+    React.useEffect(() => {
+      // Обработчик нужен только когда модалка открыта.
+      // ВАЖНО: перехватываем wheel на уровне document, а не DialogContent:
+      // - wheel над overlay (затемнённый фон) НЕ попадает в DialogContent
+      // - из-за этого пользователь не видел разницы в поведении
+      // - на document мы гарантированно поймаем wheel в любых точках экрана,
+      //   пока модалка открыта.
+      if (!isOpen) return;
+
+      const handleWheel = (event: WheelEvent) => {
+        // Ctrl+Wheel обычно отвечает за zoom страницы/браузера — не ломаем этот кейс.
+        if (event.ctrlKey) return;
+
+        const target = event.target as HTMLElement | null;
+
+        // Если колесо крутят НАД внутренним скроллом контента карточки —
+        // не вмешиваемся, чтобы скроллился именно контент карточки.
+        //
+        // Маркер `data-context-card-inner-scroll="true"` мы ставим на нужный div ниже по коду.
+        const isInsideCardInnerScroll = Boolean(
+          target?.closest?.('[data-context-card-inner-scroll="true"]')
+        );
+        if (isInsideCardInnerScroll) return;
+
+        const outerEl = outerScrollRef.current;
+        if (!outerEl) return;
+
+        // Мы действительно хотим "забрать" колесо себе:
+        // - чтобы скролл не утекал на страницу/фон
+        // - чтобы скролл работал при наведении на overlay (затемнённый фон)
+        // - чтобы скролл работал в любых точках внутри модалки (header, отступы, боковые зоны и т.д.)
+        event.preventDefault();
+
+        // Нормализуем delta для разных режимов:
+        // - deltaMode === 0: пиксели (обычно так и есть)
+        // - deltaMode === 1: строки (редко, но бывает) → переводим в пиксели
+        // - deltaMode === 2: страницы → используем высоту контейнера
+        let deltaY = event.deltaY;
+        if (event.deltaMode === 1) deltaY = deltaY * 16; // ~16px на строку (эвристика)
+        if (event.deltaMode === 2) deltaY = deltaY * outerEl.clientHeight; // "страница" = высота области
+
+        outerEl.scrollBy({ top: deltaY, left: 0 });
+      };
+
+      // capture + passive:false — ключевой момент, чтобы preventDefault работал стабильно.
+      // Мы ставим listener на document, чтобы ловить wheel даже над overlay.
+      document.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+
+      return () => {
+        // Для removeEventListener важно совпадение capture-режима.
+        document.removeEventListener('wheel', handleWheel, true);
+      };
+    }, [isOpen]);
 
     // Сброс состояния при открытии/закрытии
     React.useEffect(() => {
@@ -205,9 +300,6 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
     // ===========================================================================
     // NEURO SEARCH STATE (ZUSTAND)
     // ===========================================================================
-    
-    // Получаем метки времени обновления из стора
-    const neuroSearchUpdatedAt = useNeuroSearchStore(state => state.resultsUpdatedAt);
     
     // ===========================================================================
     // НАСТРОЙКИ
@@ -564,7 +656,10 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
     return (
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogContent
+          ref={dialogContentRef}
+          className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
+        >
           {/* Шапка диалога */}
           {/* Шапка диалога */}
           <DialogHeader className="flex-shrink-0 space-y-4">
@@ -607,7 +702,10 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           </DialogHeader>
 
           {/* Контент с блоками контекста */}
-          <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-2">
+          <div
+            ref={outerScrollRef}
+            className="flex-1 overflow-y-auto mt-4 space-y-4 pr-2"
+          >
             {contextBlocks.length === 0 ? (
               // Пустое состояние
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -761,6 +859,16 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                                         : t.contextModal.response)))}
                               </div>
                               <div
+                                /**
+                                 * Внутренний scroll-контейнер контента КОНКРЕТНОЙ карточки.
+                                 *
+                                 * Мы помечаем его data-атрибутом, чтобы wheel-перехватчик на уровне модалки
+                                 * мог отличать "скролл карточки" от "скролла списка карточек".
+                                 *
+                                 * Если курсор над этим контейнером — колесо должно скроллить карточку,
+                                 * а не внешний список.
+                                 */
+                                data-context-card-inner-scroll="true"
                                 className={cn(
                                   'prose prose-sm dark:prose-invert max-w-none',
                                   'prose-p:my-1.5 prose-headings:my-2',

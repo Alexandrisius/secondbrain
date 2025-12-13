@@ -127,6 +127,12 @@ export const en: TranslationKeys = {
     reindexingCards: 'Reindexing cards...',
     reindexingProgress: '{current} / {total}',
 
+    // NeuroSearch sensitivity
+    neuroSearchSensitivity: 'NeuroSearch Sensitivity',
+    neuroSearchSensitivityDescription: 'Minimum semantic similarity threshold (0..1). Lower = more results (more noise), higher = fewer results (stricter).',
+    neuroSearchSensitivityLow: 'More results',
+    neuroSearchSensitivityHigh: 'Stricter',
+
     // Context window
     contextWindowSection: 'Model Context Window',
     maxContextTokens: 'Maximum Context',

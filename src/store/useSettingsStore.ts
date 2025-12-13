@@ -247,6 +247,22 @@ export interface AppSettings {
   embeddingsModel: string;
 
   /**
+   * Чувствительность NeuroSearch (порог минимальной семантической близости).
+   *
+   * Как это работает:
+   * - NeuroSearch строит embedding запроса и ищет похожие карточки по cosine similarity.
+   * - `neuroSearchMinSimilarity` — это “нижний порог” (0..1), ниже которого карточки
+   *   считаются недостаточно похожими и не попадают в результаты.
+   *
+   * Интерпретация:
+   * - МЕНЬШЕ значение → поиск БОЛЕЕ чувствительный (больше результатов, больше шума).
+   * - БОЛЬШЕ значение → поиск БОЛЕЕ строгий (меньше результатов, выше точность).
+   *
+   * Дефолт: 0.5 (как было захардкожено ранее в NeuroSearch).
+   */
+  neuroSearchMinSimilarity: number;
+
+  /**
    * Ширина карточек по умолчанию (в пикселях)
    * 
    * Используется при создании новых карточек.
@@ -318,6 +334,15 @@ export interface SettingsStore extends AppSettings {
   setEmbeddingsModel: (model: string) => void;
 
   /**
+   * Установить чувствительность NeuroSearch (порог minSimilarity).
+   *
+   * Мы всегда clamp'им в диапазон [0, 1], чтобы:
+   * - UI не мог записать некорректные значения,
+   * - searchSimilar() не получал “мусор” в параметрах.
+   */
+  setNeuroSearchMinSimilarity: (value: number) => void;
+
+  /**
    * Установить ширину карточек по умолчанию
    * @param width - Ширина в пикселях
    */
@@ -371,6 +396,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   corporateMode: false,
   // Модель эмбеддингов по умолчанию из конфигурации провайдера
   embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
+  // Чувствительность NeuroSearch по умолчанию — как было раньше (hardcode 0.5)
+  neuroSearchMinSimilarity: 0.5,
   // Ширина карточек по умолчанию - 400px
   defaultCardWidth: 400,
 };
@@ -520,6 +547,19 @@ export const useSettingsStore = create<SettingsStore>()(
       },
 
       /**
+       * Установить порог для NeuroSearch.
+       *
+       * ВАЖНО:
+       * - Делаем clamp в [0, 1]
+       * - Округление НЕ делаем намеренно:
+       *   пусть UI решает step, а store хранит точное число.
+       */
+      setNeuroSearchMinSimilarity: (value: number) => {
+        const clamped = Math.max(0, Math.min(value, 1));
+        set({ neuroSearchMinSimilarity: clamped });
+      },
+
+      /**
        * Установить ширину карточек по умолчанию
        * 
        * @param width - Ширина в пикселях
@@ -547,7 +587,8 @@ export const useSettingsStore = create<SettingsStore>()(
       
       // Версия для миграции при изменении структуры
       // ВАЖНО: увеличена с 6 до 7 при добавлении defaultCardWidth
-      version: 7,
+      // ВАЖНО: увеличена с 7 до 8 при добавлении neuroSearchMinSimilarity
+      version: 8,
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {
@@ -627,6 +668,15 @@ export const useSettingsStore = create<SettingsStore>()(
           return {
             ...state,
             defaultCardWidth: 400,
+          };
+        }
+
+        // Миграция с версии 7 на версию 8: добавляем neuroSearchMinSimilarity
+        // Для старых пользователей выставляем дефолт 0.5 (как было захардкожено).
+        if (version < 8) {
+          return {
+            ...state,
+            neuroSearchMinSimilarity: 0.5,
           };
         }
         
@@ -759,6 +809,16 @@ export const selectEmbeddingsModel = (state: SettingsStore) => state.embeddingsM
  * Селектор для получения функции изменения модели эмбеддингов
  */
 export const selectSetEmbeddingsModel = (state: SettingsStore) => state.setEmbeddingsModel;
+
+/**
+ * Селектор для получения чувствительности NeuroSearch (minSimilarity).
+ */
+export const selectNeuroSearchMinSimilarity = (state: SettingsStore) => state.neuroSearchMinSimilarity;
+
+/**
+ * Селектор для получения setter'а чувствительности NeuroSearch.
+ */
+export const selectSetNeuroSearchMinSimilarity = (state: SettingsStore) => state.setNeuroSearchMinSimilarity;
 
 /**
  * Селектор для получения ширины карточек по умолчанию

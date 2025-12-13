@@ -17,12 +17,69 @@ import { NeuroSearchButton } from './NeuroSearchButton';
 import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { searchSimilar } from '@/lib/search/semantic';
-import { useSettingsStore, selectApiKey, selectEmbeddingsBaseUrl, selectCorporateMode, selectEmbeddingsModel } from '@/store/useSettingsStore';
+import {
+  useSettingsStore,
+  selectApiKey,
+  selectEmbeddingsBaseUrl,
+  selectCorporateMode,
+  selectEmbeddingsModel,
+  selectNeuroSearchMinSimilarity,
+} from '@/store/useSettingsStore';
 
-// Пустой массив для предотвращения лишних ререндеров
-const EMPTY_ARRAY: any[] = [];
+// Пустой массив для предотвращения лишних ререндеров (типизированный)
+const EMPTY_SEARCH_RESULTS: import('@/types/embeddings').SearchResult[] = [];
+const EMPTY_STRING_ARRAY: string[] = [];
 // Пустой объект для снимка
 const EMPTY_SNAPSHOT: Record<string, number> = {};
+
+/**
+ * Ограничения для построения поискового запроса NeuroSearch.
+ *
+ * Почему вообще нужен лимит:
+ * - Эмбеддинги считаются по тексту, и чем длиннее текст, тем:
+ *   1) дороже запрос,
+ *   2) выше риск упереться в лимиты модели эмбеддингов,
+ *   3) больше «шума» в query (особенно если мы добавляем родительский контекст).
+ *
+ * Поэтому мы добавляем в query только “самое полезное”:
+ * - вопрос ребёнка (обязательно)
+ * - цитату (если она есть — это самый точный якорь)
+ * - summary родителя (или короткий fallback из response, если summary отсутствует)
+ */
+const MAX_NEUROSEARCH_QUERY_CHARS = 4000;
+const PARENT_CONTEXT_FALLBACK_CHARS = 900;
+
+/**
+ * Нормализует список ID для сравнения.
+ *
+ * ВАЖНО:
+ * - Мы считаем `undefined` и `[]` эквивалентными состояниями ("нейропоиск не используется").
+ * - Поэтому при пустом результате NeuroSearch мы предпочитаем сохранять `undefined`, чтобы:
+ *   1) не плодить "пустые" массивы в data ноды,
+ *   2) не триггерить ложную инвалидизацию `stale`,
+ *   3) оставаться совместимыми с логикой `useCanvasStore.updateNodeData`,
+ *      где переходы `undefined ↔ []` намеренно игнорируются.
+ */
+const normalizeIdList = (ids?: string[]): string[] => (ids ?? []).filter(Boolean);
+
+/**
+ * Сравнение двух списков ID.
+ *
+ * ВАЖНО:
+ * - Сравниваем *в порядке*, т.к. порядок результатов NeuroSearch может влиять на
+ *   порядок подмешивания "виртуального" контекста → а значит и на ответ LLM.
+ * - Если нужно будет считать порядок неважным, здесь достаточно будет сортировки
+ *   (но сейчас оставляем строгую проверку, чтобы не скрыть реальные изменения контекста).
+ */
+const areIdListsEqual = (a?: string[], b?: string[]): boolean => {
+  const aa = normalizeIdList(a);
+  const bb = normalizeIdList(b);
+  if (aa.length !== bb.length) return false;
+  for (let i = 0; i < aa.length; i++) {
+    if (aa[i] !== bb[i]) return false;
+  }
+  return true;
+};
 
 interface QuestionSectionProps {
   id: string;
@@ -76,9 +133,14 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
   const corporateMode = useSettingsStore(selectCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
+  // Порог “чувствительности” NeuroSearch (настраивается в SettingsModal)
+  const neuroSearchMinSimilarity = useSettingsStore(selectNeuroSearchMinSimilarity);
   
   // Canvas Store - для доступа к nodes и обновления data
   const nodes = useCanvasStore(state => state.nodes);
+  // Edges нужны для вычисления “родословной” (предки/потомки),
+  // чтобы NeuroSearch не подмешивал в контекст уже “родственные” карточки.
+  const edges = useCanvasStore(state => state.edges);
   const updateNodeData = useCanvasStore(state => state.updateNodeData);
   const markChildrenStale = useCanvasStore(state => state.markChildrenStale);
   
@@ -86,7 +148,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   const setNeuroSearchResults = useNeuroSearchStore(state => state.setResults);
   const clearNeuroSearchResults = useNeuroSearchStore(state => state.clearResults);
   const setIsNeuroSearching = useNeuroSearchStore(state => state.setIsSearching);
-  const neuroSearchResults = useNeuroSearchStore(state => state.results[id] || EMPTY_ARRAY);
+  const neuroSearchResults = useNeuroSearchStore(state => state.results[id] || EMPTY_SEARCH_RESULTS);
   const isNeuroSearching = useNeuroSearchStore(state => state.isSearching[id] || false);
   
   // Получаем снимок состояния подключённых карточек на момент поиска
@@ -131,6 +193,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     if (neuroSearchResults.length > 0 && !isNeuroSearchEnabled) {
       setIsNeuroSearchEnabled(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [neuroSearchResults.length]);
 
   // === ВЫПОЛНЕНИЕ НЕЙРОПОИСКА ===
@@ -145,12 +208,82 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
 
     setIsNeuroSearching(id, true);
     try {
+      /**
+       * Строим “контекстный” поисковый запрос для эмбеддинга.
+       *
+       * Проблема текущего подхода (только localPrompt):
+       * - вопросы часто бывают короткими/общими: “И что дальше?”, “Почему?”, “А как?”
+       * - без контекста родителя эмбеддинг такого запроса не несёт смысла → поиск “слепой”
+       *
+       * Решение:
+       * - добавляем summary прямых родителей (или короткий response, если summary нет)
+       * - добавляем цитату (если карточка цитатная) как максимально точный контекст
+       *
+       * ВАЖНО:
+       * - этот текст используется ТОЛЬКО для получения query embedding
+       * - он НЕ подмешивается в LLM напрямую (LLM контекст строится отдельно)
+       */
+      const queryParts: string[] = [];
+
+      // 1) База: вопрос ребёнка
+      queryParts.push(`Вопрос (ребёнок): ${localPrompt}`);
+
+      // 2) Цитата (если есть) — очень сильный “якорь” смысла
+      if (data.quote) {
+        queryParts.push(`Цитата (из родителя): "${data.quote}"`);
+      }
+
+      // 3) Контекст прямых родителей: summary → fallback на кусок response
+      //    Мы делаем это явно, чтобы запросы типа “А как дальше?” начали работать.
+      if (directParents.length > 0) {
+        directParents.forEach((parent, index) => {
+          const parentPrompt = parent.data.prompt || '';
+          const parentSummary = parent.data.summary || '';
+          const parentResponse = parent.data.response || '';
+
+          // Берём summary, если оно есть (предпочтительно — меньше шума, быстрее, стабильнее).
+          // Если summary нет — fallback на обрезанный response.
+          const parentContext =
+            parentSummary ||
+            (parentResponse
+              ? (parentResponse.length > PARENT_CONTEXT_FALLBACK_CHARS
+                ? parentResponse.slice(0, PARENT_CONTEXT_FALLBACK_CHARS) + '...'
+                : parentResponse)
+              : '');
+
+          // Если у родителя совсем нет текста — пропускаем (не добавляем пустой шум)
+          if (!parentPrompt && !parentContext) return;
+
+          queryParts.push(
+            [
+              `Родитель #${index + 1}:`,
+              parentPrompt ? `Вопрос (родитель): ${parentPrompt}` : null,
+              parentContext ? `Суть/контекст (родитель): ${parentContext}` : null,
+            ].filter(Boolean).join('\n')
+          );
+        });
+      }
+
+      // 4) Финальная сборка с жёстким лимитом (чтобы не раздувать эмбеддинг-запрос)
+      //    Мы режем по символам, сохраняя начало (там самая важная информация).
+      //    Это простая и надёжная стратегия.
+      const rawQueryText = queryParts.join('\n\n');
+      const queryText =
+        rawQueryText.length > MAX_NEUROSEARCH_QUERY_CHARS
+          ? rawQueryText.slice(0, MAX_NEUROSEARCH_QUERY_CHARS)
+          : rawQueryText;
+
       const results = await searchSimilar(
         {
-          query: localPrompt,
+          // ВАЖНО: queryText отличается от отображаемого вопроса.
+          // localPrompt остаётся вопросом карточки, а queryText — это “упаковка” для эмбеддинга.
+          query: queryText,
           canvasId: null, // Глобальный поиск
           limit: 10, // Запрашиваем больше, чтобы можно было отфильтровать
-          minSimilarity: 0.5, // Порог схожести
+          // Пользовательская “чувствительность” NeuroSearch:
+          // - меньше порог → больше кандидатов (выше recall, больше шума)
+          // - больше порог → меньше кандидатов (выше precision)
+          minSimilarity: neuroSearchMinSimilarity,
         },
         apiKey,
         embeddingsBaseUrl,
@@ -161,6 +294,105 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       // Фильтрация результатов:
       // 1. Исключаем саму себя (id)
       // 2. Исключаем уже существующие родительские связи (directParents)
+      // 3. КРИТИЧНО: исключаем “ветку родословной” текущей карточки:
+      //    - всех предков (вверх по родителям)
+      //    - всех потомков (вниз по детям)
+      //
+      // Почему это нужно:
+      // - контекст предков и так доступен через стандартный механизм контекста
+      // - контекст потомков мы формируем “снизу” сами и не должны подтягивать его в родителя
+      // - иначе возможны:
+      //   1) циклы “контекст сам себя подкрепляет”,
+      //   2) утечки будущего контекста (потомок может содержать выводы, которые модель ещё “не должна знать”),
+      //   3) деградация качества (много дублей в контексте)
+      //
+      // ВАЖНО:
+      // - Мы исключаем именно ancestors + descendants относительно текущей ноды.
+      // - “Боковые” ветки (например, siblings/кузены) НЕ исключаем,
+      //   потому что они не являются предком/потомком и часто содержат полезный параллельный контекст.
+
+      /**
+       * Строим граф родословных связей в рамках текущего холста.
+       *
+       * Мы учитываем 2 источника правды:
+       * 1) edges (source -> target), где source — родитель, target — ребёнок
+       * 2) data.parentId / data.parentIds (на случай несовпадений/legacy)
+       *
+       * Результат:
+       * - parentsOf(childId) -> Set(parentId)
+       * - childrenOf(parentId) -> Set(childId)
+       */
+      const parentsOf = new Map<string, Set<string>>();
+      const childrenOf = new Map<string, Set<string>>();
+
+      const addLink = (parentId: string | undefined | null, childId: string | undefined | null) => {
+        if (!parentId || !childId) return;
+        if (parentId === childId) return;
+        const pSet = parentsOf.get(childId) || new Set<string>();
+        pSet.add(parentId);
+        parentsOf.set(childId, pSet);
+
+        const cSet = childrenOf.get(parentId) || new Set<string>();
+        cSet.add(childId);
+        childrenOf.set(parentId, cSet);
+      };
+
+      // 1) edges — основной источник для связей
+      edges.forEach((e) => addLink(e.source, e.target));
+
+      // 2) fallback на parentId / parentIds в data (чтобы не зависеть от того, где хранится связь)
+      nodes.forEach((n) => {
+        const pid = n.data.parentId;
+        if (pid) addLink(pid, n.id);
+        const pids = n.data.parentIds;
+        if (pids && pids.length > 0) {
+          pids.forEach((p) => addLink(p, n.id));
+        }
+      });
+
+      /**
+       * Собираем всех предков (ancestors): идём “вверх” по parentsOf.
+       */
+      const ancestorIds = new Set<string>();
+      const ancestorQueue: string[] = Array.from(parentsOf.get(id) || []);
+      const MAX_LINEAGE_WALK = 5000; // страховка от циклов/битых данных
+      let lineageSteps = 0;
+
+      while (ancestorQueue.length > 0 && lineageSteps < MAX_LINEAGE_WALK) {
+        lineageSteps++;
+        const curr = ancestorQueue.shift()!;
+        if (ancestorIds.has(curr)) continue;
+        ancestorIds.add(curr);
+
+        const ps = parentsOf.get(curr);
+        if (ps) {
+          ps.forEach((p) => {
+            if (!ancestorIds.has(p)) ancestorQueue.push(p);
+          });
+        }
+      }
+
+      /**
+       * Собираем всех потомков (descendants): идём “вниз” по childrenOf.
+       */
+      const descendantIds = new Set<string>();
+      const descendantQueue: string[] = Array.from(childrenOf.get(id) || []);
+      lineageSteps = 0;
+
+      while (descendantQueue.length > 0 && lineageSteps < MAX_LINEAGE_WALK) {
+        lineageSteps++;
+        const curr = descendantQueue.shift()!;
+        if (descendantIds.has(curr)) continue;
+        descendantIds.add(curr);
+
+        const cs = childrenOf.get(curr);
+        if (cs) {
+          cs.forEach((c) => {
+            if (!descendantIds.has(c)) descendantQueue.push(c);
+          });
+        }
+      }
+
       const filteredResults = results.filter(result => {
         // Исключаем саму себя
         if (result.nodeId === id) return false;
@@ -168,6 +400,12 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         // Исключаем прямых родителей
         const isParent = directParents.some(parent => parent.id === result.nodeId);
         if (isParent) return false;
+
+        // Исключаем предков (любого уровня)
+        if (ancestorIds.has(result.nodeId)) return false;
+
+        // Исключаем потомков (любого уровня)
+        if (descendantIds.has(result.nodeId)) return false;
         
         return true;
       });
@@ -199,18 +437,44 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       // 1. Вычисления хэша контекста (computeContextHash)
       // 2. Передачи контекста потомкам
       // 3. Персистентности при сохранении холста
-      const neuroSearchNodeIds = finalResults.map(r => r.nodeId);
-      updateNodeData(id, { 
-        neuroSearchNodeIds,
+      const nextNeuroSearchNodeIds = finalResults.map(r => r.nodeId);
+
+      // =========================================================================
+      // КЛЮЧЕВОЙ МОМЕНТ (фикс бага):
+      //
+      // Ранее код выставлял `isStale: true` просто по факту клика/запуска поиска,
+      // если у карточки уже был ответ (`data.response`).
+      //
+      // Это приводило к ложному `stale` в ситуации:
+      // - NeuroSearch ничего не нашёл (0 результатов)
+      // - `neuroSearchNodeIds` как был пустым/undefined, так и остался
+      // - контекст фактически НЕ менялся, но карточка окрашивалась как устаревшая
+      //
+      // Теперь мы помечаем `stale` (и потомков) ТОЛЬКО если список
+      // `neuroSearchNodeIds` действительно изменился.
+      // =========================================================================
+      const prevNeuroSearchNodeIds = data.neuroSearchNodeIds;
+      const neuroSearchContextChanged = !areIdListsEqual(prevNeuroSearchNodeIds, nextNeuroSearchNodeIds);
+
+      // Если результатов нет — сохраняем `undefined` (см. normalizeIdList комментарий выше).
+      const neuroSearchNodeIdsToPersist =
+        nextNeuroSearchNodeIds.length > 0 ? nextNeuroSearchNodeIds : undefined;
+
+      updateNodeData(id, {
+        neuroSearchNodeIds: neuroSearchNodeIdsToPersist,
+        // updatedAt внутри updateNodeData выставляется автоматически,
+        // но оставляем явный timestamp, т.к. этот код уже рассчитывает
+        // на "обновление" карточки при изменении настроек контекста.
         updatedAt: Date.now(),
-        // Если у карточки уже есть ответ, то изменение контекста (новые результаты поиска) делает его устаревшим
-        ...(data.response ? { isStale: true } : {})
+        ...(data.response && neuroSearchContextChanged ? { isStale: true } : {}),
       });
       
       // === ПОМЕЧАЕМ ПОТОМКОВ КАК STALE ===
       // Если у карточки уже есть ответ - её потомки должны знать,
       // что контекст изменился (добавлен нейропоиск)
-      if (data.response) {
+      // ВАЖНО: помечаем потомков только если контекст действительно изменился.
+      // Иначе (особенно при 0 результатов) мы снова получим ложный stale-каскад.
+      if (data.response && neuroSearchContextChanged) {
         markChildrenStale(id);
       }
       
@@ -232,9 +496,15 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     embeddingsBaseUrl, 
     corporateMode, 
     embeddingsModel, 
+    neuroSearchMinSimilarity,
     directParents, 
     nodes,
+    edges,
     data.response,
+    data.quote,
+    // ВАЖНО: используется для определения, изменился ли контекст NeuroSearch.
+    // Если список ID меняется, callback должен видеть актуальное значение.
+    data.neuroSearchNodeIds,
     setIsNeuroSearching, 
     setNeuroSearchResults,
     updateNodeData,
@@ -307,7 +577,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   // Вычисляем количество активных (не исключённых) результатов поиска
   const activeResultsCount = useMemo(() => {
     if (!neuroSearchResults.length) return 0;
-    const excludedIds = data.excludedContextNodeIds || EMPTY_ARRAY;
+    const excludedIds = data.excludedContextNodeIds || EMPTY_STRING_ARRAY;
     return neuroSearchResults.filter(r => !excludedIds.includes(r.nodeId)).length;
   }, [neuroSearchResults, data.excludedContextNodeIds]);
 

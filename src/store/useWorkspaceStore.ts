@@ -24,6 +24,8 @@ import {
   DEFAULT_CANVAS_NAME,
   DEFAULT_FOLDER_NAME,
 } from '@/types/workspace';
+import { deleteEmbeddingsByCanvas } from '@/lib/db/embeddings';
+import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
 
 // =============================================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -410,6 +412,22 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           });
           
           console.log('[Workspace Store] Удалён холст:', canvasId);
+          
+          // =========================================================================
+          // ОЧИСТКА ЭМБЕДДИНГОВ
+          // Удаляем все эмбеддинги удалённого холста из IndexedDB
+          // Это предотвращает появление "призраков" в поиске
+          // =========================================================================
+          deleteEmbeddingsByCanvas(canvasId).catch((error) => {
+            console.error('[Workspace Store] Ошибка удаления эмбеддингов холста:', error);
+          });
+          
+          // =========================================================================
+          // ОЧИСТКА КЭША РЕЗУЛЬТАТОВ ПОИСКА
+          // Удаляем из NeuroSearchStore все закэшированные результаты,
+          // которые ссылаются на удалённый холст
+          // =========================================================================
+          useNeuroSearchStore.getState().clearResultsForCanvas(canvasId);
         } catch (error) {
           console.error('[Workspace Store] Ошибка удаления холста:', error);
           
