@@ -93,6 +93,15 @@ Focus on the content with a distraction-free reading mode for any card. Ideal fo
 - **Visual Highlighting**: quoted sections highlighted in context viewer
 - **Colored Links**: Connections created from quotes have distinct colors on the canvas.
 
+### 🧠 NeuroSearch (RAG)
+**NeuroSearch** is a powerful feature that transforms standard semantic search into an active part of your thinking process. It allows you to connect any card to contextually similar information from your entire knowledge base without creating direct links.
+
+- **Semantic Connection**: Click the Brain icon 🧠 to instantly find and connect relevant cards based on meaning, not just keywords.
+- **Virtual Relationships**: Connected cards act as "virtual parents," providing their full context to the current card.
+- **Context Inheritance**: Descendant cards inherit NeuroSearch results as "virtual grandparents" (summarized), understanding the broader context of their ancestors.
+- **Stale Detection**: The brain icon turns orange 🟠 if any connected card is updated, signaling that your context might be outdated. Click it again to refresh the search.
+- **Granular Control**: Manually exclude specific search results from the context if they aren't relevant.
+
 ### 🔍 Smart Search (RRF)
 Combines 4 search methods for perfect results:
 1. **BM25** (Keyword matching)
