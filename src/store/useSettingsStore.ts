@@ -269,6 +269,21 @@ export interface AppSettings {
    * По умолчанию: 400
    */
   defaultCardWidth: number;
+
+  /**
+   * Высота “контентной” части карточки по умолчанию (в пикселях)
+   *
+   * Что это означает в UI:
+   * - Для AI-карточек: максимальная высота раскрытого блока ответа (скролл внутри).
+   * - Для NoteNode: максимальная высота скроллируемой области заметки.
+   *
+   * Зачем это нужно:
+   * - Сейчас эти высоты были захардкожены (обычно 400px).
+   * - Пользователи хотят подстроить плотность интерфейса под свой экран/привычки.
+   *
+   * По умолчанию: 400
+   */
+  defaultCardContentHeight: number;
 }
 
 /**
@@ -347,6 +362,18 @@ export interface SettingsStore extends AppSettings {
    * @param width - Ширина в пикселях
    */
   setDefaultCardWidth: (width: number) => void;
+
+  /**
+   * Установить высоту “контентной” части карточек по умолчанию
+   *
+   * ВАЖНО:
+   * - Это “максимальная” высота: контент внутри прокручивается.
+   * - Clamp нужен, чтобы некорректные значения не ломали верстку
+   *   (например, слишком маленькие или слишком большие).
+   *
+   * @param height - Высота в пикселях
+   */
+  setDefaultCardContentHeight: (height: number) => void;
   
   /**
    * Сбросить все настройки к значениям по умолчанию
@@ -400,6 +427,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   neuroSearchMinSimilarity: 0.5,
   // Ширина карточек по умолчанию - 400px
   defaultCardWidth: 400,
+  // Высота контентной части карточек по умолчанию - 400px
+  // (применяется и к ответам AI-карточек, и к области заметок NoteNode)
+  defaultCardContentHeight: 400,
 };
 
 // =============================================================================
@@ -570,6 +600,24 @@ export const useSettingsStore = create<SettingsStore>()(
         const clampedWidth = Math.max(300, Math.min(width, 1200));
         set({ defaultCardWidth: clampedWidth });
       },
+
+      /**
+       * Установить высоту контентной части карточек по умолчанию
+       *
+       * Почему clamp именно такой:
+       * - ниже 150px карточка становится слишком “низкой”, скролл превращается в мучение
+       * - выше 1200px карточка начинает занимать слишком много экрана и ухудшает навигацию
+       *
+       * Диапазон можно расширить в будущем, если появится запрос.
+       *
+       * @param height - Высота в пикселях
+       */
+      setDefaultCardContentHeight: (height: number) => {
+        // Ограничиваем значение в допустимом диапазоне [150, 1200]
+        // чтобы предотвратить поломку верстки при некорректных значениях
+        const clampedHeight = Math.max(150, Math.min(height, 1200));
+        set({ defaultCardContentHeight: clampedHeight });
+      },
       
       /**
        * Сбросить все настройки к значениям по умолчанию
@@ -588,7 +636,8 @@ export const useSettingsStore = create<SettingsStore>()(
       // Версия для миграции при изменении структуры
       // ВАЖНО: увеличена с 6 до 7 при добавлении defaultCardWidth
       // ВАЖНО: увеличена с 7 до 8 при добавлении neuroSearchMinSimilarity
-      version: 8,
+      // ВАЖНО: увеличена с 8 до 9 при добавлении defaultCardContentHeight
+      version: 9,
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {
@@ -608,6 +657,7 @@ export const useSettingsStore = create<SettingsStore>()(
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
         
@@ -622,6 +672,7 @@ export const useSettingsStore = create<SettingsStore>()(
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
         
@@ -637,6 +688,7 @@ export const useSettingsStore = create<SettingsStore>()(
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
         
@@ -648,6 +700,7 @@ export const useSettingsStore = create<SettingsStore>()(
             corporateMode: false,
             embeddingsModel: API_PROVIDERS[provider].defaultEmbeddingsModel,
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
         
@@ -660,6 +713,7 @@ export const useSettingsStore = create<SettingsStore>()(
             ...state,
             embeddingsModel: providerConfig?.defaultEmbeddingsModel || 'text-embedding-3-small',
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
 
@@ -668,6 +722,7 @@ export const useSettingsStore = create<SettingsStore>()(
           return {
             ...state,
             defaultCardWidth: 400,
+            defaultCardContentHeight: 400,
           };
         }
 
@@ -677,6 +732,16 @@ export const useSettingsStore = create<SettingsStore>()(
           return {
             ...state,
             neuroSearchMinSimilarity: 0.5,
+            defaultCardContentHeight: 400,
+          };
+        }
+
+        // Миграция с версии 8 на версию 9: добавляем defaultCardContentHeight
+        // Для старых пользователей выставляем дефолт 400px (как было захардкожено).
+        if (version < 9) {
+          return {
+            ...state,
+            defaultCardContentHeight: 400,
           };
         }
         
@@ -832,6 +897,19 @@ export const selectDefaultCardWidth = (state: SettingsStore) => state.defaultCar
  * Селектор для получения функции изменения ширины карточек
  */
 export const selectSetDefaultCardWidth = (state: SettingsStore) => state.setDefaultCardWidth;
+
+/**
+ * Селектор для получения высоты контентной части карточек по умолчанию
+ *
+ * @example
+ * const defaultCardContentHeight = useSettingsStore(selectDefaultCardContentHeight);
+ */
+export const selectDefaultCardContentHeight = (state: SettingsStore) => state.defaultCardContentHeight;
+
+/**
+ * Селектор для получения функции изменения высоты контентной части карточек
+ */
+export const selectSetDefaultCardContentHeight = (state: SettingsStore) => state.setDefaultCardContentHeight;
 
 /**
  * Селектор для получения функции сброса настроек

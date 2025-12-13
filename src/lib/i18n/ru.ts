@@ -87,6 +87,8 @@ export const ru = {
     interfaceSection: 'Интерфейс',
     defaultCardWidth: 'Ширина карточек',
     defaultCardWidthDescription: 'Укажите ширину (в пикселях) для новых карточек.',
+    defaultCardContentHeight: 'Высота контента карточки',
+    defaultCardContentHeightDescription: 'Укажите максимальную высоту (в пикселях) прокручиваемой части карточки (ответ и заметка).',
 
     // Сброс
     resetSettings: 'Сбросить настройки',

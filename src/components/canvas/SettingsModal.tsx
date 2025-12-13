@@ -44,6 +44,8 @@ import {
   selectSetNeuroSearchMinSimilarity,
   selectDefaultCardWidth,
   selectSetDefaultCardWidth,
+  selectDefaultCardContentHeight,
+  selectSetDefaultCardContentHeight,
   selectResetSettings,
   API_PROVIDERS,
   type Language,
@@ -284,6 +286,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setNeuroSearchMinSimilarity = useSettingsStore(selectSetNeuroSearchMinSimilarity);
   const defaultCardWidth = useSettingsStore(selectDefaultCardWidth);
   const setDefaultCardWidth = useSettingsStore(selectSetDefaultCardWidth);
+  // Высота “контентной” части карточек (ответ AI-карточки / область заметки NoteNode)
+  // Это единая настройка, чтобы интерфейс выглядел консистентно.
+  const defaultCardContentHeight = useSettingsStore(selectDefaultCardContentHeight);
+  const setDefaultCardContentHeight = useSettingsStore(selectSetDefaultCardContentHeight);
   const resetSettings = useSettingsStore(selectResetSettings);
   
   // Получаем данные для переиндексации из других stores
@@ -579,6 +585,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                    onChange={(e) => setDefaultCardWidth(Number(e.target.value))}
                    className="flex-1 accent-primary h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
                  />
+              </div>
+            </div>
+          </div>
+
+          {/* Настройка высоты “контентной” части карточек (ответ / заметка) */}
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                {/* Используем ту же иконку “layout”, чтобы визуально сгруппировать UI-настройки */}
+                <LayoutTemplate className="w-4 h-4 text-emerald-500" />
+                {t.settings.defaultCardContentHeight}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.defaultCardContentHeightDescription}
+              </p>
+
+              <div className="flex items-center gap-4">
+                <Input
+                  type="number"
+                  min={150}
+                  max={1200}
+                  step={10}
+                  value={defaultCardContentHeight}
+                  onChange={(e) => setDefaultCardContentHeight(Number(e.target.value))}
+                  className="w-32"
+                />
+                <span className="text-sm text-muted-foreground">px</span>
+
+                {/* Слайдер для удобства (быстро “пощупать” высоту без ввода числа) */}
+                <input
+                  type="range"
+                  min={150}
+                  max={1200}
+                  step={10}
+                  value={defaultCardContentHeight}
+                  onChange={(e) => setDefaultCardContentHeight(Number(e.target.value))}
+                  className="flex-1 accent-primary h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
+                />
               </div>
             </div>
           </div>

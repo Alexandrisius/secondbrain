@@ -89,6 +89,8 @@ export const en: TranslationKeys = {
     interfaceSection: 'Interface',
     defaultCardWidth: 'Default Card Width',
     defaultCardWidthDescription: 'Specify the width (in pixels) for new cards.',
+    defaultCardContentHeight: 'Default Card Content Height',
+    defaultCardContentHeightDescription: 'Specify the maximum height (in pixels) of the scrollable content area (answers and notes).',
 
     // Reset
     resetSettings: 'Reset Settings',

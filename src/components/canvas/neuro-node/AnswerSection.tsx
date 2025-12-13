@@ -7,6 +7,10 @@ import {
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode } from '@/types/canvas';
+import {
+  useSettingsStore,
+  selectDefaultCardContentHeight,
+} from '@/store/useSettingsStore';
 
 interface AnswerSectionProps {
   isAnswerExpanded: boolean;
@@ -39,16 +43,33 @@ export const AnswerSection: React.FC<AnswerSectionProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Фиксированная высота ответной части
-  const ANSWER_SECTION_HEIGHT = 400;
+  /**
+   * Высота “контентной” части карточки (px), настраивается пользователем в Settings.
+   *
+   * ВАЖНО:
+   * - Это именно MAX HEIGHT раскрытого ответа.
+   * - Контент внутри скроллится (overflow-y-auto).
+   * - Значение хранится в глобальных настройках, чтобы применяться консистентно
+   *   и к AI-карточкам, и к NoteNode.
+   */
+  const defaultCardContentHeight = useSettingsStore(selectDefaultCardContentHeight);
 
   return (
     <div
       className={cn(
         'neuro-answer-section',
         'overflow-hidden transition-all duration-300 ease-out',
-        isAnswerExpanded ? 'max-h-[400px] opacity-100' : 'max-h-0 opacity-0'
+        // maxHeight делаем через inline-style (динамическое значение в px),
+        // а opacity оставляем в className, чтобы:
+        // - анимация раскрытия/сворачивания работала плавно,
+        // - мы не были привязаны к захардкоженному tailwind-классу max-h-[400px].
+        isAnswerExpanded ? 'opacity-100' : 'opacity-0'
       )}
+      style={{
+        // Когда ответ скрыт — maxHeight: 0, чтобы контейнер “схлопывался”.
+        // Когда раскрыт — maxHeight: defaultCardContentHeight (px).
+        maxHeight: isAnswerExpanded ? defaultCardContentHeight : 0,
+      }}
     >
       <div
         ref={answerScrollRef}
@@ -58,7 +79,12 @@ export const AnswerSection: React.FC<AnswerSectionProps> = ({
           // Динамически добавляем nowheel только при наличии скролла
           hasVerticalScroll && 'nowheel'
         )}
-        style={{ maxHeight: ANSWER_SECTION_HEIGHT }}
+        style={{
+          // Дублируем maxHeight на скролл-контейнере, чтобы:
+          // - скролл работал внутри фиксированной области,
+          // - размер области был предсказуем и соответствовал настройке.
+          maxHeight: defaultCardContentHeight,
+        }}
       >
         {/* Loading state */}
         {isGenerating && !hasContent && (

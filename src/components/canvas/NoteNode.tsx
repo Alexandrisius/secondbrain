@@ -39,6 +39,7 @@ import {
     selectCorporateMode,
     selectEmbeddingsBaseUrl,
     selectEmbeddingsModel,
+    selectDefaultCardContentHeight,
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode as NeuroNodeType } from '@/types/canvas';
@@ -77,6 +78,15 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     const corporateMode = useSettingsStore(selectCorporateMode);
     const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
     const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
+    /**
+     * Высота “контентной” части карточек (px), настраивается в Settings.
+     *
+     * NOTE:
+     * - NoteNode по структуре и UX похож на LLM-карточку (есть скроллируемая область),
+     *   поэтому используем ту же настройку, что и для блока ответа AI-карточек.
+     * - Это делает визуальную плотность и поведение скролла консистентными.
+     */
+    const defaultCardContentHeight = useSettingsStore(selectDefaultCardContentHeight);
 
     // ===========================================================================
     // LOCAL STATE
@@ -591,7 +601,12 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                         // Динамически добавляем nowheel только при наличии скролла
                         hasVerticalScroll && 'nowheel'
                     )}
-                    style={{ maxHeight: 400 }}
+                    style={{
+                        // Максимальная высота скроллируемой области заметки.
+                        // Реальная высота контента может быть меньше, но “потолок”
+                        // ограничиваем настройкой, чтобы карточки не разрастались бесконтрольно.
+                        maxHeight: defaultCardContentHeight,
+                    }}
                     onDoubleClick={handleContentDoubleClick}
                 >
                     {isQuoteMode ? (
