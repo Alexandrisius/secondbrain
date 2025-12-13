@@ -37,7 +37,11 @@ import { useNodeGeneration } from '@/hooks/useNodeGeneration';
 import { useNodeUI } from '@/hooks/useNodeUI';
 import { useNodeInput } from '@/hooks/useNodeInput';
 
+import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
+
 type NeuroNodeProps = NodeProps<NeuroNodeType>;
+
+const EMPTY_ARRAY: any[] = [];
 
 const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   // --- STORE ACTIONS ---
@@ -45,6 +49,9 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
   const checkAndClearStale = useCanvasStore((s) => s.checkAndClearStale);
   const openReadingMode = useReadingModeStore((s) => s.openReadingMode);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  
+  // Получаем результаты поиска для этой ноды
+  const neuroSearchResults = useNeuroSearchStore(state => state.results[id] || EMPTY_ARRAY);
 
   // --- REFS ---
   const questionSectionRef = useRef<HTMLDivElement>(null);
@@ -59,12 +66,12 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
 
   // --- HOOKS ---
   
-  // 1. Context Logic
+  // 1. Context Logic (с передачей результатов NeuroSearch для виртуальных связей)
   const { 
     directParents, 
     ancestorChain, 
     buildParentContext, 
-  } = useNodeContext({ nodeId: id, data });
+  } = useNodeContext({ nodeId: id, data, neuroSearchResults });
 
   // 2. Generation Logic
   const generation = useNodeGeneration({
@@ -142,7 +149,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           data={data}
           isEditing={isEditing}
           localPrompt={localPrompt}
-          hasParentContext={Boolean(directParents.length > 0 || ancestorChain.some(n => n.data.summary))}
+          hasParentContext={Boolean(directParents.length > 0 || ancestorChain.some(n => n.data.summary) || neuroSearchResults.length > 0)}
           directParents={directParents}
           isGenerating={generation.isGenerating}
           hasContent={hasContent}
@@ -209,6 +216,7 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
         quote={data.quote}
         quoteSourceNodeId={data.quoteSourceNodeId}
         excludedContextNodeIds={data.excludedContextNodeIds}
+        neuroSearchResults={neuroSearchResults} // Передаем результаты поиска
         onToggleContextItem={(targetId) => {
             const currentExcluded = data.excludedContextNodeIds || [];
             let newExcluded;

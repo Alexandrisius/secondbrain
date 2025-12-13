@@ -172,7 +172,8 @@ export async function searchSimilar(
   params: SearchParams,
   apiKey: string,
   embeddingsBaseUrl?: string,
-  corporateMode?: boolean
+  corporateMode?: boolean,
+  embeddingsModel?: string // Добавляем параметр
 ): Promise<SearchResult[]> {
   const {
     query,
@@ -186,13 +187,13 @@ export async function searchSimilar(
     return [];
   }
   
-  console.log('[searchSimilar] Поиск:', query, 'холст:', canvasId || 'все');
+  console.log('[searchSimilar] Поиск:', query, 'холст:', canvasId || 'все', 'модель:', embeddingsModel);
   
   // =========================================================================
   // ШАГ 1: Получить эмбеддинг запроса
   // =========================================================================
   
-  const queryEmbedding = await getQueryEmbedding(query, apiKey, embeddingsBaseUrl, corporateMode);
+  const queryEmbedding = await getQueryEmbedding(query, apiKey, embeddingsBaseUrl, corporateMode, embeddingsModel);
   
   if (!queryEmbedding) {
     console.error('[searchSimilar] Не удалось получить эмбеддинг запроса');
@@ -241,7 +242,7 @@ export async function searchSimilar(
       nodeId: record.nodeId,
       canvasId: record.canvasId,
       prompt: record.prompt,
-      responsePreview: record.responsePreview,
+      responsePreview: record.responsePreview, // Теперь здесь ПОЛНЫЙ текст
       similarity: similarity,
       similarityPercent: similarityToPercent(similarity),
     });
@@ -357,24 +358,28 @@ export async function generateAndSaveEmbedding(
   apiKey: string,
   embeddingsBaseUrl?: string,
   corporateMode?: boolean,
-  embeddingsModel?: string
+  embeddingsModel?: string,
+  summary?: string
 ): Promise<boolean> {
   try {
     // Проверяем что есть данные для индексации
-    if (!prompt && !response) {
+    if (!prompt && !response && !summary) {
       console.log('[generateAndSaveEmbedding] Пропуск: нет данных для индексации');
       return false;
     }
     
-    // Объединяем промпт и ответ для создания полного контекста карточки
-    // Это даёт более качественный эмбеддинг, учитывающий и вопрос, и ответ
-    const fullText = `Вопрос: ${prompt || 'Без вопроса'}\n\nОтвет: ${response || 'Без ответа'}`;
+    // Используем summary как основной источник для эмбеддинга
+    // Если summary нет, используем полный ответ (fallback)
+    const contentText = summary || response || 'Без ответа';
+    const fullText = `Вопрос: ${prompt || 'Без вопроса'}\n\nТема: ${contentText}`;
     
     console.log(
       '[generateAndSaveEmbedding] Генерация эмбеддинга для ноды',
       nodeId,
       'модель:',
       embeddingsModel,
+      'используется summary:',
+      !!summary,
       'длина текста:',
       fullText.length
     );

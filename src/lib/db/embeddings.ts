@@ -13,10 +13,37 @@
  */
 
 import Dexie, { type Table } from 'dexie';
-import {
-  type EmbeddingRecord,
-  RESPONSE_PREVIEW_LENGTH,
-} from '@/types/embeddings';
+/**
+ * Запись эмбеддинга в IndexedDB
+ * 
+ * Хранит векторное представление карточки для семантического поиска.
+ * Связана с конкретной нодой и холстом.
+ */
+export interface EmbeddingRecord {
+  /** Уникальный ID записи (совпадает с nodeId для простоты) */
+  id: string;
+  
+  /** ID ноды (карточки) */
+  nodeId: string;
+  
+  /** ID холста, на котором находится нода */
+  canvasId: string;
+  
+  /** Вектор эмбеддинга (размерность зависит от модели) */
+  embedding: number[];
+  
+  /** Оригинальный промпт карточки (для отображения в результатах) */
+  prompt: string;
+  
+  /** ПОЛНЫЙ ТЕКСТ ОТВЕТА (для контекста NeuroSearch) */
+  responsePreview: string;
+  
+  /** Временная метка создания/обновления эмбеддинга */
+  updatedAt: number;
+  
+  /** Размерность вектора (для валидации) */
+  dimension: number;
+}
 
 // =============================================================================
 // КЛАСС БАЗЫ ДАННЫХ
@@ -103,10 +130,9 @@ export async function saveEmbedding(
     `[EmbeddingsDB] Сохранение эмбеддинга для ноды ${nodeId}, размерность: ${embedding.length}`
   );
   
-  // Создаём превью ответа (первые N символов)
-  const responsePreview = response.length > RESPONSE_PREVIEW_LENGTH
-    ? response.slice(0, RESPONSE_PREVIEW_LENGTH) + '...'
-    : response;
+  // Сохраняем ПОЛНЫЙ ответ, чтобы использовать его как контекст
+  // Ранее здесь была обрезка до RESPONSE_PREVIEW_LENGTH, но для NeuroSearch нужен полный текст
+  const responseContent = response;
   
   // Формируем запись
   const record: EmbeddingRecord = {
@@ -115,7 +141,7 @@ export async function saveEmbedding(
     canvasId,
     embedding,
     prompt,
-    responsePreview,
+    responsePreview: responseContent, // Теперь здесь полный ответ
     updatedAt: Date.now(),
     dimension: embedding.length,
   };

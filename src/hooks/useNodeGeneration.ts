@@ -55,10 +55,10 @@ export const useNodeGeneration = ({
   /**
    * Генерация summary (фоновая)
    */
-  const handleGenerateSummary = useCallback(async (responseText: string) => {
+  const handleGenerateSummary = useCallback(async (responseText: string): Promise<string | null> => {
     if (!responseText || responseText.length < 100) {
       updateNodeData(id, { summary: responseText });
-      return;
+      return responseText;
     }
 
     updateNodeData(id, { isSummarizing: true });
@@ -72,23 +72,29 @@ export const useNodeGeneration = ({
         corporateMode
       });
       
+      const result = summary || responseText.slice(0, 200) + '...';
+      
       updateNodeData(id, {
-        summary: summary || responseText.slice(0, 200) + '...',
+        summary: result,
         isSummarizing: false
       });
+      
+      return result;
     } catch (err) {
       console.error('Summary generation error:', err);
+      const fallback = responseText.slice(0, 200) + '...';
       updateNodeData(id, {
-        summary: responseText.slice(0, 200) + '...',
+        summary: fallback,
         isSummarizing: false
       });
+      return fallback;
     }
   }, [id, updateNodeData, apiKey, apiBaseUrl, model, corporateMode]);
 
   /**
    * Генерация эмбеддинга (фоновая)
    */
-  const handleGenerateEmbedding = useCallback(async (responseText: string) => {
+  const handleGenerateEmbedding = useCallback(async (responseText: string, summary?: string) => {
     if (!apiKey || !embeddingsBaseUrl || !embeddingsModel) return;
 
     try {
@@ -105,7 +111,8 @@ export const useNodeGeneration = ({
                 apiKey,
                 embeddingsBaseUrl,
                 corporateMode,
-                embeddingsModel
+                embeddingsModel,
+                summary // Передаем summary
              );
              console.log('[useNodeGeneration] Эмбеддинг сохранён:', id);
         }
@@ -197,9 +204,12 @@ export const useNodeGeneration = ({
       setHasGeneratedOnce(true);
 
       // Background tasks
-      handleGenerateEmbedding(fullText);
+      // Сначала генерируем summary, потом используем его для эмбеддинга
       if (useSummarization) {
-        handleGenerateSummary(fullText);
+        const summary = await handleGenerateSummary(fullText);
+        handleGenerateEmbedding(fullText, summary || undefined);
+      } else {
+        handleGenerateEmbedding(fullText);
       }
 
     } catch (err) {

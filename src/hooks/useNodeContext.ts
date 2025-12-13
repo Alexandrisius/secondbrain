@@ -1,25 +1,36 @@
 /**
  * @file useNodeContext.ts
  * @description Хук для построения контекста родительских нод
+ * 
+ * Поддерживает:
+ * - Прямые родительские связи (edges)
+ * - Виртуальные связи через NeuroSearch
+ * - Цепочку предков (дедушки, прадедушки)
+ * - Суммаризацию для дальних предков
  */
 
 import { useMemo, useCallback } from 'react';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { useSettingsStore, selectUseSummarization } from '@/store/useSettingsStore';
 import type { NeuroNode } from '@/types/canvas';
+import type { SearchResult } from '@/types/embeddings';
 
 interface UseNodeContextProps {
+  /** ID текущей ноды */
   nodeId: string;
+  /** Данные текущей ноды */
   data: NeuroNode['data'];
+  /**
+   * Результаты NeuroSearch для текущей ноды (виртуальные родители)
+   * Если переданы - включаются в контекст при генерации
+   */
+  neuroSearchResults?: SearchResult[];
 }
 
-export const useNodeContext = ({ nodeId, data }: UseNodeContextProps) => {
+export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNodeContextProps) => {
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
   const useSummarization = useSettingsStore(selectUseSummarization);
-  // corporateMode может понадобиться, если логика контекста будет зависеть от него, 
-  // но пока он используется в основном для fetch запросов.
-  // const corporateMode = useSettingsStore(selectCorporateMode);
 
   /**
    * Вычисляем ПРЯМЫХ родителей
@@ -148,14 +159,54 @@ export const useNodeContext = ({ nodeId, data }: UseNodeContextProps) => {
 
   /**
    * Формирование строкового контекста для LLM
+   * 
+   * Структура контекста:
+   * 1. NeuroSearch (виртуальные родители) - полный response
+   * 2. Прямые родители - полный response или цитата
+   * 3. Дальние предки - суммаризация
+   * 4. NeuroSearch предков - суммаризация (виртуальные дедушки)
    */
   const buildParentContext = useCallback((): string | undefined => {
-    if (directParents.length === 0) return undefined;
+    // Проверяем наличие контекста: родители ИЛИ нейропоиск
+    const hasNeuroSearch = neuroSearchResults.length > 0;
+    if (directParents.length === 0 && !hasNeuroSearch) return undefined;
 
     const excludedIds = data.excludedContextNodeIds || [];
     const contextParts: string[] = [];
 
-    // --- Часть 1: Прямые родители ---
+    // =========================================================================
+    // ЧАСТЬ 0: NEUROSEARCH КОНТЕКСТ (ВИРТУАЛЬНЫЕ РОДИТЕЛИ)
+    // 
+    // Результаты нейропоиска добавляются как "виртуальные родители"
+    // с полным response (как у реальных родителей)
+    // =========================================================================
+    if (hasNeuroSearch) {
+      neuroSearchResults.forEach((result, index) => {
+        // Пропускаем исключённые
+        if (excludedIds.includes(result.nodeId)) return;
+
+        const parts: string[] = [];
+        
+        // Заголовок с процентом схожести
+        parts.push(`=== КОНТЕКСТ ИЗ НЕЙРОПОИСКА №${index + 1} (${result.similarityPercent}% совпадение) ===`);
+        
+        // Вопрос
+        if (result.prompt) {
+          parts.push(`Вопрос: ${result.prompt}`);
+        }
+        
+        // Полный ответ (responsePreview теперь содержит полный текст)
+        if (result.responsePreview) {
+          parts.push(`Ответ: ${result.responsePreview}`);
+        }
+
+        contextParts.push(parts.join('\n'));
+      });
+    }
+
+    // =========================================================================
+    // ЧАСТЬ 1: ПРЯМЫЕ РОДИТЕЛИ
+    // =========================================================================
     directParents.forEach((parent, index) => {
         if (!parent || excludedIds.includes(parent.id)) return;
 
@@ -193,10 +244,49 @@ export const useNodeContext = ({ nodeId, data }: UseNodeContextProps) => {
             parentParts.push(`${responseLabel}: ${parent.data.response}`);
         }
 
+        // =====================================================================
+        // ЧАСТЬ 1.5: NEUROSEARCH КОНТЕКСТ ИЗ РОДИТЕЛЯ (КАК ВИРТУАЛЬНЫЕ ДЕДУШКИ)
+        // 
+        // Если у родителя есть neuroSearchNodeIds - добавляем их как суммаризацию
+        // Это позволяет потомкам понимать, откуда у родителя могла появиться информация
+        // =====================================================================
+        if (parent.data.neuroSearchNodeIds && parent.data.neuroSearchNodeIds.length > 0) {
+          parent.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
+            // Пропускаем исключённые
+            if (excludedIds.includes(nsNodeId)) return;
+            
+            // Находим карточку в nodes
+            const nsNode = nodes.find(n => n.id === nsNodeId);
+            if (!nsNode) return;
+            
+            const nsParts: string[] = [];
+            nsParts.push(`  [Виртуальный контекст родителя - NeuroSearch №${nsIndex + 1}]`);
+            
+            if (nsNode.data.prompt) {
+              nsParts.push(`  Вопрос: ${nsNode.data.prompt}`);
+            }
+            
+            // Для виртуальных дедушек используем суммаризацию
+            if (useSummarization && nsNode.data.summary) {
+              nsParts.push(`  Суть: ${nsNode.data.summary}`);
+            } else if (nsNode.data.response) {
+              // Fallback - краткий ответ
+              const shortResponse = nsNode.data.response.length > 300 
+                ? nsNode.data.response.slice(0, 300) + '...'
+                : nsNode.data.response;
+              nsParts.push(`  Суть: ${shortResponse}`);
+            }
+            
+            parentParts.push(nsParts.join('\n'));
+          });
+        }
+
         contextParts.push(parentParts.join('\n'));
     });
 
-    // --- Часть 2: Дальние предки (Grandparents) ---
+    // =========================================================================
+    // ЧАСТЬ 2: ДАЛЬНИЕ ПРЕДКИ (GRANDPARENTS)
+    // =========================================================================
     const grandparents = ancestorChain.filter(
         (node) => !directParents.some((p) => p.id === node.id) && !excludedIds.includes(node.id)
     );
@@ -233,11 +323,49 @@ export const useNodeContext = ({ nodeId, data }: UseNodeContextProps) => {
             ancestorParts.push(`Суть ответа: ${ancestor.data.response.slice(0, 300)}...`);
         }
 
+        // =====================================================================
+        // NEUROSEARCH КОНТЕКСТ ИЗ ПРЕДКА (КАК ВИРТУАЛЬНЫЕ ПРАДЕДУШКИ)
+        // =====================================================================
+        if (ancestor.data.neuroSearchNodeIds && ancestor.data.neuroSearchNodeIds.length > 0) {
+          ancestor.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
+            if (excludedIds.includes(nsNodeId)) return;
+            
+            const nsNode = nodes.find(n => n.id === nsNodeId);
+            if (!nsNode) return;
+            
+            const nsParts: string[] = [];
+            nsParts.push(`  [Виртуальный контекст предка - NeuroSearch №${nsIndex + 1}]`);
+            
+            if (nsNode.data.prompt) {
+              nsParts.push(`  Вопрос: ${nsNode.data.prompt}`);
+            }
+            
+            // Для дальних виртуальных предков - только краткая суть
+            if (nsNode.data.summary) {
+              nsParts.push(`  Суть: ${nsNode.data.summary}`);
+            } else if (nsNode.data.response) {
+              nsParts.push(`  Суть: ${nsNode.data.response.slice(0, 200)}...`);
+            }
+            
+            ancestorParts.push(nsParts.join('\n'));
+          });
+        }
+
         contextParts.push(ancestorParts.join('\n'));
     });
 
     return contextParts.join('\n\n');
-  }, [directParents, ancestorChain, data.excludedContextNodeIds, data.quote, data.quoteSourceNodeId, useSummarization, findQuoteForAncestor]);
+  }, [
+    directParents, 
+    ancestorChain, 
+    neuroSearchResults,
+    nodes,
+    data.excludedContextNodeIds, 
+    data.quote, 
+    data.quoteSourceNodeId, 
+    useSummarization, 
+    findQuoteForAncestor
+  ]);
 
   return {
     directParents,

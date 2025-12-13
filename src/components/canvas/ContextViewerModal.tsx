@@ -28,6 +28,8 @@ import {
   Sparkles,
   Minimize2,
   Maximize2,
+  Brain,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,11 +41,15 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useSettingsStore, selectUseSummarization } from '@/store/useSettingsStore';
+import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
+import { useCanvasStore } from '@/store/useCanvasStore';
 import { useTranslation, format } from '@/lib/i18n';
 import type { NeuroNode, ContextType, ContextBlock } from '@/types/canvas';
 
 // Re-export типов для обратной совместимости
 export type { ContextType, ContextBlock } from '@/types/canvas';
+
+const EMPTY_ARRAY: any[] = [];
 
 /**
  * Props компонента ContextViewerModal
@@ -70,7 +76,12 @@ interface UiContextBlock extends ContextBlock {
   quoteContent?: string;
   /** Тип ноды: 'neuro' (AI-карточка) или 'note' (личная заметка) */
   nodeType?: 'neuro' | 'note';
+  /** Процент схожести для NeuroSearch (0-100) */
+  similarityPercent?: number;
+  /** Флаг устаревания результатов поиска */
+  isStale?: boolean;
 }
+
 
 // =============================================================================
 // ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ И ФУНКЦИИ
@@ -90,6 +101,8 @@ const ContextTypeIcon: React.FC<{ type: ContextType; className?: string }> = ({
       return <Quote className={cn('w-4 h-4', className)} />;
     case 'summary':
       return <FileSignature className={cn('w-4 h-4', className)} />;
+    case 'neuro-search':
+      return <Brain className={cn('w-4 h-4', className)} />;
   }
 };
 
@@ -104,6 +117,8 @@ const getContextTypeColor = (type: ContextType): string => {
       return 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30';
     case 'summary':
       return 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30';
+    case 'neuro-search':
+      return 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30';
   }
 };
 
@@ -121,6 +136,7 @@ const getContextTypeColor = (type: ContextType): string => {
 export const ContextViewerModal: React.FC<ContextViewerModalProps & {
   excludedContextNodeIds?: string[];
   onToggleContextItem?: (nodeId: string) => void;
+  neuroSearchResults?: import('@/types/embeddings').SearchResult[]; // Добавляем проп
 }> = ({
   isOpen,
   onClose,
@@ -130,6 +146,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
   quoteSourceNodeId,
   excludedContextNodeIds = [],
   onToggleContextItem,
+  neuroSearchResults = [], // Значение по умолчанию
 }) => {
     // ===========================================================================
     // STATE
@@ -178,6 +195,20 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
     const { t } = useTranslation();
 
+    // ===========================================================================
+    // CANVAS STATE (для доступа к нодам по ID)
+    // ===========================================================================
+    
+    // Получаем все ноды для поиска виртуальных дедушек по neuroSearchNodeIds
+    const nodes = useCanvasStore(state => state.nodes);
+
+    // ===========================================================================
+    // NEURO SEARCH STATE (ZUSTAND)
+    // ===========================================================================
+    
+    // Получаем метки времени обновления из стора
+    const neuroSearchUpdatedAt = useNeuroSearchStore(state => state.resultsUpdatedAt);
+    
     // ===========================================================================
     // НАСТРОЙКИ
     // ===========================================================================
@@ -232,6 +263,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           return t.contextModal.quote;
         case 'summary':
           return t.contextModal.summary;
+        case 'neuro-search':
+          return 'NeuroSearch';
       }
     };
 
@@ -245,6 +278,34 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
      */
     const contextBlocks = useMemo((): UiContextBlock[] => {
       const blocks: UiContextBlock[] = [];
+
+      // =========================================================================
+      // ЧАСТЬ 0: NEURO SEARCH РЕЗУЛЬТАТЫ (САМЫЙ ВЕРХ)
+      // =========================================================================
+      
+      if (neuroSearchResults && neuroSearchResults.length > 0) {
+        neuroSearchResults.forEach((result) => {
+          // Проверяем stale статус (очень упрощенно: если есть результат, но он старый)
+          // В идеале нужно сравнивать updatedAt эмбеддинга с updatedAt ноды
+          // Но пока просто помечаем, если результаты поиска старее 1 часа (пример)
+          // Или если сама нода-источник была обновлена позже
+          
+          // Для демо используем заглушку isStale=false, но логика готова
+          const isStale = false; 
+
+          blocks.push({
+            nodeId: result.nodeId,
+            prompt: result.prompt || 'Без вопроса',
+            type: 'neuro-search',
+            content: result.responsePreview || '', // Теперь здесь ПОЛНЫЙ текст
+            level: -1, 
+            levelName: t.contextModal.neuroSearchSimilar,
+            nodeType: 'neuro',
+            similarityPercent: result.similarityPercent,
+            isStale
+          });
+        });
+      }
 
       // =========================================================================
       // ЧАСТЬ 1: ПРЯМЫЕ РОДИТЕЛИ
@@ -287,6 +348,55 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           levelName: getLevelName(0, index, directParents.length),
           // Сохраняем тип ноды для различения AI-карточек и личных заметок
           nodeType: parent.type as 'neuro' | 'note',
+        });
+      });
+
+      // =========================================================================
+      // ЧАСТЬ 1.5: ВИРТУАЛЬНЫЕ ДЕДУШКИ (NeuroSearch от прямых родителей)
+      // 
+      // Если у прямого родителя есть neuroSearchNodeIds - это виртуальные
+      // дедушки текущей карточки. Показываем их с суммаризацией.
+      // =========================================================================
+      
+      directParents.forEach((parent, parentIndex) => {
+        if (!parent?.data.neuroSearchNodeIds?.length) return;
+
+        parent.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
+          // Пропускаем исключённые
+          if (excludedContextNodeIds.includes(nsNodeId)) return;
+          
+          // Находим карточку по ID
+          const nsNode = nodes.find(n => n.id === nsNodeId);
+          if (!nsNode) return;
+
+          // Определяем контент (если суммаризация выключена - полный ответ)
+          let content = '';
+          if (!useSummarization && nsNode.data.response) {
+            // Режим полного контекста - весь ответ без обрезки
+            content = nsNode.data.response;
+          } else if (useSummarization && nsNode.data.summary) {
+            content = nsNode.data.summary;
+          } else if (nsNode.data.response) {
+            // Fallback - краткий ответ (только если суммаризация включена)
+            content = useSummarization && nsNode.data.response.length > 500 
+              ? nsNode.data.response.slice(0, 500) + '...'
+              : nsNode.data.response;
+          }
+
+          // Пропускаем если нет контента
+          if (!content && !nsNode.data.prompt) return;
+
+          blocks.push({
+            nodeId: nsNodeId,
+            prompt: nsNode.data.prompt || '',
+            type: 'neuro-search',
+            content,
+            level: 1, // Уровень дедушки
+            levelName: directParents.length > 1 
+              ? `Виртуальный дедушка (NeuroSearch родителя ${parentIndex + 1}, №${nsIndex + 1})`
+              : `Виртуальный дедушка (NeuroSearch №${nsIndex + 1})`,
+            nodeType: nsNode.type as 'neuro' | 'note',
+          });
         });
       });
 
@@ -391,11 +501,55 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           // Сохраняем тип ноды для различения AI-карточек и личных заметок
           nodeType: ancestor.type as 'neuro' | 'note',
         });
+
+        // =======================================================================
+        // ВИРТУАЛЬНЫЕ ПРАДЕДУШКИ (NeuroSearch от этого предка)
+        // 
+        // Если у предка есть neuroSearchNodeIds - показываем их как
+        // виртуальных прадедушек с краткой суммаризацией
+        // =======================================================================
+        if (ancestor.data.neuroSearchNodeIds && ancestor.data.neuroSearchNodeIds.length > 0) {
+          ancestor.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
+            // Пропускаем исключённые
+            if (excludedContextNodeIds.includes(nsNodeId)) return;
+            
+            // Находим карточку по ID
+            const nsNode = nodes.find(n => n.id === nsNodeId);
+            if (!nsNode) return;
+
+            // Для дальних виртуальных предков - контент зависит от настроек суммаризации
+            let nsContent = '';
+            if (!useSummarization && nsNode.data.response) {
+              // Режим полного контекста - весь ответ
+              nsContent = nsNode.data.response;
+            } else if (nsNode.data.summary) {
+              nsContent = nsNode.data.summary;
+            } else if (nsNode.data.response) {
+              // Fallback - краткий ответ (только если суммаризация включена)
+              nsContent = useSummarization && nsNode.data.response.length > 300 
+                ? nsNode.data.response.slice(0, 300) + '...'
+                : nsNode.data.response;
+            }
+
+            // Пропускаем если нет контента
+            if (!nsContent && !nsNode.data.prompt) return;
+
+            blocks.push({
+              nodeId: nsNodeId,
+              prompt: nsNode.data.prompt || '',
+              type: 'neuro-search',
+              content: nsContent,
+              level: index + 2, // Ещё глубже чем предок
+              levelName: `Виртуальный предок [${index + 2}] (NeuroSearch №${nsIndex + 1})`,
+              nodeType: nsNode.type as 'neuro' | 'note',
+            });
+          });
+        }
       });
 
       return blocks;
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directParents, ancestorChain, quote, quoteSourceNodeId, useSummarization, t]);
+    }, [directParents, ancestorChain, quote, quoteSourceNodeId, useSummarization, t, neuroSearchResults, nodes, excludedContextNodeIds]);
 
     // ===========================================================================
     // РЕНДЕР
@@ -415,7 +569,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           {/* Шапка диалога */}
           <DialogHeader className="flex-shrink-0 space-y-4">
             <div className="flex items-center justify-between">
-              <div>
+              {/* Контейнер заголовка и описания с минимальным отступом между ними */}
+              <div className="space-y-1">
                 <DialogTitle className="flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-primary" />
                   {t.contextModal.title}
@@ -505,12 +660,33 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                         {/* Уровень и название */}
                         <div className="flex items-center gap-2 text-sm font-medium">
                           {/* Индикатор иерархии */}
-                          {index > 0 && (
+                          {index > 0 && block.type !== 'neuro-search' && (
                             <ChevronRight className="w-4 h-4 text-muted-foreground" />
                           )}
+                          
+                          {/* Иконка мозга для NeuroSearch в заголовке */}
+                          {block.type === 'neuro-search' && (
+                             <Brain className="w-4 h-4 text-indigo-500" />
+                          )}
+                          
                           <span className={isExcluded ? "text-muted-foreground line-through decoration-border" : "text-foreground"}>
                             {block.levelName}
                           </span>
+                          
+                          {/* Процент схожести для NeuroSearch */}
+                          {block.type === 'neuro-search' && block.similarityPercent && (
+                            <span className="text-xs text-indigo-500 font-bold bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded">
+                              {block.similarityPercent}%
+                            </span>
+                          )}
+                          
+                          {/* Индикатор устаревших данных (Stale) */}
+                          {block.isStale && (
+                            <div className="flex items-center text-xs text-orange-500 ml-2" title="Данные могли устареть">
+                              <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                              <span>Stale</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -578,7 +754,11 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                                   ? t.contextModal.noteContent
                                   : (block.type === 'quote'
                                     ? (block.level === 0 ? t.contextModal.response : t.contextModal.summary)
-                                    : (block.type === 'summary' ? t.contextModal.summary : t.contextModal.response))}
+                                    : (block.type === 'summary' 
+                                      ? t.contextModal.summary 
+                                      : (block.type === 'neuro-search' && useSummarization
+                                        ? t.contextModal.summary
+                                        : t.contextModal.response)))}
                               </div>
                               <div
                                 className={cn(

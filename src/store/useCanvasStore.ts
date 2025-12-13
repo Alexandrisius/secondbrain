@@ -321,6 +321,28 @@ const computeContextHash = (
     });
   }
 
+  // =========================================================================
+  // 6. NEUROSEARCH КОНТЕКСТ (ВИРТУАЛЬНЫЕ РОДИТЕЛИ) - НОРМАЛИЗОВАН
+  // 
+  // Если у карточки есть neuroSearchNodeIds - включаем их в хэш.
+  // Это позволяет правильно определять устаревание при изменении
+  // виртуальных связей (добавление/удаление NeuroSearch результатов)
+  // =========================================================================
+  if (node.data.neuroSearchNodeIds && node.data.neuroSearchNodeIds.length > 0) {
+    node.data.neuroSearchNodeIds.forEach((nsNodeId, index) => {
+      // Пропускаем исключённые ноды
+      if (excludedIds.includes(nsNodeId)) return;
+
+      const nsNode = nodes.find((n) => n.id === nsNodeId);
+      if (nsNode) {
+        // Response виртуального родителя - НОРМАЛИЗОВАН
+        contextParts.push(`NS[${index}]:${normalizeForHash(nsNode.data.response)}`);
+        // Prompt виртуального родителя - НОРМАЛИЗОВАН
+        contextParts.push(`NS_PROMPT[${index}]:${normalizeForHash(nsNode.data.prompt)}`);
+      }
+    });
+  }
+
   // Соединяем все части и вычисляем хэш
   const fullContext = contextParts.join('|||');
   return djb2Hash(fullContext);
@@ -906,6 +928,26 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           const newResponse = data.response;
           const responseChanged = newResponse !== undefined && newResponse !== oldResponse;
 
+          // Флаги: изменились ли настройки контекста (исключения или NeuroSearch)
+          // ВАЖНО: Сравниваем только непустые массивы, игнорируя undefined ↔ []
+          const oldExcluded = oldNode?.data.excludedContextNodeIds || [];
+          const newExcluded = data.excludedContextNodeIds;
+          // Изменение только если явно передан новый массив и он отличается от старого
+          const excludedChanged = newExcluded !== undefined && 
+            JSON.stringify(oldExcluded) !== JSON.stringify(newExcluded) &&
+            // Игнорируем переход [] → undefined или undefined → []
+            !(oldExcluded.length === 0 && (!newExcluded || newExcluded.length === 0));
+
+          const oldNeuroSearch = oldNode?.data.neuroSearchNodeIds || [];
+          const newNeuroSearch = data.neuroSearchNodeIds;
+          // Изменение только если явно передан новый массив и он отличается от старого
+          const neuroSearchChanged = newNeuroSearch !== undefined && 
+            JSON.stringify(oldNeuroSearch) !== JSON.stringify(newNeuroSearch) &&
+            // Игнорируем переход [] → undefined или undefined → []
+            !(oldNeuroSearch.length === 0 && (!newNeuroSearch || newNeuroSearch.length === 0));
+          
+          const contextConfigChanged = excludedChanged || neuroSearchChanged;
+
           set((state) => {
             // Находим индекс ноды
             const nodeIndex = state.nodes.findIndex((n) => n.id === nodeId);
@@ -956,7 +998,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           // потому что LLM недетерминированная и каждый новый ответ уникален
           // =======================================================================
           if (responseChanged) {
-            const { markChildrenStale } = get();
+            const { markChildrenStale, nodes: currentNodes } = get();
             markChildrenStale(nodeId);
 
             console.log(
@@ -964,6 +1006,43 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
               nodeId,
               '- все потомки помечены как stale'
             );
+
+            // =================================================================
+            // УСТАРЕВАНИЕ "ВИРТУАЛЬНЫХ ДЕТЕЙ" (NeuroSearch)
+            // 
+            // Если эта нода является виртуальным родителем через NeuroSearch
+            // для других нод - помечаем их тоже как stale.
+            // 
+            // Виртуальные дети - это ноды, у которых в neuroSearchNodeIds
+            // есть ID текущей ноды (они используют её через нейропоиск).
+            // =================================================================
+            currentNodes.forEach((node) => {
+              // Проверяем, есть ли эта нода в neuroSearchNodeIds
+              if (node.data.neuroSearchNodeIds && 
+                  node.data.neuroSearchNodeIds.includes(nodeId) &&
+                  node.data.response) {
+                // Помечаем как stale
+                set((state) => {
+                  const nodeIndex = state.nodes.findIndex((n) => n.id === node.id);
+                  if (nodeIndex !== -1 && !state.nodes[nodeIndex].data.isStale) {
+                    state.nodes[nodeIndex].data = {
+                      ...state.nodes[nodeIndex].data,
+                      isStale: true,
+                      updatedAt: Date.now(),
+                    };
+                  }
+                });
+
+                // Также помечаем реальных потомков виртуального ребёнка
+                markChildrenStale(node.id);
+
+                console.log(
+                  '[updateNodeData] Виртуальный ребёнок (NeuroSearch):',
+                  node.id,
+                  '- помечен как stale вместе с потомками'
+                );
+              }
+            });
           }
 
           // =======================================================================
@@ -1004,6 +1083,36 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             // =======================================================================
             const { checkAndClearStale } = get();
             checkAndClearStale(nodeId);
+          }
+
+          // =======================================================================
+          // УСТАРЕВАНИЕ ПРИ ИЗМЕНЕНИИ КОНТЕКСТА (NeuroSearch или исключения)
+          // =======================================================================
+          if (contextConfigChanged) {
+            const { nodes: currentNodes } = get();
+            const currentNode = currentNodes.find((n) => n.id === nodeId);
+            
+            if (currentNode?.data.response) {
+               set((state) => {
+                const nodeIndex = state.nodes.findIndex((n) => n.id === nodeId);
+                if (nodeIndex !== -1) {
+                  state.nodes[nodeIndex].data = {
+                    ...state.nodes[nodeIndex].data,
+                    isStale: true,
+                    updatedAt: Date.now(),
+                  };
+                }
+              });
+
+              console.log(
+                '[updateNodeData] Настройки контекста изменились для ноды:',
+                nodeId,
+                '- карточка помечена как stale'
+              );
+              
+              const { checkAndClearStale } = get();
+              checkAndClearStale(nodeId);
+            }
           }
         },
 
@@ -1079,6 +1188,33 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          */
         removeNode: (nodeId) => {
           set((state) => {
+            // =================================================================
+            // ОЧИСТКА ССЫЛОК В ДРУГИХ НОДАХ
+            // Проходим по всем нодам и удаляем упоминания удаляемой ноды
+            // из excludedContextNodeIds и neuroSearchNodeIds
+            // =================================================================
+            state.nodes.forEach((node, index) => {
+              let changed = false;
+
+              // 1. Очищаем excludedContextNodeIds
+              if (node.data.excludedContextNodeIds?.includes(nodeId)) {
+                state.nodes[index].data.excludedContextNodeIds = node.data.excludedContextNodeIds.filter(id => id !== nodeId);
+                changed = true;
+              }
+
+              // 2. Очищаем neuroSearchNodeIds
+              if (node.data.neuroSearchNodeIds?.includes(nodeId)) {
+                state.nodes[index].data.neuroSearchNodeIds = node.data.neuroSearchNodeIds.filter(id => id !== nodeId);
+                changed = true;
+              }
+              
+              // Если ссылки изменились и у ноды есть ответ - помечаем как stale
+              if (changed && node.data.response) {
+                state.nodes[index].data.isStale = true;
+                state.nodes[index].data.updatedAt = Date.now();
+              }
+            });
+
             // Находим все дочерние ноды (те, у которых эта нода - source)
             const childEdges = state.edges.filter((e) => e.source === nodeId);
 
@@ -1141,6 +1277,9 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           } catch (error) {
             console.error('[removeNode] Ошибка удаления из поискового индекса:', error);
           }
+
+          // Проверяем stale состояние для нод, которые могли быть затронуты
+          get().checkAllStaleNodes();
         },
 
         /**

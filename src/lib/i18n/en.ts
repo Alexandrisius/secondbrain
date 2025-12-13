@@ -229,6 +229,7 @@ export const en: TranslationKeys = {
 
     // Parent context
     parentContextUsed: 'Parent node context used',
+    neuroSearchContext: 'NeuroSearch Context',
     multipleParentContextUsed: 'Context from {count} parent nodes used',
     viewFullContext: 'Click to view full context',
 
@@ -292,6 +293,7 @@ export const en: TranslationKeys = {
     response: 'Response:',
     quoteLabel: 'Quote:',
     excluded: 'Excluded from context',
+    neuroSearchSimilar: 'Similar Topic (NeuroSearch)',
 
     // Labels for personal notes (NoteNode)
     noteTitle: 'Title:',

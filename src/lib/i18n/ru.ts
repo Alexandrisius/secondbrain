@@ -227,6 +227,7 @@ export const ru = {
 
     // Контекст родителя
     parentContextUsed: 'Использован контекст родительской ноды',
+    neuroSearchContext: 'NeuroSearch контекст',
     multipleParentContextUsed: 'Использован контекст от {count} родительских нод',
     viewFullContext: 'Нажмите для просмотра полного контекста',
 
@@ -290,6 +291,7 @@ export const ru = {
     response: 'Ответ:',
     quoteLabel: 'Цитата:',
     excluded: 'Исключен из контекста',
+    neuroSearchSimilar: 'Похожая тема (NeuroSearch)',
 
     // Метки для личных заметок (NoteNode)
     noteTitle: 'Название:',
