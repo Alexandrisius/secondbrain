@@ -73,6 +73,26 @@ interface UiContextBlock extends ContextBlock {
   quoteContent?: string;
   /** Тип ноды: 'neuro' (AI-карточка) или 'note' (личная заметка) */
   nodeType?: 'neuro' | 'note';
+  /**
+   * Семантика отображаемого контента (`content`) в UI.
+   *
+   * Зачем это нужно:
+   * - `type: 'quote'` говорит только о том, что "в этом блоке есть цитата",
+   *   но НЕ говорит, что именно мы показываем ниже как "контекст источника цитаты":
+   *   это может быть как полный `response`, так и `summary` (если включена суммаризация).
+   * - Ранее лейбл для `quote` на уровне 0 всегда показывался как "Ответ:",
+   *   из-за чего пользователю казалось, что отображается полный ответ родителя,
+   *   хотя фактически мы часто показывали суммаризацию источника цитаты.
+   *
+   * Поэтому мы явно помечаем, что сейчас в `content`:
+   * - 'full'    → полный ответ (или иной полный текст без сокращения)
+   * - 'summary' → суммаризация (или принудительно укороченный текст в режиме суммаризации)
+   *
+   * Важно:
+   * - Это поле влияет ТОЛЬКО на UI-лейбл ("Ответ:" vs "Суммаризация:").
+   * - Оно НЕ меняет саму логику выбора контента и НЕ влияет на контекст, который уходит в LLM.
+   */
+  contentKind?: 'full' | 'summary';
   /** Процент схожести для NeuroSearch (0-100) */
   similarityPercent?: number;
   /** Флаг устаревания результатов поиска */
@@ -390,6 +410,9 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
             prompt: result.prompt || 'Без вопроса',
             type: 'neuro-search',
             content: result.responsePreview || '', // Теперь здесь ПОЛНЫЙ текст
+            // Важно: responsePreview хранит полный текст, поэтому это "full",
+            // даже если глобально включена суммаризация.
+            contentKind: 'full',
             level: -1, 
             levelName: t.contextModal.neuroSearchSimilar,
             nodeType: 'neuro',
@@ -410,6 +433,14 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
         let type: ContextType = 'full';
         let content = parent.data.response || '';
         let quoteContent: string | undefined;
+        /**
+         * Семантика контента для UI (лейбл над `content`).
+         *
+         * По умолчанию — "full", потому что `content` берётся из `response`.
+         * Ниже (в ветке с цитатой) мы можем заменить контент на `summary`,
+         * и тогда лейбл должен быть "Суммаризация:", а не "Ответ:".
+         */
+        let contentKind: 'full' | 'summary' = 'full';
 
         // Если есть цитата и источник совпадает с этим родителем
         if (quote && quoteSourceNodeId === parent.id) {
@@ -420,8 +451,12 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           // Определяем контент контекста (summary или full)
           if (useSummarization && parent.data.summary) {
             content = parent.data.summary;
+            // В режиме суммаризации, если есть `summary`, отображаем именно суммаризацию.
+            contentKind = 'summary';
           } else if (parent.data.response) {
             content = parent.data.response;
+            // Summary нет (или суммаризация выключена) → показываем полный ответ.
+            contentKind = 'full';
           } else {
             content = '';
           }
@@ -436,6 +471,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           type,
           content,
           quoteContent,
+          contentKind,
           level: 0,
           levelName: getLevelName(0, index, directParents.length),
           // Сохраняем тип ноды для различения AI-карточек и личных заметок
@@ -463,16 +499,29 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
           // Определяем контент (если суммаризация выключена - полный ответ)
           let content = '';
+          /**
+           * Семантика контента для UI.
+           * - Если суммаризация выключена → всегда full.
+           * - Если включена → summary, когда мы используем `summary` или явно режем `response`.
+           */
+          let contentKind: 'full' | 'summary' = 'full';
+
           if (!useSummarization && nsNode.data.response) {
             // Режим полного контекста - весь ответ без обрезки
             content = nsNode.data.response;
+            contentKind = 'full';
           } else if (useSummarization && nsNode.data.summary) {
             content = nsNode.data.summary;
+            contentKind = 'summary';
           } else if (nsNode.data.response) {
             // Fallback - краткий ответ (только если суммаризация включена)
-            content = useSummarization && nsNode.data.response.length > 500 
+            const willTruncate = useSummarization && nsNode.data.response.length > 500;
+            content = willTruncate
               ? nsNode.data.response.slice(0, 500) + '...'
               : nsNode.data.response;
+            // Если мы реально обрезали текст — для пользователя это "суммаризация/суть".
+            // Если ответ короткий и не обрезался — это всё ещё "полный ответ".
+            contentKind = willTruncate ? 'summary' : 'full';
           }
 
           // Пропускаем если нет контента
@@ -483,6 +532,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
             prompt: nsNode.data.prompt || '',
             type: 'neuro-search',
             content,
+            contentKind,
             level: 1, // Уровень дедушки
             levelName: directParents.length > 1 
               ? `Виртуальный дедушка (NeuroSearch родителя ${parentIndex + 1}, №${nsIndex + 1})`
@@ -543,6 +593,16 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
         let type: ContextType = useSummarization ? 'summary' : 'full';
         let content = '';
         let quoteContent: string | undefined;
+        /**
+         * Семантика контента для UI.
+         *
+         * Важно не путать:
+         * - `type` — тип блока в терминах "какой это контекст" (full/quote/summary)
+         * - `contentKind` — что именно мы показываем в поле `content` (полный текст или суммаризация)
+         *
+         * Например: `type = 'quote'`, но `content` может быть как full, так и summary.
+         */
+        let contentKind: 'full' | 'summary' = 'full';
 
         // ПРИОРИТЕТ 1: Проверяем, цитирует ли кто-то из потомков этого предка
         // Если да - используем эту цитату (она должна "просачиваться" вниз по цепочке)
@@ -554,22 +614,28 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           // Контекст предка
           if (useSummarization && ancestor.data.summary) {
             content = ancestor.data.summary;
+            contentKind = 'summary';
           } else if (ancestor.data.response) {
             // Fallback - берем начало ответа или полный
             content = !useSummarization
               ? ancestor.data.response
               : (ancestor.data.response.slice(0, 500) + '...');
+            // Если суммаризация включена — здесь мы гарантированно режем ответ до 500 символов,
+            // поэтому для пользователя это именно "суммаризация/суть".
+            contentKind = useSummarization ? 'summary' : 'full';
           }
         }
         // РЕЖИМ ПОЛНОГО КОНТЕКСТА: если суммаризация выключена - всегда полный response
         else if (!useSummarization && ancestor.data.response) {
           type = 'full';
           content = ancestor.data.response;
+          contentKind = 'full';
         }
         // ПРИОРИТЕТ 2: Если есть summary - используем его (суммаризация включена)
         else if (ancestor.data.summary) {
           type = 'summary';
           content = ancestor.data.summary;
+          contentKind = 'summary';
         }
         // ПРИОРИТЕТ 3: Fallback на полный response (суммаризация включена, но summary нет)
         else if (ancestor.data.response) {
@@ -577,6 +643,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           // потому что summary ещё не готов (fallback поведение)
           type = 'full';
           content = ancestor.data.response;
+          contentKind = 'full';
         }
 
         // Пропускаем если нет контента и нет цитаты
@@ -588,6 +655,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           type,
           content,
           quoteContent,
+          contentKind,
           level: index + 1, // +1 потому что level 0 = прямые родители
           levelName: getLevelName(index + 1),
           // Сохраняем тип ноды для различения AI-карточек и личных заметок
@@ -611,16 +679,27 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
             // Для дальних виртуальных предков - контент зависит от настроек суммаризации
             let nsContent = '';
+            /**
+             * Семантика контента для UI (лейбл).
+             * Для дальних виртуальных предков мы считаем "summary", если:
+             * - есть `summary`, или
+             * - мы в режиме суммаризации и режем `response`.
+             */
+            let nsContentKind: 'full' | 'summary' = 'full';
             if (!useSummarization && nsNode.data.response) {
               // Режим полного контекста - весь ответ
               nsContent = nsNode.data.response;
+              nsContentKind = 'full';
             } else if (nsNode.data.summary) {
               nsContent = nsNode.data.summary;
+              nsContentKind = 'summary';
             } else if (nsNode.data.response) {
               // Fallback - краткий ответ (только если суммаризация включена)
-              nsContent = useSummarization && nsNode.data.response.length > 300 
+              const willTruncate = useSummarization && nsNode.data.response.length > 300;
+              nsContent = willTruncate
                 ? nsNode.data.response.slice(0, 300) + '...'
                 : nsNode.data.response;
+              nsContentKind = willTruncate ? 'summary' : 'full';
             }
 
             // Пропускаем если нет контента
@@ -631,6 +710,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
               prompt: nsNode.data.prompt || '',
               type: 'neuro-search',
               content: nsContent,
+              contentKind: nsContentKind,
               level: index + 2, // Ещё глубже чем предок
               levelName: `Виртуальный предок [${index + 2}] (NeuroSearch №${nsIndex + 1})`,
               nodeType: nsNode.type as 'neuro' | 'note',
@@ -850,13 +930,25 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                                 {/* Для личных заметок показываем "Содержание:", для AI-карточек - логику с типами */}
                                 {block.nodeType === 'note'
                                   ? t.contextModal.noteContent
-                                  : (block.type === 'quote'
-                                    ? (block.level === 0 ? t.contextModal.response : t.contextModal.summary)
-                                    : (block.type === 'summary' 
-                                      ? t.contextModal.summary 
-                                      : (block.type === 'neuro-search' && useSummarization
-                                        ? t.contextModal.summary
-                                        : t.contextModal.response)))}
+                                  : (() => {
+                                      /**
+                                       * Лейбл контента для AI-карточек.
+                                       *
+                                       * Ключевой принцип:
+                                       * - Мы подписываем не "тип блока" (quote/full/summary),
+                                       *   а то, что реально отображается в `block.content`.
+                                       *
+                                       * Пример проблемного кейса (исправлено этой логикой):
+                                       * - Ребёнок цитирует родителя → `block.type = 'quote'`
+                                       * - При включённой суммаризации `block.content` берётся из `parent.summary`
+                                       * - Ранее UI показывал лейбл "Ответ:", хотя это была суммаризация.
+                                       */
+                                      const isSummaryContent = block.contentKind === 'summary';
+                                      // `t.contextModal.summary` используется также в badge/легенде без двоеточия,
+                                      // поэтому для лейбла добавляем ":" вручную для единообразия с "Ответ:".
+                                      const summaryLabel = `${t.contextModal.summary}:`;
+                                      return isSummaryContent ? summaryLabel : t.contextModal.response;
+                                    })()}
                               </div>
                               <div
                                 /**

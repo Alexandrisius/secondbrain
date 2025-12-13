@@ -55,7 +55,7 @@ export interface EmbeddingRequest {
   /** Текст для векторизации (обычно prompt + response) */
   text: string;
   
-  /** API ключ для авторизации в vsellm.ru */
+  /** API ключ для авторизации в Embeddings API (OpenAI-compatible) */
   apiKey: string;
   
   /** Модель эмбеддингов (опционально, по умолчанию text-embedding-3-small) */

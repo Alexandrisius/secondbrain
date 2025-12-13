@@ -3,7 +3,7 @@
  * @description API Route для вычисления эмбеддингов текста
  * 
  * Этот endpoint принимает текст и возвращает его векторное представление
- * через выбранный API провайдер (OpenAI, vsellm.ru, Together AI, etc.).
+ * через выбранный OpenAI-совместимый Embeddings API (OpenRouter или Custom base URL).
  * 
  * Используется модель text-embedding-3-small (1536 измерений) по умолчанию:
  * - Быстрая генерация
@@ -30,8 +30,8 @@ const FALLBACK_EMBEDDING_MODEL = 'text-embedding-3-small';
 // =============================================================================
 
 /**
- * URL API для эмбеддингов по умолчанию
- * Используется если embeddingsBaseUrl не передан в запросе (для обратной совместимости)
+ * URL API для эмбеддингов по умолчанию.
+ * Используется если embeddingsBaseUrl не передан в запросе (для обратной совместимости).
  */
 const DEFAULT_EMBEDDINGS_BASE_URL = 'https://api.vsellm.ru/v1';
 
@@ -99,7 +99,7 @@ interface OpenAIEmbeddingResponse {
  * Request body:
  * {
  *   text: string,      // Текст для векторизации
- *   apiKey: string,    // API ключ vsellm.ru
+ *   apiKey: string,    // API ключ выбранного провайдера (OpenAI-compatible)
  *   model?: string     // Модель (опционально)
  * }
  * 

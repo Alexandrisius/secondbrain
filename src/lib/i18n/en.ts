@@ -64,7 +64,7 @@ export const en: TranslationKeys = {
     // Model
     model: 'Model',
     modelDescription: 'Select a model or enter the name manually (format: provider/model).',
-    modelPlaceholder: 'openai/chatgpt-4o-latest',
+    modelPlaceholder: 'google/gemini-2.5-flash',
     selectModel: '-- Select a model --',
     customModel: 'Or enter model name manually:',
 
@@ -108,12 +108,8 @@ export const en: TranslationKeys = {
 
     // Provider descriptions
     providers: {
-      openai: 'Official OpenAI API (GPT-4, GPT-3.5)',
       openrouter: 'Model aggregator (GPT, Claude, Llama, etc.)',
-      vsellm: 'Russian proxy with RUB payments',
-      groq: 'Ultra-fast inference (Llama, Mixtral)',
-      together: 'Open-source models (Llama, Mistral, Qwen)',
-      custom: 'Any OpenAI-compatible API',
+      custom: 'Any OpenAI-compatible API (default: VSELLM)',
     },
 
     // Embeddings section
@@ -128,6 +124,11 @@ export const en: TranslationKeys = {
     clearingIndex: 'Clearing index...',
     reindexingCards: 'Reindexing cards...',
     reindexingProgress: '{current} / {total}',
+    reindexAllCanvases: 'Reindex all canvases',
+    reindexAllPreparing: 'Preparing: clearing old index before reindexing...',
+    reindexAllProgress: 'Canvas {canvasCurrent}/{canvasTotal} ({canvasName}) • {cardCurrent}/{cardTotal}',
+    embeddingsIndexUnknownWarning: 'Index exists but model metadata is missing (it may have been created by an older app version). Reindexing is recommended.',
+    embeddingsIndexStaleWarning: 'Index was built with model "{indexedModel}" and URL "{indexedUrl}". Current settings: model "{currentModel}" and URL "{currentUrl}". Reindexing is required for correct search.',
 
     // NeuroSearch sensitivity
     neuroSearchSensitivity: 'NeuroSearch Sensitivity',

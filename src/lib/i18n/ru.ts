@@ -62,7 +62,7 @@ export const ru = {
     // Модель
     model: 'Модель',
     modelDescription: 'Выберите модель или введите название вручную (формат: провайдер/модель).',
-    modelPlaceholder: 'openai/chatgpt-4o-latest',
+    modelPlaceholder: 'google/gemini-2.5-flash',
     selectModel: '-- Выберите модель --',
     customModel: 'Или введите название модели вручную:',
 
@@ -106,12 +106,8 @@ export const ru = {
 
     // Описания провайдеров
     providers: {
-      openai: 'Официальный API OpenAI (GPT-4, GPT-3.5)',
       openrouter: 'Агрегатор моделей (GPT, Claude, Llama и др.)',
-      vsellm: 'Российский прокси с оплатой в рублях',
-      groq: 'Сверхбыстрый inference (Llama, Mixtral)',
-      together: 'Open-source модели (Llama, Mistral, Qwen)',
-      custom: 'Любой OpenAI-совместимый API',
+      custom: 'Любой OpenAI-совместимый API (по умолчанию: VSELLM)',
     },
 
     // Секция эмбеддингов
@@ -126,6 +122,11 @@ export const ru = {
     clearingIndex: 'Очистка индекса...',
     reindexingCards: 'Переиндексация карточек...',
     reindexingProgress: '{current} / {total}',
+    reindexAllCanvases: 'Переиндексировать все холсты',
+    reindexAllPreparing: 'Подготавливаем базу: очищаем старый индекс перед переиндексацией...',
+    reindexAllProgress: 'Холст {canvasCurrent}/{canvasTotal} ({canvasName}) • {cardCurrent}/{cardTotal}',
+    embeddingsIndexUnknownWarning: 'Индекс найден, но метаданные модели отсутствуют (возможно, индекс создан в старой версии приложения). Рекомендуется переиндексировать базу.',
+    embeddingsIndexStaleWarning: 'Индекс построен с моделью "{indexedModel}" и URL "{indexedUrl}". Сейчас выбрано: модель "{currentModel}" и URL "{currentUrl}". Для корректного поиска требуется переиндексация.',
 
     // NeuroSearch sensitivity
     neuroSearchSensitivity: 'Чувствительность NeuroSearch',

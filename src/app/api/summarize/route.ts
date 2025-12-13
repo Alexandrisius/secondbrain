@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { DEFAULT_CHAT_MODEL_ID } from '@/lib/aiCatalog';
 
 // =============================================================================
 // КОНФИГУРАЦИЯ
@@ -26,9 +27,10 @@ const DEFAULT_API_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Модель по умолчанию
- * Используем chatgpt-4o-latest - актуальная версия GPT-4o
+ * По умолчанию используем ту же модель, что и в UI/настройках,
+ * чтобы серверный fallback не расходился с клиентским дефолтом.
  */
-const DEFAULT_MODEL = 'openai/chatgpt-4o-latest';
+const DEFAULT_MODEL = DEFAULT_CHAT_MODEL_ID;
 
 /**
  * Таймаут запроса в миллисекундах (меньше чем для основного chat)

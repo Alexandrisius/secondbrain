@@ -11,6 +11,28 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 // =============================================================================
+// КАТАЛОГ МОДЕЛЕЙ (ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ)
+// =============================================================================
+//
+// ВАЖНО:
+// - Список chat-моделей и их maxContextTokens хранится в src/lib/aiCatalog.ts
+// - Это позволяет:
+//   - отображать модели в UI с контекстом,
+//   - в будущем использовать maxContextTokens в логике приложения,
+//   - быстро обновлять список моделей одним файлом.
+//
+// Здесь мы берём только те значения, которые нужны “на уровне настроек”:
+// - дефолтная chat-модель
+// - дефолтная embedding-модель OpenRouter
+// - список embedding-моделей OpenRouter (с размерностями)
+import {
+  DEFAULT_CHAT_MODEL_ID,
+  DEFAULT_OPENROUTER_EMBEDDING_MODEL_ID,
+  EMBEDDING_MODELS,
+  type ModelDeveloper,
+} from '@/lib/aiCatalog';
+
+// =============================================================================
 // ТИПЫ
 // =============================================================================
 
@@ -22,14 +44,25 @@ export type Language = 'ru' | 'en';
 /**
  * Поддерживаемые API провайдеры (OpenAI-совместимые)
  * 
- * - openai: Официальный OpenAI API
- * - openrouter: OpenRouter - агрегатор моделей
- * - vsellm: vsellm.ru - российский прокси
- * - groq: Groq - быстрый inference
- * - together: Together AI - много open-source моделей
- * - custom: Любой OpenAI-совместимый API (LM Studio, Ollama, etc.)
+ * ВАЖНО: мы оставляем только два режима работы:
+ * - openrouter: OpenRouter — агрегатор моделей (vendor/model)
+ * - custom: Любой OpenAI-совместимый API (пользователь вводит URL)
+ *
+ * При этом для обратной совместимости “custom” по умолчанию предзаполнен
+ * значениями VSELLM, потому что исторически большинство пользователей
+ * использовали именно его.
  */
-export type ApiProvider = 'openai' | 'openrouter' | 'vsellm' | 'groq' | 'together' | 'custom';
+export type ApiProvider = 'openrouter' | 'custom';
+
+// =============================================================================
+// URL ПО УМОЛЧАНИЮ ДЛЯ CUSTOM (VSELLM)
+// =============================================================================
+//
+// ВАЖНО:
+// - Пользователь всегда может заменить эти URL на свои.
+// - Но для миграции и “из коробки” мы подставляем VSELLM,
+//   чтобы существующие пользователи ничего не потеряли.
+const DEFAULT_CUSTOM_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Информация о модели эмбеддингов
@@ -37,6 +70,14 @@ export type ApiProvider = 'openai' | 'openrouter' | 'vsellm' | 'groq' | 'togethe
 export interface EmbeddingsModelInfo {
   /** ID модели для API запроса */
   id: string;
+  /**
+   * Разработчик модели (для группировки в UI).
+   *
+   * ВАЖНО:
+   * - Это поле нужно не только “для красоты”.
+   * - Оно позволяет в будущем строить логику по вендорам (например, фильтры/подсказки).
+   */
+  developer: ModelDeveloper;
   /** Отображаемое имя */
   name: string;
   /** Размерность вектора */
@@ -71,86 +112,41 @@ export interface ApiProviderConfig {
  * Все провайдеры используют OpenAI-совместимый API формат.
  */
 export const API_PROVIDERS: Record<ApiProvider, ApiProviderConfig> = {
-  openai: {
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    embeddingsUrl: 'https://api.openai.com/v1',
-    supportsEmbeddings: true,
-    description: 'Официальный API OpenAI (GPT-4, GPT-3.5)',
-    defaultEmbeddingsModel: 'text-embedding-3-small',
-    embeddingsModels: [
-      { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small', dimension: 1536, description: 'Быстрая и экономичная (рекомендуется)' },
-      { id: 'text-embedding-3-large', name: 'Text Embedding 3 Large', dimension: 3072, description: 'Высочайшее качество' },
-      { id: 'text-embedding-ada-002', name: 'Ada 002', dimension: 1536, description: 'Предыдущее поколение' },
-    ],
-  },
   openrouter: {
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     embeddingsUrl: 'https://openrouter.ai/api/v1',
     supportsEmbeddings: true,
     description: 'Агрегатор моделей (GPT, Claude, Llama и др.)',
-    // Qwen3 Embedding 8B - мощная мультиязычная модель с высокой размерностью
-    defaultEmbeddingsModel: 'qwen/qwen3-embedding-8b',
-    embeddingsModels: [
-      // Qwen3 - новейшая модель от Alibaba, отличное качество для русского и английского
-      { id: 'qwen/qwen3-embedding-8b', name: 'Qwen3 Embedding 8B', dimension: 4096, description: 'Мощная мультиязычная (рекомендуется)' },
-      // Multilingual E5 - хорошая альтернатива для 90+ языков
-      { id: 'intfloat/multilingual-e5-large', name: 'Multilingual E5 Large', dimension: 1024, description: '90+ языков, компактная' },
-      { id: 'intfloat/e5-large-v2', name: 'E5 Large v2', dimension: 1024, description: 'Высокое качество, английский' },
-      { id: 'intfloat/e5-base-v2', name: 'E5 Base v2', dimension: 768, description: 'Баланс скорости и качества' },
-      // BAAI BGE - качественные модели для английского
-      { id: 'baai/bge-large-en-v1.5', name: 'BGE Large EN v1.5', dimension: 1024, description: 'BAAI, английский' },
-      { id: 'baai/bge-base-en-v1.5', name: 'BGE Base EN v1.5', dimension: 768, description: 'BAAI, компактная' },
-      // GTE - модели от Thenlper
-      { id: 'thenlper/gte-large', name: 'GTE Large', dimension: 1024, description: 'Thenlper, 1024-dim' },
-      { id: 'thenlper/gte-base', name: 'GTE Base', dimension: 768, description: 'Thenlper, компактная' },
-    ],
-  },
-  vsellm: {
-    name: 'vsellm.ru',
-    baseUrl: 'https://api.vsellm.ru/v1',
-    embeddingsUrl: 'https://api.vsellm.ru/v1',
-    supportsEmbeddings: true,
-    description: 'Российский прокси с оплатой в рублях',
-    defaultEmbeddingsModel: 'text-embedding-3-small',
-    embeddingsModels: [
-      { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small', dimension: 1536, description: 'Быстрая и экономичная (рекомендуется)' },
-      { id: 'text-embedding-3-large', name: 'Text Embedding 3 Large', dimension: 3072, description: 'Высочайшее качество' },
-      { id: 'text-embedding-ada-002', name: 'Ada 002', dimension: 1536, description: 'Предыдущее поколение' },
-    ],
-  },
-  groq: {
-    name: 'Groq',
-    baseUrl: 'https://api.groq.com/openai/v1',
-    embeddingsUrl: '',
-    supportsEmbeddings: false,
-    description: 'Сверхбыстрый inference (Llama, Mixtral)',
-    defaultEmbeddingsModel: '',
-    embeddingsModels: [],
-  },
-  together: {
-    name: 'Together AI',
-    baseUrl: 'https://api.together.xyz/v1',
-    embeddingsUrl: 'https://api.together.xyz/v1',
-    supportsEmbeddings: true,
-    description: 'Open-source модели (Llama, Mistral, Qwen)',
-    defaultEmbeddingsModel: 'togethercomputer/m2-bert-80M-8k-retrieval',
-    embeddingsModels: [
-      { id: 'togethercomputer/m2-bert-80M-8k-retrieval', name: 'M2 BERT 80M Retrieval', dimension: 768, description: 'Оптимизирована для поиска' },
-      { id: 'BAAI/bge-large-en-v1.5', name: 'BGE Large EN v1.5', dimension: 1024, description: 'BAAI, высокое качество' },
-      { id: 'BAAI/bge-base-en-v1.5', name: 'BGE Base EN v1.5', dimension: 768, description: 'BAAI, компактная' },
-    ],
+    // ВАЖНО: список embedding-моделей берём из src/lib/aiCatalog.ts
+    // чтобы UI и данные были синхронизированы.
+    defaultEmbeddingsModel: DEFAULT_OPENROUTER_EMBEDDING_MODEL_ID,
+    embeddingsModels: EMBEDDING_MODELS.map((m) => ({
+      id: m.id,
+      developer: m.developer,
+      name: m.displayName,
+      dimension: m.dimension,
+      description: m.description,
+    })),
   },
   custom: {
     name: 'Custom',
-    baseUrl: '',
-    embeddingsUrl: '',
+    // ВАЖНО:
+    // - custom означает “любой OpenAI-compatible”.
+    // - Но чтобы старые пользователи не потеряли работоспособность,
+    //   мы предзаполняем сюда VSELLM URL.
+    baseUrl: DEFAULT_CUSTOM_BASE_URL,
+    embeddingsUrl: DEFAULT_CUSTOM_BASE_URL,
     supportsEmbeddings: true,
-    description: 'Любой OpenAI-совместимый API',
+    description: 'Любой OpenAI-совместимый API (по умолчанию: VSELLM)',
+    // Для custom (VSELLM) оставляем “классическое” имя без префикса,
+    // потому что многие OpenAI-compatible провайдеры ожидают именно его.
     defaultEmbeddingsModel: 'text-embedding-3-small',
     embeddingsModels: [
-      { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small', dimension: 1536, description: 'OpenAI стандарт' },
+      // Минимально безопасный набор для OpenAI-compatible API.
+      // Если понадобится — список можно расширить или сделать ручной ввод в UI.
+      { id: 'text-embedding-3-small', developer: 'OpenAI', name: 'Text Embedding 3 Small', dimension: 1536, description: 'Стандартный вариант (рекомендуется)' },
+      { id: 'text-embedding-3-large', developer: 'OpenAI', name: 'Text Embedding 3 Large', dimension: 3072, description: 'Более высокое качество (если поддерживается)' },
     ],
   },
 };
@@ -173,7 +169,7 @@ export interface AppSettings {
    * Выбранный API провайдер
    * 
    * Определяет базовый URL для запросов к API.
-   * По умолчанию: 'vsellm' для обратной совместимости
+   * По умолчанию: 'custom' (с предзаполненным URL VSELLM) для обратной совместимости
    */
   apiProvider: ApiProvider;
   
@@ -199,7 +195,7 @@ export interface AppSettings {
    * 
    * Формат: "провайдер/модель", например "openai/gpt-4o"
    * или просто "gpt-4o" в зависимости от API провайдера
-   * По умолчанию: "openai/chatgpt-4o-latest"
+   * По умолчанию: "google/gemini-2.5-flash"
    */
   model: string;
   
@@ -388,16 +384,23 @@ export interface SettingsStore extends AppSettings {
 /**
  * Провайдер по умолчанию
  * 
- * Используем vsellm для обратной совместимости с существующими пользователями
+ * ВАЖНО:
+ * - Мы оставили только openrouter + custom.
+ * - По умолчанию ставим custom, но с URL VSELLM внутри (см. DEFAULT_CUSTOM_BASE_URL),
+ *   потому что существующие пользователи исторически использовали VSELLM.
  */
-const DEFAULT_PROVIDER: ApiProvider = 'vsellm';
+const DEFAULT_PROVIDER: ApiProvider = 'custom';
 
 /**
  * Модель по умолчанию
  * 
- * Используем chatgpt-4o-latest - актуальная версия GPT-4o
+ * По вашему требованию: google/gemini-2.5-flash
+ *
+ * ВАЖНО:
+ * - Это значение синхронизировано с каталогом моделей (src/lib/aiCatalog.ts),
+ *   чтобы “дефолт” был единым во всём приложении.
  */
-const DEFAULT_MODEL = 'openai/chatgpt-4o-latest';
+const DEFAULT_MODEL = DEFAULT_CHAT_MODEL_ID;
 
 /**
  * Настройки по умолчанию
@@ -407,13 +410,13 @@ const DEFAULT_MODEL = 'openai/chatgpt-4o-latest';
 const DEFAULT_SETTINGS: AppSettings = {
   // API ключ пустой по умолчанию - пользователь должен его ввести
   apiKey: '',
-  // Провайдер по умолчанию - vsellm.ru для обратной совместимости
+  // Провайдер по умолчанию - custom (с URL VSELLM внутри)
   apiProvider: DEFAULT_PROVIDER,
   // Базовый URL берём из конфигурации провайдера
   apiBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].baseUrl,
   // URL для эмбеддингов
   embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
-  // Модель по умолчанию - GPT-4o через OpenAI
+  // Модель по умолчанию - Gemini 2.5 Flash (как вы указали)
   model: DEFAULT_MODEL,
   // По умолчанию суммаризация включена для экономии токенов
   useSummarization: true,
@@ -485,7 +488,12 @@ export const useSettingsStore = create<SettingsStore>()(
        * 
        * При смене провайдера автоматически обновляются URL адреса
        * и модель эмбеддингов на значения по умолчанию для нового провайдера.
-       * Для custom провайдера URL остаются пустыми - пользователь должен ввести их вручную.
+       *
+       * ВАЖНО (по требованию проекта):
+       * - custom провайдер по умолчанию НЕ пустой.
+       * - Мы предзаполняем его URL значениями VSELLM, чтобы существующие пользователи
+       *   “после чистки провайдеров” продолжили работать без ручной настройки.
+       * - При этом пользователь всё равно может отредактировать URL вручную.
        * 
        * ВАЖНО: При смене провайдера может измениться модель эмбеддингов,
        * что требует переиндексации базы!
@@ -494,13 +502,38 @@ export const useSettingsStore = create<SettingsStore>()(
        */
       setApiProvider: (provider: ApiProvider) => {
         const config = API_PROVIDERS[provider];
-        set({
-          apiProvider: provider,
-          // Для custom оставляем текущие URL или пустые
-          apiBaseUrl: provider === 'custom' ? '' : config.baseUrl,
-          embeddingsBaseUrl: provider === 'custom' ? '' : config.embeddingsUrl,
-          // Устанавливаем модель эмбеддингов по умолчанию для провайдера
-          embeddingsModel: config.defaultEmbeddingsModel,
+        set((state) => {
+          // Общее для обоих провайдеров: всегда обновляем provider и дефолтную модель эмбеддингов.
+          // Это важно, потому что разные провайдеры/модели эмбеддингов могут иметь разную
+          // размерность векторов и требуют переиндексации.
+          const next: Partial<SettingsStore> = {
+            apiProvider: provider,
+            embeddingsModel: config.defaultEmbeddingsModel,
+          };
+
+          // -------------------------------------------------------------------
+          // openrouter: URL жёстко фиксирован (пользователь не редактирует)
+          // -------------------------------------------------------------------
+          if (provider === 'openrouter') {
+            next.apiBaseUrl = config.baseUrl;
+            next.embeddingsBaseUrl = config.embeddingsUrl;
+            return next;
+          }
+
+          // -------------------------------------------------------------------
+          // custom: URL можно редактировать, но мы хотим:
+          // - при первой смене на custom предзаполнить VSELLM (config.baseUrl),
+          // - НЕ затирать уже введённые пользователем URL, если он уже был на custom.
+          // -------------------------------------------------------------------
+          const hasApiUrl = typeof state.apiBaseUrl === 'string' && state.apiBaseUrl.trim().length > 0;
+          const hasEmbeddingsUrl = typeof state.embeddingsBaseUrl === 'string' && state.embeddingsBaseUrl.trim().length > 0;
+
+          const wasCustom = state.apiProvider === 'custom';
+
+          next.apiBaseUrl = wasCustom && hasApiUrl ? state.apiBaseUrl : config.baseUrl;
+          next.embeddingsBaseUrl = wasCustom && hasEmbeddingsUrl ? state.embeddingsBaseUrl : config.embeddingsUrl;
+
+          return next;
         });
       },
       
@@ -637,115 +670,130 @@ export const useSettingsStore = create<SettingsStore>()(
       // ВАЖНО: увеличена с 6 до 7 при добавлении defaultCardWidth
       // ВАЖНО: увеличена с 7 до 8 при добавлении neuroSearchMinSimilarity
       // ВАЖНО: увеличена с 8 до 9 при добавлении defaultCardContentHeight
-      version: 9,
+      // ВАЖНО: увеличена с 9 до 10 при чистке провайдеров (оставили openrouter+custom)
+      // и миграции пользователей на custom с URL VSELLM.
+      version: 10,
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const state = persistedState as any;
-        
-        // Миграция с версии 1 на версию 2: добавляем apiKey и model
-        if (version < 2) {
-          return {
-            ...state,
-            apiKey: '',
-            model: DEFAULT_MODEL,
-            language: 'ru',
-            apiProvider: DEFAULT_PROVIDER,
-            apiBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].baseUrl,
-            embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
-            corporateMode: false,
-            embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
-        }
-        
-        // Миграция с версии 2 на версию 3: добавляем language
-        if (version < 3) {
-          return {
-            ...state,
-            language: 'ru',
-            apiProvider: DEFAULT_PROVIDER,
-            apiBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].baseUrl,
-            embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
-            corporateMode: false,
-            embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
-        }
-        
-        // Миграция с версии 3 на версию 4: добавляем поддержку провайдеров
-        if (version < 4) {
-          return {
-            ...state,
-            // Для существующих пользователей устанавливаем vsellm как провайдер
-            // (это сохраняет обратную совместимость)
-            apiProvider: DEFAULT_PROVIDER,
-            apiBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].baseUrl,
-            embeddingsBaseUrl: API_PROVIDERS[DEFAULT_PROVIDER].embeddingsUrl,
-            corporateMode: false,
-            embeddingsModel: API_PROVIDERS[DEFAULT_PROVIDER].defaultEmbeddingsModel,
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
-        }
-        
-        // Миграция с версии 4 на версию 5: добавляем корпоративный режим
-        if (version < 5) {
-          const provider = (state.apiProvider || DEFAULT_PROVIDER) as ApiProvider;
-          return {
-            ...state,
-            corporateMode: false,
-            embeddingsModel: API_PROVIDERS[provider].defaultEmbeddingsModel,
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
-        }
-        
-        // Миграция с версии 5 на версию 6: добавляем выбор модели эмбеддингов
-        if (version < 6) {
-          // Определяем модель эмбеддингов на основе текущего провайдера
-          const provider = state.apiProvider || DEFAULT_PROVIDER;
-          const providerConfig = API_PROVIDERS[provider as ApiProvider];
-          return {
-            ...state,
-            embeddingsModel: providerConfig?.defaultEmbeddingsModel || 'text-embedding-3-small',
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
+        // ---------------------------------------------------------------------
+        // ВАЖНО ПРО ТИПЫ:
+        // ---------------------------------------------------------------------
+        // persist middleware отдаёт persistedState как `unknown` (по сути).
+        // Нам нужно:
+        // - НЕ использовать `any` (eslint ругается),
+        // - но при этом уметь читать “грязные” старые значения,
+        //   которые могли быть другого типа или содержать удалённые провайдеры.
+        //
+        // Поэтому:
+        // - описываем минимальный тип persisted-состояния как Partial<SettingsStore>
+        // - отдельные поля читаем через `unknown`, чтобы валидировать их вручную.
+        type PersistedSettings = Partial<SettingsStore> & {
+          apiProvider?: unknown;
+          apiBaseUrl?: unknown;
+          embeddingsBaseUrl?: unknown;
+          embeddingsModel?: unknown;
+        };
+
+        const raw = (persistedState ?? {}) as PersistedSettings;
+
+        // ---------------------------------------------------------------------
+        // БАЗОВАЯ МИГРАЦИЯ: “накатываем” новые поля поверх старого состояния
+        // ---------------------------------------------------------------------
+        //
+        // Идея:
+        // - DEFAULT_SETTINGS содержит актуальную структуру настроек.
+        // - raw содержит сохранённые пользователем значения.
+        // - Мы объединяем их так, чтобы:
+        //   - новые поля получили дефолты,
+        //   - старые пользовательские значения сохранились.
+        const next: SettingsStore = {
+          ...DEFAULT_SETTINGS,
+          ...(raw as Partial<SettingsStore>),
+        };
+
+        // ---------------------------------------------------------------------
+        // ВЕРСИОННЫЕ ДОБАВЛЕНИЯ (исторические поля)
+        // ---------------------------------------------------------------------
+        // Эти блоки оставлены в виде “страховки”, даже если DEFAULT_SETTINGS уже
+        // содержит нужные значения, потому что в старых версиях могли быть
+        // некорректные типы (undefined/null) или отсутствовать поля.
+
+        // defaultCardWidth появилось в v7
+        if (version < 7 && (next.defaultCardWidth === undefined || next.defaultCardWidth === null)) {
+          next.defaultCardWidth = 400;
         }
 
-        // Миграция с версии 6 на версию 7: добавляем defaultCardWidth
-        if (version < 7) {
-          return {
-            ...state,
-            defaultCardWidth: 400,
-            defaultCardContentHeight: 400,
-          };
+        // neuroSearchMinSimilarity появилось в v8
+        if (version < 8 && (next.neuroSearchMinSimilarity === undefined || next.neuroSearchMinSimilarity === null)) {
+          next.neuroSearchMinSimilarity = 0.5;
         }
 
-        // Миграция с версии 7 на версию 8: добавляем neuroSearchMinSimilarity
-        // Для старых пользователей выставляем дефолт 0.5 (как было захардкожено).
-        if (version < 8) {
-          return {
-            ...state,
-            neuroSearchMinSimilarity: 0.5,
-            defaultCardContentHeight: 400,
-          };
+        // defaultCardContentHeight появилось в v9
+        if (version < 9 && (next.defaultCardContentHeight === undefined || next.defaultCardContentHeight === null)) {
+          next.defaultCardContentHeight = 400;
         }
 
-        // Миграция с версии 8 на версию 9: добавляем defaultCardContentHeight
-        // Для старых пользователей выставляем дефолт 400px (как было захардкожено).
-        if (version < 9) {
-          return {
-            ...state,
-            defaultCardContentHeight: 400,
-          };
+        // ---------------------------------------------------------------------
+        // НОРМАЛИЗАЦИЯ ПРОВАЙДЕРОВ (v10): оставили только openrouter+custom
+        // ---------------------------------------------------------------------
+        //
+        // Требование проекта:
+        // - Все текущие пользователи использовали VSELLM.
+        // - Мы удалили отдельный провайдер VSELLM из списка.
+        // - Поэтому мигрируем любые “старые” провайдеры на custom,
+        //   но сохраняем/подставляем URL VSELLM.
+        //
+        // ВАЖНО:
+        // - Мы НЕ трогаем apiKey.
+        // - Мы НЕ затираем URL, если пользователь уже вводил свои.
+        const allowedProviders: ApiProvider[] = ['openrouter', 'custom'];
+
+        // Читаем provider из raw (а не из next), потому что next уже приведён к SettingsStore
+        // и TypeScript “думает”, что там всегда валидное значение.
+        const savedProvider: string = typeof raw.apiProvider === 'string' ? raw.apiProvider : '';
+
+        // Флаг: была ли у пользователя “удалённая” конфигурация провайдера
+        // (vsellm/openai/groq/together и т.п.). В таком случае мы не просто
+        // меняем apiProvider на custom, но и предзаполняем URL VSELLM,
+        // как вы и просили.
+        const hadRemovedProvider = !allowedProviders.includes(savedProvider as ApiProvider);
+
+        if (hadRemovedProvider) {
+          next.apiProvider = 'custom';
+          // Требование: “ввести туда данные провайдера VSELLM”
+          // Поэтому принудительно выставляем URL VSELLM при миграции
+          // со старых провайдеров (даже если раньше там были другие URL).
+          next.apiBaseUrl = API_PROVIDERS.custom.baseUrl;
+          next.embeddingsBaseUrl = API_PROVIDERS.custom.embeddingsUrl;
         }
-        
-        return state as SettingsStore;
+
+        // Приводим baseUrl к ожидаемому виду в зависимости от выбранного провайдера.
+        if (next.apiProvider === 'openrouter') {
+          // openrouter всегда фиксирован
+          next.apiBaseUrl = API_PROVIDERS.openrouter.baseUrl;
+          next.embeddingsBaseUrl = API_PROVIDERS.openrouter.embeddingsUrl;
+
+          // Если embeddingsModel пустой — ставим дефолт openrouter
+          if (!next.embeddingsModel) {
+            next.embeddingsModel = API_PROVIDERS.openrouter.defaultEmbeddingsModel;
+          }
+        } else {
+          // custom: если URL не задан, подставляем VSELLM
+          if (!next.apiBaseUrl || String(next.apiBaseUrl).trim().length === 0) {
+            next.apiBaseUrl = API_PROVIDERS.custom.baseUrl;
+          }
+          if (!next.embeddingsBaseUrl || String(next.embeddingsBaseUrl).trim().length === 0) {
+            next.embeddingsBaseUrl = API_PROVIDERS.custom.embeddingsUrl;
+          }
+
+          // Если embeddingsModel пустой — ставим дефолт custom (OpenAI-style)
+          if (!next.embeddingsModel) {
+            next.embeddingsModel = API_PROVIDERS.custom.defaultEmbeddingsModel;
+          }
+        }
+
+        return next;
       },
     }
   )

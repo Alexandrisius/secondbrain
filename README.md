@@ -54,12 +54,8 @@ NeuroCanvas allows you to:
 ## 🌟 Features
 
 ### 🤖 Multi-AI Support
-- **OpenAI** (GPT-5.1, etc.)
-- **OpenRouter** (Gemini 3 Pro, Claude 4.5 Opus, etc.)
-- **Groq** (Ultra-fast inference)
-- **Together AI** (Open-source models)
-- **vsellm.ru** (Russian proxy, RUB payments)
-- **Custom API** (Any OpenAI-compatible API, e.g., LM Studio or Ollama)
+- **OpenRouter** (Gemini, Claude, DeepSeek, etc.)
+- **Custom API** (Any OpenAI-compatible API, user-defined base URL; default is prefilled with VSELLM URL for backward compatibility)
 
 ### 🧠 System Instructions
 Define global system instructions and behavioral rules for the LLM that apply to the entire canvas context. Control the persona, tone, and constraints of your AI assistant.
@@ -142,7 +138,7 @@ Combines 4 search methods for perfect results:
 To use the application, **you need your own API key** from your chosen provider (OpenAI, OpenRouter, etc.).
 
 1. Open settings (⚙️) in the top right corner.
-2. Select a provider (e.g., OpenAI or OpenRouter).
+2. Select a provider (OpenRouter or Custom).
 3. Enter your API key.
 4. Select a chat model and (optionally) an embeddings model.
 

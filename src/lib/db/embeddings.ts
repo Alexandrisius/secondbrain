@@ -120,6 +120,79 @@ export interface EmbeddingChunkRecord {
 }
 
 // =============================================================================
+// МЕТАДАННЫЕ ИНДЕКСА ЭМБЕДДИНГОВ (ВАЖНО ДЛЯ UX)
+// =============================================================================
+
+/**
+ * Метаданные текущего embedding-индекса (глобально для всей IndexedDB базы).
+ *
+ * Зачем это нужно:
+ * - Эмбеддинги, рассчитанные разными моделями (и/или через разные embeddingsBaseUrl),
+ *   в общем случае НЕСОВМЕСТИМЫ:
+ *   - размерности могут различаться,
+ *   - распределение векторов и “пространство” может быть другим,
+ *   - сравнение cosine similarity перестаёт быть корректным.
+ *
+ * Ранее приложение меняло `embeddingsModel` при смене провайдера (см. useSettingsStore.setApiProvider),
+ * но база эмбеддингов в IndexedDB оставалась “старой” — и мы не могли честно сказать пользователю,
+ * что индекс нужно пересобрать.
+ *
+ * Это поле (EmbeddingsIndexMeta) — минимальный “паспорт” индекса,
+ * который позволяет UI:
+ * - показать, чем индекс был построен,
+ * - понять, что текущие настройки отличаются от индекса,
+ * - подсветить предупреждение и предложить переиндексацию.
+ *
+ * ВАЖНО:
+ * - Это метаданные именно “глобального” индекса (по всем холстам),
+ *   потому что таблица `embeddings` хранит записи для разных canvasId в одной базе Dexie.
+ * - Мы НЕ храним здесь apiKey/секреты (никогда!).
+ */
+export interface EmbeddingsIndexMeta {
+  /**
+   * ID записи меты.
+   *
+   * Сейчас у нас ровно ОДНА запись на всю базу, поэтому используем константу.
+   * Если когда-нибудь понадобится хранить мету по холстам — можно расширить схему
+   * и заводить записи вида `canvas:${canvasId}`.
+   */
+  id: 'global';
+
+  /**
+   * Какая модель эмбеддингов использовалась при построении индекса.
+   *
+   * ВАЖНО:
+   * - Здесь мы храним “как вернул провайдер” (если доступно),
+   *   чтобы совпадение сравнивалось строка-в-строку.
+   * - Для OpenRouter это часто `vendor/model`, для custom — может быть `text-embedding-3-small`.
+   */
+  embeddingsModel: string;
+
+  /**
+   * Какой embeddingsBaseUrl использовался при построении индекса.
+   *
+   * Почему это важно:
+   * - Пользователь может сменить сервер/провайдер (например, другой OpenAI-compatible),
+   *   и даже при “той же” модели результаты могут отличаться (или модель может означать другое).
+   */
+  embeddingsBaseUrl: string;
+
+  /**
+   * Когда мета была обновлена в последний раз.
+   *
+   * Это удобно для UI (“когда пересобирали индекс”) и для отладки.
+   */
+  updatedAt: number;
+}
+
+/**
+ * Константа ID единственной записи метаданных.
+ *
+ * Вынесено в константу, чтобы избежать магических строк и опечаток.
+ */
+const GLOBAL_EMBEDDINGS_INDEX_META_ID: EmbeddingsIndexMeta['id'] = 'global';
+
+// =============================================================================
 // КЛАСС БАЗЫ ДАННЫХ
 // =============================================================================
 
@@ -141,6 +214,16 @@ class EmbeddingsDatabase extends Dexie {
    * Индексы: id (primary), nodeId, canvasId, updatedAt
    */
   embeddingChunks!: Table<EmbeddingChunkRecord, string>;
+
+  /**
+   * Таблица метаданных embedding-индекса (обычно одна запись: id='global').
+   *
+   * Храним отдельно, чтобы:
+   * - не расширять каждую запись эмбеддинга,
+   * - иметь быстрый доступ к “паспорту” индекса,
+   * - не зависеть от количества записей.
+   */
+  embeddingsMeta!: Table<EmbeddingsIndexMeta, string>;
 
   constructor() {
     super('NeuroCanvasEmbeddings');
@@ -166,6 +249,20 @@ class EmbeddingsDatabase extends Dexie {
     this.version(2).stores({
       embeddings: 'id, nodeId, canvasId, updatedAt',
       embeddingChunks: 'id, nodeId, canvasId, updatedAt',
+    });
+
+    /**
+     * Версия 3: добавляем таблицу метаданных embedding-индекса.
+     *
+     * ВАЖНО:
+     * - Мы НЕ меняем схему `embeddings`/`embeddingChunks`, чтобы не ломать существующие данные.
+     * - Просто добавляем новую таблицу `embeddingsMeta`.
+     */
+    this.version(3).stores({
+      embeddings: 'id, nodeId, canvasId, updatedAt',
+      embeddingChunks: 'id, nodeId, canvasId, updatedAt',
+      // Индексируем updatedAt, чтобы при желании можно было сортировать/проверять “актуальность”.
+      embeddingsMeta: 'id, updatedAt',
     });
   }
 }
@@ -358,7 +455,65 @@ export async function clearAllEmbeddings(): Promise<void> {
   const database = getDatabase();
   await database.embeddings.clear();
   await database.embeddingChunks.clear();
+  // ВАЖНО:
+  // Если мы очищаем базу эмбеддингов, мы обязаны также очистить метаданные индекса.
+  // Иначе UI будет думать, что “индекс построен моделью X”, хотя записей уже нет.
+  await database.embeddingsMeta.clear();
   console.log('[EmbeddingsDB] Все эмбеддинги (включая чанки) удалены');
+}
+
+// =============================================================================
+// API ДЛЯ МЕТАДАННЫХ ИНДЕКСА (EmbeddingsIndexMeta)
+// =============================================================================
+
+/**
+ * Получить метаданные текущего embedding-индекса (если они есть).
+ *
+ * Поведение:
+ * - Если приложение обновилось с версии, где меты не было, функция вернёт `undefined`.
+ * - UI должен уметь корректно показывать “Неизвестно / индекс из старой версии”.
+ *
+ * @returns Метаданные индекса или undefined
+ */
+export async function getEmbeddingsIndexMeta(): Promise<EmbeddingsIndexMeta | undefined> {
+  const database = getDatabase();
+  return database.embeddingsMeta.get(GLOBAL_EMBEDDINGS_INDEX_META_ID);
+}
+
+/**
+ * Установить/обновить метаданные текущего embedding-индекса.
+ *
+ * ВАЖНО:
+ * - Мы делаем `put`, потому что запись может уже существовать.
+ * - Это безопасно вызывать часто (например, при индексации каждой карточки),
+ *   но UI/перформанс предпочтительно обновлять мету “пакетно”, если появится потребность.
+ *
+ * @param meta - Новые метаданные индекса
+ */
+export async function setEmbeddingsIndexMeta(meta: Omit<EmbeddingsIndexMeta, 'id' | 'updatedAt'> & Partial<Pick<EmbeddingsIndexMeta, 'updatedAt'>>): Promise<void> {
+  const database = getDatabase();
+
+  // Нормализуем поля, чтобы в базе не было undefined/null.
+  const record: EmbeddingsIndexMeta = {
+    id: GLOBAL_EMBEDDINGS_INDEX_META_ID,
+    embeddingsModel: String(meta.embeddingsModel ?? '').trim(),
+    embeddingsBaseUrl: String(meta.embeddingsBaseUrl ?? '').trim(),
+    updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : Date.now(),
+  };
+
+  await database.embeddingsMeta.put(record);
+}
+
+/**
+ * Очистить метаданные индекса (НЕ трогая сами эмбеддинги).
+ *
+ * Полезно, если:
+ * - нужно сбросить “паспорт” индекса без удаления данных (редко),
+ * - или если в будущем появятся сценарии миграции/восстановления.
+ */
+export async function clearEmbeddingsIndexMeta(): Promise<void> {
+  const database = getDatabase();
+  await database.embeddingsMeta.clear();
 }
 
 // =============================================================================

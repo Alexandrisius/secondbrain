@@ -863,8 +863,41 @@ export async function generateAndSaveEmbedding(
     const data: EmbeddingResponse = await embeddingResponse.json();
     
     // Сохраняем в IndexedDB
-    const { saveEmbedding } = await import('@/lib/db/embeddings');
+    const { saveEmbedding, setEmbeddingsIndexMeta } = await import('@/lib/db/embeddings');
     await saveEmbedding(nodeId, canvasId, data.embedding, prompt || '', response || '');
+
+    // =========================================================================
+    // ОБНОВЛЯЕМ “ПАСПОРТ” ИНДЕКСА (метаданные embeddings-индекса)
+    //
+    // Почему это важно:
+    // - UI должен знать, какой моделью/URL построен текущий индекс,
+    //   чтобы при смене настроек (provider/model/baseUrl) честно сказать:
+    //   “индекс устарел, нужна переиндексация”.
+    //
+    // Почему пишем здесь (после сохранения эмбеддинга):
+    // - Это означает: “в базе точно есть данные, построенные такой моделью”.
+    // - Если запрос к /api/embeddings упал — мы сюда не дойдём.
+    //
+    // Что именно пишем:
+    // - `embeddingsModel`: предпочитаем `data.model`, потому что это “как вернул провайдер”
+    //   (иногда провайдер нормализует/префиксует имя модели).
+    // - `embeddingsBaseUrl`: тот URL, который фактически использовали для запроса.
+    //
+    // ВАЖНО:
+    // - Здесь нет никаких секретов (apiKey не сохраняем).
+    // - Это глобальная мета по всей базе IndexedDB (по всем холстам).
+    // =========================================================================
+    await setEmbeddingsIndexMeta({
+      // ВАЖНО:
+      // Мы сохраняем именно “запрошенное” имя модели из настроек (embeddingsModel),
+      // а не `data.model`, потому что провайдеры могут менять регистр/формат в ответе.
+      // Для UX это критично: если пользователь выбрал `qwen/...`,
+      // мета тоже должна быть `qwen/...`, иначе UI будет вечно считать индекс “устаревшим”.
+      embeddingsModel: String(embeddingsModel || data.model || '').trim(),
+      // URL тоже нормализуем от хвостовых слэшей: `.../v1/` == `.../v1`
+      embeddingsBaseUrl: String(embeddingsBaseUrl || '').trim().replace(/\/+$/g, ''),
+      updatedAt: Date.now(),
+    });
     
     console.log(
       '[generateAndSaveEmbedding] Эмбеддинг сохранён для ноды',

@@ -52,10 +52,11 @@ import {
   type ApiProvider,
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
-import { clearAllEmbeddings, getEmbeddingsCount } from '@/lib/db/embeddings';
-import { useCanvasStore } from '@/store/useCanvasStore';
+import { clearAllEmbeddings, getEmbeddingsCount, getEmbeddingsIndexMeta } from '@/lib/db/embeddings';
+import type { EmbeddingsIndexMeta } from '@/lib/db/embeddings';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import { reindexCanvasCards } from '@/lib/search/semantic';
+import { CHAT_MODELS, POPULAR_CHAT_MODEL_IDS, groupByDeveloper } from '@/lib/aiCatalog';
 
 // =============================================================================
 // КОНСТАНТЫ
@@ -74,117 +75,44 @@ interface ModelGroup {
 /**
  * Все доступные модели, сгруппированные по провайдерам
  * 
- * Список актуальных chat-моделей, доступных через vsellm.ru API
- * (исключены embedding и image-generation модели)
+ * ВАЖНО:
+ * - Раньше список был захардкожен прямо здесь, и его было неудобно поддерживать.
+ * - Теперь список моделей лежит в src/lib/aiCatalog.ts (единообразно для всего приложения).
+ * - В UI мы только “проецируем” этот список в нужный формат (группы + подписи).
+ *
+ * ВАЖНО ПРО maxContextTokens:
+ * - В каталоге моделей (aiCatalog.ts) мы храним maxContextTokens как “полноценные данные”
+ *   для будущих задач (валидации/подсказок/автоматической логики).
+ * - По вашему требованию в UI эти цифры НЕ отображаем вообще,
+ *   чтобы список моделей оставался компактным.
  */
-const MODEL_GROUPS: ModelGroup[] = [
-  {
-    label: 'OpenAI',
-    models: [
-      { value: 'openai/chatgpt-4o-latest', label: 'ChatGPT-4o Latest' },
-      { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
-      { value: 'openai/gpt-4.1', label: 'GPT-4.1' },
-      { value: 'openai/gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-      { value: 'openai/gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-      { value: 'openai/gpt-5', label: 'GPT-5' },
-      { value: 'openai/gpt-5-mini', label: 'GPT-5 Mini' },
-      { value: 'openai/gpt-5-nano', label: 'GPT-5 Nano' },
-      { value: 'openai/gpt-5-chat', label: 'GPT-5 Chat' },
-      { value: 'openai/gpt-5.1', label: 'GPT-5.1' },
-      { value: 'openai/gpt-5.1-chat', label: 'GPT-5.1 Chat' },
-      { value: 'openai/gpt-oss-20b', label: 'GPT OSS 20B' },
-      { value: 'openai/gpt-oss-120b', label: 'GPT OSS 120B' },
-    ],
-  },
-  {
-    label: 'Anthropic',
-    models: [
-      { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4' },
-      { value: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5' },
-      { value: 'anthropic/claude-opus-4.1', label: 'Claude Opus 4.1' },
-      { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
-      { value: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
-    ],
-  },
-  {
-    label: 'Google',
-    models: [
-      { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
-    ],
-  },
-  {
-    label: 'DeepSeek',
-    models: [
-      { value: 'deepseek/deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 Distill 70B' },
-      { value: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek Chat V3' },
-    ],
-  },
-  {
-    label: 'Meta',
-    models: [
-      { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct' },
-    ],
-  },
-  {
-    label: 'Qwen',
-    models: [
-      { value: 'qwen/qwen3-235b-a22b', label: 'Qwen3 235B' },
-    ],
-  },
-  {
-    label: 'Yandex',
-    models: [
-      { value: 'yandex/gpt5-pro', label: 'YandexGPT 5 Pro' },
-      { value: 'yandex/gpt5.1-pro', label: 'YandexGPT 5.1 Pro' },
-      { value: 'yandex/gpt5-lite', label: 'YandexGPT 5 Lite' },
-    ],
-  },
-  {
-    label: 'GigaChat',
-    models: [
-      { value: 'GigaChat/GigaChat-2-Max', label: 'GigaChat 2 Max' },
-    ],
-  },
-  {
-    label: 'T-Tech',
-    models: [
-      { value: 't-tech/T-pro-it-2.0', label: 'T-Pro IT 2.0' },
-    ],
-  },
-  {
-    label: 'X.AI',
-    models: [
-      { value: 'x-ai/grok-code-fast-1', label: 'Grok Code Fast' },
-    ],
-  },
-  {
-    label: 'Moonshot',
-    models: [
-      { value: 'moonshotai/kimi-k2-thinking', label: 'Kimi K2 Thinking' },
-      { value: 'moonshotai/kimi-k2-0905', label: 'Kimi K2' },
-    ],
-  },
-  {
-    label: 'Z-AI (GLM)',
-    models: [
-      { value: 'z-ai/glm-4.5-air', label: 'GLM 4.5 Air' },
-      { value: 'z-ai/glm-4.6', label: 'GLM 4.6' },
-    ],
-  },
-];
+const MODEL_GROUPS: ModelGroup[] = (() => {
+  // 1) Группируем модели по developer (OpenAI/Google/Anthropic/…)
+  const grouped = groupByDeveloper(CHAT_MODELS);
+
+  // 2) Превращаем в массив групп для <optgroup>
+  // ВАЖНО:
+  // - порядок ключей задаётся в groupByDeveloper(), чтобы UI был предсказуемым
+  // - пустые группы выкидываем
+  return Object.entries(grouped)
+    .filter(([, models]) => models.length > 0)
+    .map(([developer, models]) => ({
+      label: developer,
+      models: models.map((m) => ({
+        value: m.id,
+        // ВАЖНО: maxContextTokens не показываем в UI (см. комментарий выше).
+        label: m.displayName,
+      })),
+    }));
+})();
 
 /**
  * Популярные модели для быстрого выбора (первые в списке)
  */
-const POPULAR_MODELS = [
-  { value: 'openai/chatgpt-4o-latest', label: 'ChatGPT-4o Latest' },
-  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5' },
-  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { value: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3' },
-];
+const POPULAR_MODELS = POPULAR_CHAT_MODEL_IDS
+  .map((id) => CHAT_MODELS.find((m) => m.id === id))
+  .filter((m): m is NonNullable<typeof m> => Boolean(m))
+  .map((m) => ({ value: m.id, label: m.displayName }));
 
 /**
  * Доступные языки интерфейса
@@ -244,8 +172,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Флаг для показа/скрытия API ключа
   const [showApiKey, setShowApiKey] = useState(false);
   
-  // Состояние для предупреждения о смене модели эмбеддингов
-  const [pendingEmbeddingsModel, setPendingEmbeddingsModel] = useState<string | null>(null);
+  /**
+   * Метаданные текущего embedding-индекса (если они есть).
+   *
+   * ВАЖНО:
+   * - Это НЕ “настройка”, а “паспорт” того, ЧЕМ был построен индекс в IndexedDB.
+   * - Нужен, чтобы определить: индекс совместим с текущими настройками или устарел.
+   */
+  const [embeddingsIndexMeta, setEmbeddingsIndexMetaState] = useState<EmbeddingsIndexMeta | null>(null);
   
   // Флаг очистки индекса эмбеддингов
   const [isClearingEmbeddings, setIsClearingEmbeddings] = useState(false);
@@ -258,6 +192,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   
   // Прогресс переиндексации: { current: число, total: число }
   const [reindexProgress, setReindexProgress] = useState({ current: 0, total: 0 });
+
+  /**
+   * Прогресс глобальной переиндексации (по всем холстам).
+   *
+   * Почему отдельное состояние:
+   * - “reindexProgress” исторически показывал прогресс только для одного холста.
+   * - По вашему требованию мы добавляем глобальную переиндексацию,
+   *   где нужен 2-уровневый прогресс: (холст i/N) + (карточка j/M).
+   */
+  const [reindexAllProgress, setReindexAllProgress] = useState<{
+    canvasCurrent: number;
+    canvasTotal: number;
+    canvasName: string;
+    cardCurrent: number;
+    cardTotal: number;
+  }>({
+    canvasCurrent: 0,
+    canvasTotal: 0,
+    canvasName: '',
+    cardCurrent: 0,
+    cardTotal: 0,
+  });
   
   // ===========================================================================
   // STORE
@@ -292,18 +248,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setDefaultCardContentHeight = useSettingsStore(selectSetDefaultCardContentHeight);
   const resetSettings = useSettingsStore(selectResetSettings);
   
-  // Получаем данные для переиндексации из других stores
-  const nodes = useCanvasStore((s) => s.nodes);
-  const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
+  // Список всех холстов нужен для глобальной переиндексации (все холсты).
+  const canvases = useWorkspaceStore((s) => s.canvases);
   
   // ===========================================================================
   // ЭФФЕКТЫ
   // ===========================================================================
   
-  // Загрузка количества проиндексированных карточек при открытии
+  // Загрузка статуса embedding-индекса при открытии:
+  // - сколько записей (embeddingsCount)
+  // - “паспорт” индекса (embeddingsIndexMeta: какой моделью/URL был построен индекс)
   React.useEffect(() => {
     if (isOpen) {
-      getEmbeddingsCount().then(setEmbeddingsCount).catch(() => setEmbeddingsCount(0));
+      Promise.all([getEmbeddingsCount(), getEmbeddingsIndexMeta()])
+        .then(([count, meta]) => {
+          setEmbeddingsCount(count);
+          setEmbeddingsIndexMetaState(meta ?? null);
+        })
+        .catch(() => {
+          // Если по какой-то причине чтение IndexedDB не удалось:
+          // - не ломаем UI,
+          // - показываем “0” и отсутствие меты.
+          setEmbeddingsCount(0);
+          setEmbeddingsIndexMetaState(null);
+        });
     }
   }, [isOpen]);
   
@@ -376,101 +344,184 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   
   /**
    * Обработка изменения модели эмбеддингов
-   * Показывает предупреждение если есть проиндексированные карточки
+   *
+   * ВАЖНО (по UX-требованию):
+   * - Мы НЕ блокируем смену модели через подтверждение.
+   * - Пользователь может поменять настройки сразу.
+   * - А “предупреждение о переиндексации” показываем отдельно (см. блок статуса индекса),
+   *   сравнивая текущие настройки с метаданными индекса (EmbeddingsIndexMeta).
    */
   const handleEmbeddingsModelChange = (newModel: string) => {
     if (newModel === embeddingsModel) return;
-    
-    // Если есть проиндексированные карточки - показываем предупреждение
-    if (embeddingsCount > 0) {
-      setPendingEmbeddingsModel(newModel);
-    } else {
-      // Если нет индексированных карточек - просто меняем модель
-      setEmbeddingsModel(newModel);
-    }
+
+    // Применяем новую модель сразу.
+    // Если текущий индекс был построен другой моделью/URL, UI подсветит предупреждение
+    // и предложит переиндексацию всей базы.
+    setEmbeddingsModel(newModel);
   };
-  
+
   /**
-   * Подтверждение смены модели эмбеддингов
-   * Очищает индекс, применяет новую модель и запускает переиндексацию
+   * Глобальная переиндексация эмбеддингов: пересобрать индекс ДЛЯ ВСЕХ ХОЛСТОВ.
+   *
+   * Почему это нужно:
+   * - IndexedDB база эмбеддингов у нас общая на всё приложение.
+   * - Если меняется embeddingsModel / embeddingsBaseUrl (или provider), старый индекс
+   *   становится несовместимым → семантический поиск может начать “врать”.
+   *
+   * UX-требование:
+   * - Настройки можно менять сразу (мы не блокируем),
+   * - но даём явную кнопку “Переиндексировать все холсты”, которая:
+   *   1) очищает индекс,
+   *   2) проходит по всем холстам,
+   *   3) пересчитывает эмбеддинги для карточек с ответом.
+   *
+   * ВАЖНО:
+   * - Эта операция может быть долгой (много холстов/карточек).
+   * - Поэтому мы показываем 2-уровневый прогресс: холст i/N и карточка j/M.
    */
-  const handleConfirmEmbeddingsModelChange = async () => {
-    if (!pendingEmbeddingsModel) return;
-    
-    setIsClearingEmbeddings(true);
-    
+  const handleReindexAllCanvases = async () => {
+    // Базовая защита от “двойных кликов”
+    if (isReindexing || isClearingEmbeddings) return;
+
+    // Без API ключа мы не можем вызывать /api/embeddings
+    if (!apiKey) return;
+
+    // Если провайдер (в теории) не поддерживает эмбеддинги — выходим.
+    // Сейчас в проекте оба провайдера поддерживают embeddings, но оставляем проверку на будущее.
+    if (!API_PROVIDERS[apiProvider].supportsEmbeddings) return;
+
+    setIsReindexing(true);
+    setReindexProgress({ current: 0, total: 0 });
+    setReindexAllProgress({
+      canvasCurrent: 0,
+      canvasTotal: 0,
+      canvasName: '',
+      cardCurrent: 0,
+      cardTotal: 0,
+    });
+
     try {
-      // Очищаем все эмбеддинги
+      // ---------------------------------------------------------------------
+      // ШАГ 1: очищаем индекс (и метаданные), чтобы не смешивать разные модели
+      // ---------------------------------------------------------------------
+      setIsClearingEmbeddings(true);
       await clearAllEmbeddings();
-      
-      // Сохраняем новую модель для использования в переиндексации
-      const newModel = pendingEmbeddingsModel;
-      
-      // Применяем новую модель
-      setEmbeddingsModel(newModel);
-      
-      // Обновляем счётчик (пока 0, будет обновлён после переиндексации)
       setEmbeddingsCount(0);
-      
-      // Закрываем диалог подтверждения
-      setPendingEmbeddingsModel(null);
-      
-      // Завершаем процесс очистки
+      setEmbeddingsIndexMetaState(null);
       setIsClearingEmbeddings(false);
-      
-      // =========================================================================
-      // АВТОМАТИЧЕСКАЯ ПЕРЕИНДЕКСАЦИЯ
-      // Если есть API ключ и активный холст - запускаем переиндексацию
-      // =========================================================================
-      if (apiKey && activeCanvasId && nodes.length > 0) {
-        // Фильтруем только карточки с ответами (их имеет смысл индексировать)
-        const cardsWithResponse = nodes.filter((n) => n.data.response);
-        
-        if (cardsWithResponse.length > 0) {
-          console.log(`[SettingsModal] Запуск переиндексации ${cardsWithResponse.length} карточек с моделью ${newModel}`);
-          
-          setIsReindexing(true);
-          setReindexProgress({ current: 0, total: cardsWithResponse.length });
-          
-          try {
-            // Запускаем переиндексацию с новой моделью
-            const indexedCount = await reindexCanvasCards(
-              activeCanvasId,
-              nodes,
-              apiKey,
-              embeddingsBaseUrl,
-              (current, total) => {
-                // Обновляем прогресс переиндексации
-                setReindexProgress({ current, total });
-              },
-              corporateMode,
-              newModel // Используем новую модель!
-            );
-            
-            // Обновляем счётчик проиндексированных карточек
-            setEmbeddingsCount(indexedCount);
-            
-            console.log(`[SettingsModal] Переиндексация завершена: ${indexedCount} карточек`);
-          } catch (reindexError) {
-            console.error('[SettingsModal] Ошибка переиндексации:', reindexError);
-          } finally {
-            setIsReindexing(false);
-            setReindexProgress({ current: 0, total: 0 });
+
+      // ---------------------------------------------------------------------
+      // ШАГ 2: переиндексируем каждый холст через его сохранённые данные (/api/canvas/:id)
+      // ---------------------------------------------------------------------
+      const canvasList = Array.isArray(canvases) ? canvases : [];
+      const canvasTotal = canvasList.length;
+
+      setReindexAllProgress((prev) => ({
+        ...prev,
+        canvasCurrent: canvasTotal > 0 ? 1 : 0,
+        canvasTotal,
+      }));
+
+      for (let i = 0; i < canvasList.length; i++) {
+        const canvas = canvasList[i];
+        const canvasId = canvas.id;
+
+        // Обновляем “верхний” прогресс
+        setReindexAllProgress((prev) => ({
+          ...prev,
+          canvasCurrent: i + 1,
+          canvasTotal,
+          canvasName: canvas.name || canvasId,
+          cardCurrent: 0,
+          cardTotal: 0,
+        }));
+
+        try {
+          const response = await fetch(`/api/canvas/${canvasId}`);
+          if (!response.ok) {
+            console.warn('[SettingsModal] Не удалось загрузить холст для переиндексации:', canvasId, response.status);
+            continue;
           }
+
+          const canvasData = await response.json();
+          const canvasNodes = Array.isArray(canvasData?.nodes) ? canvasData.nodes : [];
+
+          // Подготовка “нижнего” прогресса (сколько карточек вообще имеет смысл индексировать)
+          // ВАЖНО ПО ТИПАМ (почему здесь нельзя просто написать `node.data.response`):
+          // - `canvasData` приходит из `response.json()`, то есть это внешний (непроверенный) JSON.
+          // - TypeScript не может гарантировать форму данных, а ESLint запрещает использовать `any`.
+          // - Нам НЕ нужна полная типизация ReactFlow-нод на этом шаге — только факт наличия `data.response`,
+          //   чтобы корректно посчитать `cardTotal` для прогресс-бара.
+          // - Поэтому мы работаем с `unknown` и делаем минимальное безопасное “сужение” типов:
+          //   1) проверяем что нода — объект (и не `null`)
+          //   2) проверяем что `data` — объект
+          //   3) считаем, что “ответ есть”, если `data.response` truthy
+          //
+          // ПРИМЕЧАНИЕ:
+          // - Дальше мы всё равно передаём `canvasNodes` в `reindexCanvasCards()`, где есть своя типизация/фильтрация.
+          // - Здесь мы не меняем логику индексации — только убираем `any` и делаем проверку явной/безопасной.
+          const cardsWithResponse = canvasNodes.filter((node: unknown) => {
+            // 1) node должен быть объектом (иначе у него нет свойств)
+            if (!node || typeof node !== 'object') return false;
+
+            // 2) “Достаём” data в безопасном виде (без `any`)
+            const data = (node as { data?: unknown }).data;
+            if (!data || typeof data !== 'object') return false;
+
+            // 3) Любое truthy-значение response считаем “ответом”
+            return Boolean((data as { response?: unknown }).response);
+          });
+          setReindexAllProgress((prev) => ({
+            ...prev,
+            cardCurrent: 0,
+            cardTotal: cardsWithResponse.length,
+          }));
+
+          // Запускаем переиндексацию одного холста.
+          // reindexCanvasCards() внутри сам фильтрует карточки с ответом и делает небольшие задержки,
+          // чтобы не перегружать API провайдера.
+          await reindexCanvasCards(
+            canvasId,
+            canvasNodes,
+            apiKey,
+            embeddingsBaseUrl,
+            (current, total) => {
+              setReindexAllProgress((prev) => ({
+                ...prev,
+                cardCurrent: current,
+                cardTotal: total,
+              }));
+            },
+            corporateMode,
+            embeddingsModel
+          );
+        } catch (canvasError) {
+          console.error('[SettingsModal] Ошибка переиндексации холста:', canvasId, canvasError);
+          // Не прерываем весь процесс — продолжаем со следующим холстом.
+          continue;
         }
       }
-      
+
+      // ---------------------------------------------------------------------
+      // ШАГ 3: обновляем отображаемые счётчики/мету после завершения
+      // ---------------------------------------------------------------------
+      const [count, meta] = await Promise.all([getEmbeddingsCount(), getEmbeddingsIndexMeta()]);
+      setEmbeddingsCount(count);
+      setEmbeddingsIndexMetaState(meta ?? null);
     } catch (error) {
-      console.error('[SettingsModal] Ошибка очистки эмбеддингов:', error);
+      console.error('[SettingsModal] Ошибка глобальной переиндексации эмбеддингов:', error);
+    } finally {
+      setIsReindexing(false);
       setIsClearingEmbeddings(false);
+      setReindexProgress({ current: 0, total: 0 });
+      setReindexAllProgress({
+        canvasCurrent: 0,
+        canvasTotal: 0,
+        canvasName: '',
+        cardCurrent: 0,
+        cardTotal: 0,
+      });
     }
-  };
-  
-  /**
-   * Отмена смены модели эмбеддингов
-   */
-  const handleCancelEmbeddingsModelChange = () => {
-    setPendingEmbeddingsModel(null);
   };
   
   /**
@@ -481,6 +532,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowApiKey(false);
   };
   
+  // ===========================================================================
+  // ВЫЧИСЛЯЕМ СТАТУС EMBEDDINGS-ИНДЕКСА (СОВМЕСТИМ / УСТАРЕЛ / НЕИЗВЕСТЕН)
+  // ===========================================================================
+  //
+  // Мы используем 2 источника правды:
+  // 1) embeddingsCount — есть ли вообще какие-то данные в IndexedDB
+  // 2) embeddingsIndexMeta — “паспорт” индекса (какой model/baseUrl использовали при построении)
+  //
+  // Результаты:
+  // - hasEmbeddingsIndex: есть ли индекс “по факту” (кол-во записей > 0)
+  // - isEmbeddingsIndexStale: индекс есть, но его паспорт не совпадает с текущими настройками
+  // - isEmbeddingsIndexUnknown: индекс есть, но паспорт отсутствует (скорее всего данные из старой версии)
+  //
+  // ВАЖНО:
+  // - Мы сравниваем строки после trim, чтобы не ловить ложные отличия из-за пробелов.
+  // - Мы НЕ пытаемся “угадывать” размерность/модель по данным векторов — это дорого и ненадёжно.
+  /**
+   * Нормализует “ID модели” для сравнения.
+   *
+   * Почему нужна нормализация:
+   * - некоторые провайдеры (например, OpenRouter) могут возвращать model-id в другом регистре
+   *   (`Qwen/Qwen3-Embedding-8B`), хотя фактически это тот же идентификатор,
+   *   что и в настройках (`qwen/qwen3-embedding-8b`).
+   *
+   * Мы считаем различия регистра НЕсущественными.
+   */
+  const normalizeModelIdForCompare = (value: string | null | undefined): string =>
+    String(value ?? '').trim().toLowerCase();
+
+  /**
+   * Нормализует embeddingsBaseUrl для сравнения.
+   *
+   * Что делаем:
+   * - trim()
+   * - убираем хвостовые “/”, чтобы `.../v1` и `.../v1/` считались одинаковыми
+   * - приводим к lower-case (scheme/host case-insensitive; path у нас стабильный)
+   */
+  const normalizeBaseUrlForCompare = (value: string | null | undefined): string =>
+    String(value ?? '')
+      .trim()
+      .replace(/\/+$/g, '')
+      .toLowerCase();
+
+  const hasEmbeddingsIndex = embeddingsCount > 0;
+  const isEmbeddingsIndexUnknown = hasEmbeddingsIndex && !embeddingsIndexMeta;
+  const isEmbeddingsIndexStale =
+    hasEmbeddingsIndex &&
+    Boolean(embeddingsIndexMeta) &&
+    (
+      normalizeModelIdForCompare(embeddingsIndexMeta?.embeddingsModel) !== normalizeModelIdForCompare(embeddingsModel) ||
+      normalizeBaseUrlForCompare(embeddingsIndexMeta?.embeddingsBaseUrl) !== normalizeBaseUrlForCompare(embeddingsBaseUrl)
+    );
+
   // ===========================================================================
   // РЕНДЕР
   // ===========================================================================
@@ -877,69 +981,138 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               ) : (
                 <>
-                  {/* Выпадающий список моделей эмбеддингов */}
-                  {/* Показываем pendingEmbeddingsModel если есть (выбранная, но не подтверждённая модель) */}
-                  <select
-                    value={pendingEmbeddingsModel || embeddingsModel}
-                    onChange={(e) => handleEmbeddingsModelChange(e.target.value)}
-                    className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    disabled={isReindexing || isClearingEmbeddings}
-                  >
-                    {API_PROVIDERS[apiProvider].embeddingsModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name} ({model.dimension}d) - {model.description}
-                      </option>
-                    ))}
-                  </select>
-                  
-                  {/* Информация о текущей модели */}
-                  {(() => {
-                    // Показываем информацию о выбранной модели (pending или текущей)
-                    const displayModelId = pendingEmbeddingsModel || embeddingsModel;
-                    const currentModel = API_PROVIDERS[apiProvider].embeddingsModels.find(
-                      (m) => m.id === displayModelId
-                    );
-                    return currentModel ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded bg-muted/50">
-                        <Info className="w-3 h-3" />
-                        <span>
-                          {t.settings.embeddingsDimension}: {currentModel.dimension} | 
-                          {t.settings.indexedCards}: {embeddingsCount}
-                        </span>
-                      </div>
-                    ) : null;
-                  })()}
+                  {/*
+                    UX-логика для Embeddings Model:
+                    - OpenRouter: показываем селект по известным моделям из каталога.
+                    - Custom: НЕЛЬЗЯ навязывать жёсткий список (у пользователя может быть любой сервер/model-id),
+                      поэтому показываем простой input для ручного ввода.
+                  */}
+                  {apiProvider === 'custom' ? (
+                    <>
+                      {/* Ручной ввод модели эмбеддингов (Custom provider) */}
+                      <Input
+                        type="text"
+                        value={embeddingsModel}
+                        onChange={(e) => setEmbeddingsModel(e.target.value)}
+                        // ВАЖНО: дефолт для custom в store — text-embedding-3-small,
+                        // но placeholder оставляем как подсказку.
+                        placeholder="text-embedding-3-small"
+                        disabled={isReindexing || isClearingEmbeddings}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      {/* Выпадающий список моделей эмбеддингов (для провайдеров с известным каталогом) */}
+                      <select
+                        value={embeddingsModel}
+                        onChange={(e) => handleEmbeddingsModelChange(e.target.value)}
+                        className="w-full h-10 px-3 py-2 text-sm rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        disabled={isReindexing || isClearingEmbeddings}
+                      >
+                        {/*
+                          Группируем embedding-модели по разработчикам.
+
+                          Почему это важно:
+                          - список моделей со временем растёт;
+                          - без группировки пользователю сложно ориентироваться;
+                          - вы отдельно просили “сгруппировать по разработчикам”.
+                        */}
+                        {Object.entries(groupByDeveloper(API_PROVIDERS[apiProvider].embeddingsModels))
+                          .filter(([, models]) => models.length > 0)
+                          .map(([developer, models]) => (
+                            <optgroup key={developer} label={developer}>
+                              {models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name} ({m.dimension}d) - {m.description}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                      </select>
+
+                      {/*
+                        ВАЖНО: блок “Dimension: 4096” (и аналогичные) намеренно скрыт/удалён.
+                        Причина: это служебная информация (размерность embedding-вектора), которая
+                        не нужна большинству пользователей и визуально “захламляет” модалку настроек.
+
+                        Если в будущем понадобится вернуть этот индикатор — можно снова вывести
+                        `currentModel.dimension` рядом с выбором embedding-модели.
+                      */}
+                    </>
+                  )}
                 </>
               )}
             </div>
             
-            {/* Диалог подтверждения смены модели */}
-            {pendingEmbeddingsModel && (
+            {/*
+              ================================================================
+              СТАТУС EMBEDDINGS-ИНДЕКСА (динамическая метка)
+              ================================================================
+              Здесь мы показываем пользователю:
+              - сколько карточек сейчас проиндексировано,
+              - какой моделью/URL этот индекс был построен (если мета доступна),
+              - и подсвечиваем предупреждение, если индекс устарел или “неизвестен”.
+            */}
+
+            {/* Компактный “паспорт индекса” */}
+            <div className="p-3 rounded-lg border bg-muted/30 space-y-1">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Info className="w-3 h-3" />
+                <span className="font-medium">
+                  {t.settings.indexedCards}: {embeddingsCount}
+                </span>
+              </div>
+
+              {/* Показываем, чем был построен индекс, если мета известна */}
+              {embeddingsIndexMeta && (
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{t.settings.embeddingsModel}:</span>
+                    <code className="text-[11px] bg-muted px-1 py-0.5 rounded">
+                      {embeddingsIndexMeta.embeddingsModel || '—'}
+                    </code>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{t.settings.currentEmbeddingsUrl}:</span>
+                    <code className="text-[11px] bg-muted px-1 py-0.5 rounded break-all">
+                      {embeddingsIndexMeta.embeddingsBaseUrl || '—'}
+                    </code>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Предупреждение: индекс устарел / мета отсутствует (старый индекс) */}
+            {(isEmbeddingsIndexStale || isEmbeddingsIndexUnknown) && (
               <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 space-y-3">
                 <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
                   <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" />
                   <div className="space-y-1">
                     <p className="font-medium">{t.settings.embeddingsModelChangeWarning}</p>
                     <p className="text-sm opacity-90">
-                      {t.settings.embeddingsModelChangeDescription.replace('{count}', String(embeddingsCount))}
+                      {isEmbeddingsIndexUnknown ? (
+                        // Индекс есть, но мы не знаем, чем он был построен (данные из старой версии).
+                        // В таком случае не можем гарантировать корректность семантического поиска.
+                        t.settings.embeddingsIndexUnknownWarning
+                      ) : (
+                        // Индекс есть и мета известна, но она отличается от текущих настроек.
+                        // Показываем сравнение “как было” vs “как сейчас”.
+                        t.settings.embeddingsIndexStaleWarning
+                          .replace('{indexedModel}', String(embeddingsIndexMeta?.embeddingsModel || '—'))
+                          .replace('{indexedUrl}', String(embeddingsIndexMeta?.embeddingsBaseUrl || '—'))
+                          .replace('{currentModel}', String((embeddingsModel || '').trim() || '—'))
+                          .replace('{currentUrl}', String((embeddingsBaseUrl || '').trim() || '—'))
+                      )}
                     </p>
                   </div>
                 </div>
-                
-                <div className="flex gap-2 justify-end">
+
+                {/* Действие: переиндексировать ВСЮ базу (все холсты) */}
+                <div className="flex justify-end">
                   <Button
-                    variant="outline"
                     size="sm"
-                    onClick={handleCancelEmbeddingsModelChange}
-                    disabled={isClearingEmbeddings}
-                  >
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleConfirmEmbeddingsModelChange}
-                    disabled={isClearingEmbeddings}
+                    onClick={handleReindexAllCanvases}
+                    disabled={!apiKey || isReindexing || isClearingEmbeddings}
                   >
                     {isClearingEmbeddings ? (
                       <>
@@ -949,7 +1122,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ) : (
                       <>
                         <RefreshCw className="w-4 h-4 mr-2" />
-                        {t.settings.clearAndChange}
+                        {t.settings.reindexAllCanvases}
                       </>
                     )}
                   </Button>
@@ -963,11 +1136,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
                   <Loader2 className="w-5 h-5 animate-spin" />
                   <div className="flex-1">
-                    <p className="font-medium">{t.settings.reindexingCards}</p>
+                    <p className="font-medium">
+                      {isClearingEmbeddings ? t.settings.clearingIndex : t.settings.reindexingCards}
+                    </p>
                     <p className="text-sm opacity-90">
-                      {t.settings.reindexingProgress
-                        .replace('{current}', String(reindexProgress.current))
-                        .replace('{total}', String(reindexProgress.total))}
+                      {isClearingEmbeddings ? (
+                        t.settings.reindexAllPreparing
+                      ) : reindexAllProgress.canvasTotal > 0 ? (
+                        t.settings.reindexAllProgress
+                          .replace('{canvasCurrent}', String(reindexAllProgress.canvasCurrent))
+                          .replace('{canvasTotal}', String(reindexAllProgress.canvasTotal))
+                          .replace('{canvasName}', String(reindexAllProgress.canvasName || '—'))
+                          .replace('{cardCurrent}', String(reindexAllProgress.cardCurrent))
+                          .replace('{cardTotal}', String(reindexAllProgress.cardTotal))
+                      ) : (
+                        // Fallback на старый формат (если вдруг переиндексация запускается иначе)
+                        t.settings.reindexingProgress
+                          .replace('{current}', String(reindexProgress.current))
+                          .replace('{total}', String(reindexProgress.total))
+                      )}
                     </p>
                   </div>
                 </div>
@@ -975,11 +1162,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Прогресс-бар */}
                 <div className="w-full h-2 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-blue-500 transition-all duration-200"
+                    className={`h-full bg-blue-500 transition-all duration-200 ${isClearingEmbeddings ? 'animate-pulse' : ''}`}
                     style={{
-                      width: reindexProgress.total > 0
-                        ? `${(reindexProgress.current / reindexProgress.total) * 100}%`
-                        : '0%'
+                      width: isClearingEmbeddings
+                        ? '100%'
+                        : reindexAllProgress.cardTotal > 0
+                          ? `${(reindexAllProgress.cardCurrent / reindexAllProgress.cardTotal) * 100}%`
+                          : reindexProgress.total > 0
+                            ? `${(reindexProgress.current / reindexProgress.total) * 100}%`
+                            : '0%'
                     }}
                   />
                 </div>

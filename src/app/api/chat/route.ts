@@ -6,18 +6,15 @@
  * к выбранному пользователем API провайдеру. Поддерживает streaming responses.
  * 
  * Поддерживаются любые OpenAI-совместимые API:
- * - OpenAI (api.openai.com)
  * - OpenRouter (openrouter.ai)
- * - vsellm.ru
- * - Groq
- * - Together AI
- * - Любой custom OpenAI-compatible API (LM Studio, Ollama, etc.)
+ * - Любой custom OpenAI-compatible API (пользователь задаёт base URL)
  * 
  * API ключ, модель и базовый URL передаются из клиента через тело запроса.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { buildFullSystemPrompt } from '@/lib/systemPrompt';
+import { DEFAULT_CHAT_MODEL_ID } from '@/lib/aiCatalog';
 
 // =============================================================================
 // NEXT.JS ROUTE КОНФИГУРАЦИЯ (для streaming)
@@ -48,9 +45,10 @@ const DEFAULT_API_BASE_URL = 'https://api.vsellm.ru/v1';
 
 /**
  * Модель по умолчанию
- * Используем chatgpt-4o-latest - актуальная версия GPT-4o
+ * По умолчанию используем ту же модель, что и в UI/настройках,
+ * чтобы серверный fallback не расходился с клиентским дефолтом.
  */
-const DEFAULT_MODEL = 'openai/chatgpt-4o-latest';
+const DEFAULT_MODEL = DEFAULT_CHAT_MODEL_ID;
 
 /**
  * Таймаут запроса в миллисекундах
