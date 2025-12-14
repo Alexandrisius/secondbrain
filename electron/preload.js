@@ -71,6 +71,48 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * // Диалог покажется автоматически
    */
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // ===========================================================================
+  // SECURE STORAGE (API KEY)
+  // ===========================================================================
+  //
+  // Эти методы нужны, чтобы:
+  // - рендерер (React) НЕ имел прямого доступа к Node.js / файловой системе
+  // - но мог безопасно сохранять/читать секреты через main-process и OS vault
+  //
+  // ВАЖНО:
+  // - Мы НЕ возвращаем “сырые” ошибки наружу, потому что они могут содержать
+  //   лишние детали окружения.
+  // - Реальные ошибки/диагностика остаются на уровне main-process.
+
+  /**
+   * Проверяет, доступно ли шифрование/дешифрование на текущей системе.
+   *
+   * @returns {Promise<boolean>}
+   */
+  isSecureApiKeyAvailable: () => ipcRenderer.invoke('secure-api-key:is-available'),
+
+  /**
+   * Загружает сохранённый API-ключ из OS vault.
+   *
+   * @returns {Promise<string | null>}
+   */
+  getSecureApiKey: () => ipcRenderer.invoke('secure-api-key:get'),
+
+  /**
+   * Сохраняет API-ключ в OS vault.
+   *
+   * @param {string} key
+   * @returns {Promise<boolean>}
+   */
+  setSecureApiKey: (key) => ipcRenderer.invoke('secure-api-key:set', key),
+
+  /**
+   * Удаляет сохранённый API-ключ из OS vault.
+   *
+   * @returns {Promise<boolean>}
+   */
+  deleteSecureApiKey: () => ipcRenderer.invoke('secure-api-key:delete'),
   
   /**
    * Информация о платформе

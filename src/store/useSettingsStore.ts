@@ -54,6 +54,25 @@ export type Language = 'ru' | 'en';
  */
 export type ApiProvider = 'openrouter' | 'custom';
 
+/**
+ * Режим хранения API-ключа.
+ *
+ * ВАЖНО (про безопасность):
+ * - `memory` (по умолчанию) означает: ключ НИКОГДА не пишется в localStorage/IndexedDB,
+ *   он живёт только в памяти процесса/вкладки. Это самый безопасный режим для клиента.
+ * - `osVault` означает: ключ хранится в защищённом хранилище ОС через Electron main-process
+ *   (Windows Credential/DPAPI, macOS Keychain, Linux Secret Service — через electron.safeStorage).
+ *
+ * Почему мы вообще делаем `osVault`:
+ * - В desktop-приложении пользователь ожидает поведение “как у нормальных приложений”:
+ *   ключ сохраняется безопасно и подхватывается при старте.
+ *
+ * Ограничения (важно понимать и явно документируем):
+ * - Никакой клиентский способ НЕ защищает от вредоносных расширений/малвари на машине.
+ * - Но мы устраняем базовую уязвимость “ключ лежит в localStorage в открытом виде”.
+ */
+export type ApiKeyStorageMode = 'memory' | 'osVault';
+
 // =============================================================================
 // URL ПО УМОЛЧАНИЮ ДЛЯ CUSTOM (VSELLM)
 // =============================================================================
@@ -161,9 +180,25 @@ export interface AppSettings {
    * API ключ для внешнего LLM провайдера
    * 
    * Используется для авторизации запросов к API.
-   * Хранится в localStorage на стороне клиента.
+   *
+   * ВАЖНО (безопасность):
+   * - Начиная с версии v11 настроек, мы БОЛЬШЕ НЕ сохраняем ключ в localStorage.
+   * - Значение живёт только в памяти (режим `apiKeyStorageMode: 'memory'`)
+   *   либо хранится в OS vault (режим `apiKeyStorageMode: 'osVault'`, desktop/Electron).
+   *
+   * Почему так:
+   * - localStorage доступен любому JS на странице → при XSS ключ утекает мгновенно.
    */
   apiKey: string;
+
+  /**
+   * Режим хранения API-ключа (см. `ApiKeyStorageMode`).
+   *
+   * ВАЖНО:
+   * - Этот флаг МОЖНО persist'ить (он не секретный).
+   * - Сам `apiKey` persist'ить НЕЛЬЗЯ.
+   */
+  apiKeyStorageMode: ApiKeyStorageMode;
   
   /**
    * Выбранный API провайдер
@@ -293,6 +328,45 @@ export interface SettingsStore extends AppSettings {
    * @param key - API ключ для внешнего провайдера
    */
   setApiKey: (key: string) => void;
+
+  /**
+   * Установить режим хранения API-ключа.
+   *
+   * ВАЖНО:
+   * - Этот метод меняет ТОЛЬКО флаг режима.
+   * - Реальные операции “сохранить в OS vault / удалить из OS vault / загрузить из OS vault”
+   *   выполняются отдельными методами ниже, потому что:
+   *   - они асинхронные,
+   *   - они доступны только в Electron,
+   *   - они могут завершиться ошибкой (например, если шифрование недоступно).
+   */
+  setApiKeyStorageMode: (mode: ApiKeyStorageMode) => void;
+
+  /**
+   * Загрузить API-ключ из защищённого хранилища ОС (если доступно).
+   *
+   * Поведение:
+   * - Если ключ найден → кладём его в `state.apiKey` (только в памяти) и возвращаем строку.
+   * - Если ключ отсутствует / недоступно / ошибка → возвращаем null и НЕ падаем.
+   */
+  loadApiKeyFromSecureStore: () => Promise<string | null>;
+
+  /**
+   * Сохранить API-ключ в защищённом хранилище ОС (Electron).
+   *
+   * ВАЖНО:
+   * - В localStorage ключ не пишется даже в этом режиме.
+   * - Возвращаем boolean, чтобы UI мог показать “сохранено/ошибка”.
+   */
+  persistApiKeyToSecureStore: (key: string) => Promise<boolean>;
+
+  /**
+   * Удалить API-ключ из защищённого хранилища ОС (Electron).
+   *
+   * Используем при переключении режима обратно на `memory`,
+   * чтобы на диске не оставалось “следов” ключа.
+   */
+  deleteApiKeyFromSecureStore: () => Promise<boolean>;
   
   /**
    * Установить API провайдера
@@ -410,6 +484,8 @@ const DEFAULT_MODEL = DEFAULT_CHAT_MODEL_ID;
 const DEFAULT_SETTINGS: AppSettings = {
   // API ключ пустой по умолчанию - пользователь должен его ввести
   apiKey: '',
+  // По умолчанию: НЕ сохраняем ключ вообще (самый безопасный режим на клиенте)
+  apiKeyStorageMode: 'memory',
   // Провайдер по умолчанию - custom (с URL VSELLM внутри)
   apiProvider: DEFAULT_PROVIDER,
   // Базовый URL берём из конфигурации провайдера
@@ -462,6 +538,28 @@ const DEFAULT_SETTINGS: AppSettings = {
  * resetSettings();
  */
 export const useSettingsStore = create<SettingsStore>()(
+  // ---------------------------------------------------------------------------
+  // ВАЖНО ПРО PERSIST И ТИПЫ (критично для Next.js build)
+  // ---------------------------------------------------------------------------
+  //
+  // Zustand persist сохраняет состояние в localStorage через JSON.stringify.
+  // Это означает, что:
+  // - поля-методы (function) НЕ сериализуются и НЕ попадают в persistedState,
+  // - в persistedState остаются только “данные” (наши настройки: AppSettings).
+  //
+  // Раньше migrate() пытался собрать объект типа SettingsStore (который включает
+  // обязательные методы setApiKey/setApiProvider/...), объединяя DEFAULT_SETTINGS
+  // и persisted-данные. TypeScript справедливо ругался: persistedState не может
+  // гарантировать наличие методов (они там физически отсутствуют).
+  //
+  // Поэтому мы:
+  // - в migrate() возвращаем AppSettings, а не SettingsStore,
+  // - методы остаются “живыми” из initializer’а ниже и не участвуют в миграции.
+  //
+  // Примечание про generics:
+  // - В разных версиях Zustand сигнатура persist<> отличается.
+  // - В вашей версии второй generic НЕ означает “persisted state slice”,
+  //   поэтому мы не задаём его здесь, чтобы не ломать типы StateCreator.
   persist(
     (set) => ({
       // =========================================================================
@@ -481,6 +579,73 @@ export const useSettingsStore = create<SettingsStore>()(
        */
       setApiKey: (key: string) => {
         set({ apiKey: key });
+      },
+
+      /**
+       * Установить режим хранения API-ключа (см. комментарии в типах выше).
+       */
+      setApiKeyStorageMode: (mode: ApiKeyStorageMode) => {
+        set({ apiKeyStorageMode: mode });
+      },
+
+      /**
+       * Загрузить API-ключ из OS vault (Electron).
+       *
+       * ВАЖНО:
+       * - Мы делаем этот метод максимально “мягким”: он НИКОГДА не бросает исключение наружу,
+       *   потому что UI не должен ломаться из-за проблем с хранилищем.
+       * - В браузерном режиме (не Electron) метод просто возвращает null.
+       */
+      loadApiKeyFromSecureStore: async () => {
+        // Защита от SSR/Next.js server context
+        if (typeof window === 'undefined') return null;
+
+        // В браузере window.electronAPI отсутствует
+        const api = window.electronAPI;
+        if (!api?.getSecureApiKey) return null;
+
+        try {
+          const value = await api.getSecureApiKey();
+          const key = typeof value === 'string' ? value : '';
+          if (key.trim().length === 0) return null;
+          // Кладём ключ ТОЛЬКО в память (store state), не persist'им его.
+          set({ apiKey: key });
+          return key;
+        } catch {
+          // Никаких подробностей здесь: не логируем ошибки с потенциальными секретами.
+          return null;
+        }
+      },
+
+      /**
+       * Сохранить ключ в OS vault (Electron).
+       */
+      persistApiKeyToSecureStore: async (key: string) => {
+        if (typeof window === 'undefined') return false;
+        const api = window.electronAPI;
+        if (!api?.setSecureApiKey) return false;
+
+        try {
+          // ВАЖНО: мы специально не тримим ключ — некоторые провайдеры могут иметь значимые пробелы.
+          return await api.setSecureApiKey(key);
+        } catch {
+          return false;
+        }
+      },
+
+      /**
+       * Удалить ключ из OS vault (Electron).
+       */
+      deleteApiKeyFromSecureStore: async () => {
+        if (typeof window === 'undefined') return false;
+        const api = window.electronAPI;
+        if (!api?.deleteSecureApiKey) return false;
+
+        try {
+          return await api.deleteSecureApiKey();
+        } catch {
+          return false;
+        }
       },
       
       /**
@@ -672,27 +837,65 @@ export const useSettingsStore = create<SettingsStore>()(
       // ВАЖНО: увеличена с 8 до 9 при добавлении defaultCardContentHeight
       // ВАЖНО: увеличена с 9 до 10 при чистке провайдеров (оставили openrouter+custom)
       // и миграции пользователей на custom с URL VSELLM.
-      version: 10,
+      //
+      // ВАЖНО: увеличена с 10 до 11 при внедрении безопасного хранения API-ключа:
+      // - apiKey больше НЕ persist'ится
+      // - добавлено поле apiKeyStorageMode (persist'ится)
+      // - миграция гарантированно очищает старый apiKey из localStorage
+      version: 11,
+
+      /**
+       * Ограничиваем persisted-state до “не секретных” настроек.
+       *
+       * Почему это критично:
+       * - persist middleware по умолчанию сохраняет ВСЕ сериализуемые поля стора.
+       * - Если оставить `apiKey` внутри стора, он уедет в localStorage как обычная строка.
+       * - localStorage читается любым JS на странице (XSS/вредные расширения/инъекции).
+       *
+       * Поэтому мы делаем allow-list полей, которые МОЖНО хранить:
+       * - все UI-настройки (модель, язык, URL, флаги, размеры)
+       * - режим хранения ключа (apiKeyStorageMode) — это НЕ секрет
+       * - и НИКОГДА не сохраняем `apiKey`.
+       */
+      partialize: (state) => ({
+        apiProvider: state.apiProvider,
+        apiBaseUrl: state.apiBaseUrl,
+        embeddingsBaseUrl: state.embeddingsBaseUrl,
+        model: state.model,
+        useSummarization: state.useSummarization,
+        language: state.language,
+        corporateMode: state.corporateMode,
+        embeddingsModel: state.embeddingsModel,
+        neuroSearchMinSimilarity: state.neuroSearchMinSimilarity,
+        defaultCardWidth: state.defaultCardWidth,
+        defaultCardContentHeight: state.defaultCardContentHeight,
+        apiKeyStorageMode: state.apiKeyStorageMode,
+      }),
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {
         // ---------------------------------------------------------------------
         // ВАЖНО ПРО ТИПЫ:
         // ---------------------------------------------------------------------
-        // persist middleware отдаёт persistedState как `unknown` (по сути).
-        // Нам нужно:
-        // - НЕ использовать `any` (eslint ругается),
-        // - но при этом уметь читать “грязные” старые значения,
-        //   которые могли быть другого типа или содержать удалённые провайдеры.
+        // persist middleware типизирует persistedState довольно слабо (как unknown),
+        // а по факту localStorage может содержать “грязные” данные:
+        // - значения не того типа,
+        // - поля из старых версий,
+        // - провайдеры, которые мы удалили и больше не поддерживаем.
+        //
+        // Поэтому мы НЕ доверяем persistedState “как есть” и:
+        // - читаем его как Partial<AppSettings>,
+        // - отдельные поля валидируем через unknown (ручная нормализация ниже).
         //
         // Поэтому:
-        // - описываем минимальный тип persisted-состояния как Partial<SettingsStore>
+        // - описываем минимальный тип persisted-состояния как Partial<AppSettings>
         // - отдельные поля читаем через `unknown`, чтобы валидировать их вручную.
-        type PersistedSettings = Partial<SettingsStore> & {
+        type PersistedSettings = Partial<AppSettings> & {
           apiProvider?: unknown;
           apiBaseUrl?: unknown;
           embeddingsBaseUrl?: unknown;
           embeddingsModel?: unknown;
+          apiKeyStorageMode?: unknown;
         };
 
         const raw = (persistedState ?? {}) as PersistedSettings;
@@ -707,10 +910,32 @@ export const useSettingsStore = create<SettingsStore>()(
         // - Мы объединяем их так, чтобы:
         //   - новые поля получили дефолты,
         //   - старые пользовательские значения сохранились.
-        const next: SettingsStore = {
+        // ВАЖНО: именно AppSettings (только данные), никаких методов тут быть не должно.
+        const next: AppSettings = {
           ...DEFAULT_SETTINGS,
-          ...(raw as Partial<SettingsStore>),
+          ...(raw as Partial<AppSettings>),
         };
+
+        // ---------------------------------------------------------------------
+        // БЕЗОПАСНОСТЬ: НИКОГДА не восстанавливаем apiKey из persistedState
+        // ---------------------------------------------------------------------
+        //
+        // Исторически apiKey сохранялся в localStorage, что небезопасно.
+        // Начиная с v11:
+        // - apiKey перестаёт persist'иться (см. partialize выше)
+        // - а при миграции мы гарантированно вычищаем его даже из “старых” storage.
+        //
+        // Важно:
+        // - Это означает, что после обновления пользователю нужно либо:
+        //   - ввести ключ заново (режим `memory`), либо
+        //   - включить `osVault` и сохранить ключ в хранилище ОС (desktop).
+        next.apiKey = '';
+
+        // ---------------------------------------------------------------------
+        // НОРМАЛИЗАЦИЯ apiKeyStorageMode (v11)
+        // ---------------------------------------------------------------------
+        const savedMode = typeof raw.apiKeyStorageMode === 'string' ? raw.apiKeyStorageMode : '';
+        next.apiKeyStorageMode = (savedMode === 'osVault' || savedMode === 'memory') ? savedMode : 'memory';
 
         // ---------------------------------------------------------------------
         // ВЕРСИОННЫЕ ДОБАВЛЕНИЯ (исторические поля)
@@ -749,8 +974,14 @@ export const useSettingsStore = create<SettingsStore>()(
         // - Мы НЕ затираем URL, если пользователь уже вводил свои.
         const allowedProviders: ApiProvider[] = ['openrouter', 'custom'];
 
-        // Читаем provider из raw (а не из next), потому что next уже приведён к SettingsStore
-        // и TypeScript “думает”, что там всегда валидное значение.
+        // Читаем provider из raw (а не из next), потому что:
+        // - raw — это “как было сохранено” в localStorage (потенциально грязное значение),
+        // - next — это уже “приведённые” настройки (AppSettings), где мог:
+        //   - подставиться дефолт из DEFAULT_SETTINGS,
+        //   - или значение могло быть перезаписано нашей нормализацией ниже.
+        //
+        // Нам важно принимать решение о миграции/переназначении провайдера,
+        // исходя именно из исходного (возможно устаревшего) значения пользователя.
         const savedProvider: string = typeof raw.apiProvider === 'string' ? raw.apiProvider : '';
 
         // Флаг: была ли у пользователя “удалённая” конфигурация провайдера
@@ -815,6 +1046,31 @@ export const selectApiKey = (state: SettingsStore) => state.apiKey;
  * Селектор для получения функции изменения API ключа
  */
 export const selectSetApiKey = (state: SettingsStore) => state.setApiKey;
+
+/**
+ * Селектор для получения режима хранения ключа.
+ */
+export const selectApiKeyStorageMode = (state: SettingsStore) => state.apiKeyStorageMode;
+
+/**
+ * Селектор для получения setter'а режима хранения ключа.
+ */
+export const selectSetApiKeyStorageMode = (state: SettingsStore) => state.setApiKeyStorageMode;
+
+/**
+ * Селектор для получения метода загрузки ключа из OS vault.
+ */
+export const selectLoadApiKeyFromSecureStore = (state: SettingsStore) => state.loadApiKeyFromSecureStore;
+
+/**
+ * Селектор для получения метода сохранения ключа в OS vault.
+ */
+export const selectPersistApiKeyToSecureStore = (state: SettingsStore) => state.persistApiKeyToSecureStore;
+
+/**
+ * Селектор для получения метода удаления ключа из OS vault.
+ */
+export const selectDeleteApiKeyFromSecureStore = (state: SettingsStore) => state.deleteApiKeyFromSecureStore;
 
 /**
  * Селектор для получения API провайдера

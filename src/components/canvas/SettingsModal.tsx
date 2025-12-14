@@ -24,6 +24,11 @@ import {
   useSettingsStore, 
   selectApiKey,
   selectSetApiKey,
+  selectApiKeyStorageMode,
+  selectSetApiKeyStorageMode,
+  selectLoadApiKeyFromSecureStore,
+  selectPersistApiKeyToSecureStore,
+  selectDeleteApiKeyFromSecureStore,
   selectApiProvider,
   selectSetApiProvider,
   selectApiBaseUrl,
@@ -150,7 +155,10 @@ interface SettingsModalProps {
  * - Выбрать язык интерфейса
  * - Сбросить настройки к значениям по умолчанию
  * 
- * Настройки сохраняются в localStorage и восстанавливаются при перезагрузке.
+ * Настройки сохраняются автоматически (persist) и восстанавливаются при перезагрузке.
+ *
+ * ВАЖНО (безопасность):
+ * - API ключ НЕ сохраняется в localStorage (он либо в памяти, либо в OS vault в desktop-версии).
  * 
  * @param props - Свойства компонента
  * @returns JSX элемент модального окна
@@ -164,6 +172,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // ===========================================================================
   
   const { t } = useTranslation();
+
+  /**
+   * ВАЖНО ПРО ТИПЫ i18n:
+   *
+   * В проекте `t` типизируется через `TranslationKeys`, который выводится из `ru.ts`.
+   * Иногда TypeScript/ESLint в режиме watch может “застревать” на старой версии типов
+   * после добавления новых ключей переводов.
+   *
+   * Чтобы не блокировать сборку/линт, мы явно расширяем тип `t.settings` новыми ключами,
+   * которые используются ТОЛЬКО в этом компоненте (безопасное хранение API-ключа).
+   *
+   * Это НЕ влияет на рантайм: это чисто TS-уточнение, чтобы доступ к полям был типобезопасным.
+   */
+  const settings = t.settings as typeof t.settings & {
+    apiKeyStorage: string;
+    apiKeyStorageDescription: string;
+    apiKeyStorageMemory: string;
+    apiKeyStorageMemoryHint: string;
+    apiKeyStorageOsVault: string;
+    apiKeyStorageOsVaultHint: string;
+    apiKeyStorageOsVaultDesktopOnly: string;
+    apiKeyStorageOsVaultUnavailable: string;
+    apiKeyStorageLocalStorageNotice: string;
+    apiKeyStorageStatusIdle: string;
+    apiKeyStorageStatusSaving: string;
+    apiKeyStorageStatusLoading: string;
+    apiKeyStorageStatusDeleting: string;
+    apiKeyStorageStatusSaved: string;
+    apiKeyStorageStatusDeleted: string;
+    apiKeyStorageStatusError: string;
+    apiKeyStorageSaveToVault: string;
+    apiKeyStorageSavingButton: string;
+    apiKeyStorageDeleteFromVault: string;
+  };
   
   // ===========================================================================
   // ЛОКАЛЬНОЕ СОСТОЯНИЕ
@@ -171,6 +213,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   
   // Флаг для показа/скрытия API ключа
   const [showApiKey, setShowApiKey] = useState(false);
+
+  // ===========================================================================
+  // БЕЗОПАСНОЕ ХРАНЕНИЕ API-КЛЮЧА (DESKTOP / ELECTRON)
+  // ===========================================================================
+  //
+  // ВАЖНО:
+  // - В web-режиме у нас нет безопасного OS-хранилища.
+  // - В Electron-режиме мы можем использовать electron.safeStorage через IPC.
+  //
+  // Мы держим эти флаги в локальном состоянии UI, потому что:
+  // - они зависят от среды выполнения (Electron vs Browser)
+  // - они не являются “настройкой пользователя” и не должны persist'иться
+  //
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [isSecureVaultAvailable, setIsSecureVaultAvailable] = useState(false);
+  const [secureVaultCheckCompleted, setSecureVaultCheckCompleted] = useState(false);
+
+  /**
+   * Статус операций с secure storage.
+   *
+   * Это нужно, чтобы:
+   * - показывать пользователю, что ключ сохранён/удалён/ошибка,
+   * - не делать “молчаливые” операции с секретами.
+   */
+  const [secureKeyStatus, setSecureKeyStatus] = useState<
+    'idle' | 'checking' | 'loading' | 'saving' | 'deleting' | 'saved' | 'deleted' | 'error'
+  >('idle');
   
   /**
    * Метаданные текущего embedding-индекса (если они есть).
@@ -222,6 +291,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Получаем текущие настройки и методы их изменения
   const apiKey = useSettingsStore(selectApiKey);
   const setApiKey = useSettingsStore(selectSetApiKey);
+  const apiKeyStorageMode = useSettingsStore(selectApiKeyStorageMode);
+  const setApiKeyStorageMode = useSettingsStore(selectSetApiKeyStorageMode);
+  const loadApiKeyFromSecureStore = useSettingsStore(selectLoadApiKeyFromSecureStore);
+  const persistApiKeyToSecureStore = useSettingsStore(selectPersistApiKeyToSecureStore);
+  const deleteApiKeyFromSecureStore = useSettingsStore(selectDeleteApiKeyFromSecureStore);
   const apiProvider = useSettingsStore(selectApiProvider);
   const setApiProvider = useSettingsStore(selectSetApiProvider);
   const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
@@ -274,6 +348,101 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         });
     }
   }, [isOpen]);
+
+  // ===========================================================================
+  // DETECT ELECTRON + CHECK SECURE STORAGE AVAILABILITY
+  // ===========================================================================
+  //
+  // Мы выполняем проверку только когда модалка открыта:
+  // - так мы не тратим лишнее время/IPC при обычной работе на холсте
+  // - и не рискуем “дергать” Electron API во время SSR
+  //
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!isOpen) return;
+
+      // В SSR (Next.js) window отсутствует — просто выходим.
+      if (typeof window === 'undefined') return;
+
+      setSecureKeyStatus('checking');
+
+      try {
+        const api = window.electronAPI;
+        if (!api?.isElectron) {
+          if (cancelled) return;
+          setIsDesktop(false);
+          setIsSecureVaultAvailable(false);
+          setSecureVaultCheckCompleted(true);
+          setSecureKeyStatus('idle');
+          return;
+        }
+
+        const desktop = await api.isElectron();
+        if (cancelled) return;
+        setIsDesktop(Boolean(desktop));
+
+        // Если это не desktop — secure vault недоступен.
+        if (!desktop) {
+          setIsSecureVaultAvailable(false);
+          setSecureVaultCheckCompleted(true);
+          setSecureKeyStatus('idle');
+          return;
+        }
+
+        // Проверяем, доступно ли шифрование (safeStorage) на этой системе.
+        const canEncrypt = await api.isSecureApiKeyAvailable?.();
+        if (cancelled) return;
+        setIsSecureVaultAvailable(Boolean(canEncrypt));
+        setSecureVaultCheckCompleted(true);
+        setSecureKeyStatus('idle');
+      } catch {
+        if (cancelled) return;
+        // Не показываем детали ошибки: просто считаем, что режим vault недоступен.
+        setIsDesktop(false);
+        setIsSecureVaultAvailable(false);
+        setSecureVaultCheckCompleted(true);
+        setSecureKeyStatus('error');
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  // ===========================================================================
+  // AUTO-LOAD KEY FROM OS VAULT (WHEN MODE = osVault)
+  // ===========================================================================
+  //
+  // Логика:
+  // - если пользователь включил режим osVault и открыл настройки,
+  //   то мы пытаемся подгрузить ключ из OS vault в память (store.apiKey),
+  //   чтобы пользователь видел, что ключ “есть” (в поле он будет скрыт паролем).
+  //
+  // ВАЖНО:
+  // - если пользователь уже ввёл ключ в этой сессии (apiKey не пустой),
+  //   мы НЕ перетираем его значением из vault.
+  //
+  React.useEffect(() => {
+    if (!isOpen) return;
+    if (apiKeyStorageMode !== 'osVault') return;
+    if (!isDesktop || !isSecureVaultAvailable) return;
+    if (apiKey && apiKey.trim().length > 0) return;
+
+    // Мы не ждём результат в UI-рендере — просто запускаем и даём status.
+    setSecureKeyStatus('loading');
+    loadApiKeyFromSecureStore()
+      .then((loaded) => {
+        // Если ключ не найден — это не ошибка, просто остаёмся в idle.
+        setSecureKeyStatus(loaded ? 'idle' : 'idle');
+      })
+      .catch(() => setSecureKeyStatus('error'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, apiKeyStorageMode, isDesktop, isSecureVaultAvailable]);
   
   // ===========================================================================
   // ОБРАБОТЧИКИ
@@ -283,7 +452,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
    * Обработка изменения API ключа
    */
   const handleApiKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Обновляем ключ в store (он живёт только в памяти и НЕ persist'ится в localStorage).
     setApiKey(e.target.value);
+
+    // UX-деталь для режима OS vault:
+    // Если пользователь меняет значение в поле — мы считаем, что “сохранённый в vault ключ”
+    // может больше НЕ соответствовать текущему полю ввода, поэтому:
+    // - сбрасываем статус обратно в idle, чтобы не вводить в заблуждение (“ключ сохранён”).
+    //
+    // ВАЖНО:
+    // - Мы не пытаемся “автосохранять” при каждом вводе символа.
+    // - Сохранение происходит по явной кнопке “Сохранить” или при переключении режима.
+    if (apiKeyStorageMode === 'osVault' && secureKeyStatus === 'saved') {
+      setSecureKeyStatus('idle');
+    }
+  };
+
+  /**
+   * Смена режима хранения API-ключа.
+   *
+   * Поведение по требованию:
+   * - memory: ключ НЕ сохраняется на диск вообще (только в памяти); из OS vault удаляем “следы”
+   * - osVault: ключ (если введён) можно безопасно сохранить в хранилище ОС
+   */
+  const handleApiKeyStorageModeChange = async (mode: 'memory' | 'osVault') => {
+    // Всегда сохраняем сам выбор режима (это не секрет).
+    setApiKeyStorageMode(mode);
+
+    // В браузере/без vault — ничего больше сделать нельзя.
+    if (mode === 'osVault' && (!isDesktop || !isSecureVaultAvailable)) {
+      setSecureKeyStatus('error');
+      return;
+    }
+
+    // Переключаемся на режим “не сохранять”:
+    // - удаляем ключ из OS vault (чтобы не оставлять на диске никаких следов).
+    if (mode === 'memory') {
+      // Если мы не в Electron или vault недоступен — удалять физически нечего.
+      // Важно: не показываем “ошибку” в web-режиме.
+      if (!isDesktop || !isSecureVaultAvailable) {
+        setSecureKeyStatus('idle');
+        return;
+      }
+
+      setSecureKeyStatus('deleting');
+      const ok = await deleteApiKeyFromSecureStore();
+      setSecureKeyStatus(ok ? 'deleted' : 'error');
+      return;
+    }
+
+    // Переключаемся на режим OS vault:
+    // - если ключ уже введён — сразу сохраняем
+    // - если ключ пустой — пытаемся подгрузить из vault (если там уже было сохранено)
+    if (mode === 'osVault') {
+      if (apiKey && apiKey.length > 0) {
+        setSecureKeyStatus('saving');
+        const ok = await persistApiKeyToSecureStore(apiKey);
+        setSecureKeyStatus(ok ? 'saved' : 'error');
+      } else {
+        setSecureKeyStatus('loading');
+        await loadApiKeyFromSecureStore();
+        setSecureKeyStatus('idle');
+      }
+    }
+  };
+
+  /**
+   * Явная кнопка “сохранить ключ” в OS vault.
+   *
+   * Почему оставляем явную кнопку, даже если есть автосейв при переключении режима:
+   * - пользователь может поменять ключ в поле ввода после включения режима
+   * - и хочет явно нажать “Сохранить” (прозрачный UX)
+   */
+  const handleSaveApiKeyToVault = async () => {
+    if (!isDesktop || !isSecureVaultAvailable) return;
+    if (!apiKey) return;
+    setSecureKeyStatus('saving');
+    const ok = await persistApiKeyToSecureStore(apiKey);
+    setSecureKeyStatus(ok ? 'saved' : 'error');
+  };
+
+  /**
+   * Явная кнопка “удалить ключ из OS vault”.
+   */
+  const handleDeleteApiKeyFromVault = async () => {
+    if (!isDesktop || !isSecureVaultAvailable) return;
+    setSecureKeyStatus('deleting');
+    const ok = await deleteApiKeyFromSecureStore();
+    setSecureKeyStatus(ok ? 'deleted' : 'error');
   };
   
   /**
@@ -777,18 +1033,77 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
           </div>
-          
-          {/* Поле ввода API ключа */}
-          <div className="rounded-lg border p-4 space-y-3">
+
+          {/* Информация о текущих URL или поля ввода для Custom */}
+          {apiProvider === 'custom' ? (
+            <div className="rounded-lg border p-4 space-y-4 border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Link className="w-4 h-4 text-amber-600" />
+                  {t.settings.customApiUrl}
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  {t.settings.customApiUrlDescription}
+                </p>
+                <Input
+                  type="text"
+                  value={apiBaseUrl}
+                  onChange={handleApiBaseUrlChange}
+                  placeholder="http://localhost:1234/v1"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Link className="w-4 h-4 text-amber-600" />
+                  {t.settings.customEmbeddingsUrl}
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  {t.settings.customEmbeddingsUrlDescription}
+                </p>
+                <Input
+                  type="text"
+                  value={embeddingsBaseUrl}
+                  onChange={handleEmbeddingsBaseUrlChange}
+                  placeholder="http://localhost:1234/v1"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Link className="w-3 h-3" />
+                <span className="font-medium">{t.settings.currentApiUrl}:</span>
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">{apiBaseUrl}</code>
+              </div>
+              {API_PROVIDERS[apiProvider].supportsEmbeddings && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                  <Link className="w-3 h-3" />
+                  <span className="font-medium">{t.settings.currentEmbeddingsUrl}:</span>
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{embeddingsBaseUrl}</code>
+                </div>
+              )}
+              {!API_PROVIDERS[apiProvider].supportsEmbeddings && (
+                <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  <Info className="w-3 h-3" />
+                  <span>{t.settings.noEmbeddingsSupport}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Режим хранения API ключа (важно для безопасности) */}
+          <div className="rounded-lg border p-4 space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
-                <Key className="w-4 h-4 text-blue-500" />
+                <Key className="w-4 h-4 text-emerald-600" />
                 {t.settings.apiKey}
               </label>
               <p className="text-sm text-muted-foreground">
                 {t.settings.apiKeyDescription}
               </p>
-              <div className="flex gap-2">
+
+              <div className="flex gap-2 pt-1">
                 <div className="relative flex-1">
                   <Input
                     type={showApiKey ? 'text' : 'password'}
@@ -811,79 +1126,127 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
               </div>
-              
+
               {/* Предупреждение если ключ не введён */}
               {!apiKey && (
                 <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200">
                   <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>
-                    {t.settings.apiKeyRequired}
+                  <span>{t.settings.apiKeyRequired}</span>
+                </div>
+              )}
+            </div>
+
+            {/* ===================================================================== */}
+            {/* ВЫБОР РЕЖИМА ХРАНЕНИЯ И ДЕЙСТВИЯ (СОХРАНИТЬ/УДАЛИТЬ) */}
+            {/* ===================================================================== */}
+            <div className="pt-2 border-t space-y-3">
+              <label className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
+                <ShieldAlert className="w-4 h-4" />
+                {settings.apiKeyStorage}
+              </label>
+
+              {/* Кнопки выбора режима */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => void handleApiKeyStorageModeChange('memory')}
+                  className={`
+                    flex flex-col items-start p-3 rounded-lg border transition-all duration-200 text-left
+                    ${apiKeyStorageMode === 'memory'
+                      ? 'bg-primary/10 border-primary shadow-sm'
+                      : 'bg-background hover:bg-accent hover:border-primary/50 border-border'
+                    }
+                  `}
+                >
+                  <span className={`font-medium text-sm ${apiKeyStorageMode === 'memory' ? 'text-primary' : ''}`}>
+                    {settings.apiKeyStorageMemory}
                   </span>
+                  <span className="text-xs text-muted-foreground">
+                    {settings.apiKeyStorageMemoryHint}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => void handleApiKeyStorageModeChange('osVault')}
+                  disabled={!secureVaultCheckCompleted || !isDesktop || !isSecureVaultAvailable}
+                  className={`
+                    flex flex-col items-start p-3 rounded-lg border transition-all duration-200 text-left
+                    ${apiKeyStorageMode === 'osVault'
+                      ? 'bg-primary/10 border-primary shadow-sm'
+                      : 'bg-background hover:bg-accent hover:border-primary/50 border-border'
+                    }
+                    ${(!secureVaultCheckCompleted || !isDesktop || !isSecureVaultAvailable)
+                      ? 'opacity-50 cursor-not-allowed'
+                      : ''
+                    }
+                  `}
+                  title={
+                    (!secureVaultCheckCompleted)
+                      ? t.common.loading
+                      : (!isDesktop)
+                        ? settings.apiKeyStorageOsVaultDesktopOnly
+                        : (!isSecureVaultAvailable)
+                          ? settings.apiKeyStorageOsVaultUnavailable
+                          : settings.apiKeyStorageOsVault
+                  }
+                >
+                  <span className={`font-medium text-sm ${apiKeyStorageMode === 'osVault' ? 'text-primary' : ''}`}>
+                    {settings.apiKeyStorageOsVault}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {settings.apiKeyStorageOsVaultHint}
+                  </span>
+                </button>
+              </div>
+
+              {/* Если vault недоступен — показываем причину */}
+              {secureVaultCheckCompleted && isDesktop && !isSecureVaultAvailable && (
+                <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{settings.apiKeyStorageOsVaultUnavailable}</span>
+                </div>
+              )}
+
+              {/* Действия для OS vault */}
+              {apiKeyStorageMode === 'osVault' && isDesktop && isSecureVaultAvailable && (
+                <div className="flex items-center justify-between gap-2 pt-2 border-t">
+                  <div className="text-xs text-muted-foreground">
+                    {secureKeyStatus === 'saving' && settings.apiKeyStorageStatusSaving}
+                    {secureKeyStatus === 'loading' && settings.apiKeyStorageStatusLoading}
+                    {secureKeyStatus === 'deleting' && settings.apiKeyStorageStatusDeleting}
+                    {secureKeyStatus === 'saved' && settings.apiKeyStorageStatusSaved}
+                    {secureKeyStatus === 'deleted' && settings.apiKeyStorageStatusDeleted}
+                    {secureKeyStatus === 'error' && settings.apiKeyStorageStatusError}
+                    {(secureKeyStatus === 'idle' || secureKeyStatus === 'checking') && settings.apiKeyStorageStatusIdle}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleDeleteApiKeyFromVault()}
+                      disabled={secureKeyStatus === 'saving' || secureKeyStatus === 'loading' || secureKeyStatus === 'deleting'}
+                    >
+                      {settings.apiKeyStorageDeleteFromVault}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => void handleSaveApiKeyToVault()}
+                      disabled={!apiKey || secureKeyStatus === 'saving' || secureKeyStatus === 'loading' || secureKeyStatus === 'deleting'}
+                    >
+                      {secureKeyStatus === 'saving' ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          {settings.apiKeyStorageSavingButton}
+                        </>
+                      ) : (
+                        settings.apiKeyStorageSaveToVault
+                      )}
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
           </div>
-          
-          {/* Custom URL поля - показываем только для custom провайдера */}
-          {apiProvider === 'custom' && (
-            <div className="rounded-lg border p-4 space-y-4 border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <Link className="w-4 h-4 text-amber-600" />
-                  {t.settings.customApiUrl}
-                </label>
-                <p className="text-sm text-muted-foreground">
-                  {t.settings.customApiUrlDescription}
-                </p>
-                <Input
-                  type="text"
-                  value={apiBaseUrl}
-                  onChange={handleApiBaseUrlChange}
-                  placeholder="http://localhost:1234/v1"
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
-                  <Link className="w-4 h-4 text-amber-600" />
-                  {t.settings.customEmbeddingsUrl}
-                </label>
-                <p className="text-sm text-muted-foreground">
-                  {t.settings.customEmbeddingsUrlDescription}
-                </p>
-                <Input
-                  type="text"
-                  value={embeddingsBaseUrl}
-                  onChange={handleEmbeddingsBaseUrlChange}
-                  placeholder="http://localhost:1234/v1"
-                />
-              </div>
-            </div>
-          )}
-          
-          {/* Информация о текущих URL (для не-custom провайдеров) */}
-          {apiProvider !== 'custom' && (
-            <div className="rounded-lg border p-3 bg-muted/30">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Link className="w-3 h-3" />
-                <span className="font-medium">{t.settings.currentApiUrl}:</span>
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">{apiBaseUrl}</code>
-              </div>
-              {API_PROVIDERS[apiProvider].supportsEmbeddings && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                  <Link className="w-3 h-3" />
-                  <span className="font-medium">{t.settings.currentEmbeddingsUrl}:</span>
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{embeddingsBaseUrl}</code>
-                </div>
-              )}
-              {!API_PROVIDERS[apiProvider].supportsEmbeddings && (
-                <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 mt-1">
-                  <Info className="w-3 h-3" />
-                  <span>{t.settings.noEmbeddingsSupport}</span>
-                </div>
-              )}
-            </div>
-          )}
           
           {/* Выбор модели */}
           <div className="rounded-lg border p-4 space-y-3">

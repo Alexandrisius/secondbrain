@@ -19,7 +19,7 @@
 <p align="center">
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js" />
   <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=white" />
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-28-47848F?style=for-the-badge&logo=electron&logoColor=white" />
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-39-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
 </p>
 
@@ -126,7 +126,7 @@ Combines 4 search methods for perfect results:
 - **Embeddings Model Selection**: tune search quality (`text-embedding-3`, `multilingual-e5`, etc.)
 - **Corporate Mode**: work in networks with SSL inspection
 - **Summarization**: automatic compression of long contexts
-- **Local Storage**: all data is stored only on your device
+- **Local Data**: all canvases/search index are stored only on your device (**API keys are not stored in localStorage**)
 - **Undo/Redo**: full history with `Ctrl+Z` / `Ctrl+Y`
 - **Batch Operations**: mass collapse/expand for selected cards
 - **Stale Detection**: automatic tracking of outdated cards when context changes
@@ -141,6 +141,17 @@ To use the application, **you need your own API key** from your chosen provider 
 2. Select a provider (OpenRouter or Custom).
 3. Enter your API key.
 4. Select a chat model and (optionally) an embeddings model.
+
+### 🔐 API key storage (Security)
+
+NeuroCanvas supports two modes for API key storage:
+
+- **Do not save (default)**: the key is kept only in memory. After restarting the app you will need to enter it again.
+- **OS vault (Desktop/Electron)**: you can store the key securely using your operating system vault (via Electron `safeStorage`). The key is **not** saved in `localStorage`.
+
+Notes:
+- This protects you from the common “plain text in localStorage” issue.
+- It does **not** protect against malware on your machine.
 
 > 🎁 **Need a test key?**
 > 
@@ -177,9 +188,19 @@ To use the application, **you need your own API key** from your chosen provider 
 1. User creates/edits cards on canvas
 2. Context automatically built from parent chain
 3. LLM request with full context hierarchy
-4. Response streamed and displayed
+4. Response is streamed via **SSE (Server-Sent Events)** and displayed progressively
 5. Auto-summarization for context compression
 6. All data persisted locally in IndexedDB
+
+### Streaming (SSE)
+- **Server**: `/api/chat` proxies the upstream provider's **SSE stream** as-is (`text/event-stream`), without re-buffering on our side.
+- **Client**: streaming is handled in `src/hooks/useNodeGeneration.ts` via a **buffered SSE parser**:
+  - correctly handles chunk boundaries (JSON and lines can be split across chunks)
+  - processes events only on SSE event boundaries (blank line delimiter)
+  - supports `data: [DONE]` end marker
+- **Retries**: on transient failures (network errors and retryable HTTP statuses like 408/429/5xx), the app performs **3 automatic retries** with exponential backoff + jitter.
+  - retry strategy: restart streaming **from scratch** (partial text is overwritten by the new attempt)
+  - if all retries fail, the last partial text is preserved so the user doesn't lose it
 
 ---
 
@@ -204,6 +225,8 @@ npm run electron:dev
 # Or build the application
 npm run electron:build:win
 ```
+
+For more detailed build/release instructions, see [`BUILD.md`](./BUILD.md).
 
 ---
 

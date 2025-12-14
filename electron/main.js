@@ -11,10 +11,11 @@
  * - В production: запускаем встроенный Next.js standalone сервер
  */
 
-const { app, BrowserWindow, shell, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Menu, dialog, safeStorage } = require('electron');
 const path = require('path');
 const { spawn, fork } = require('child_process');
 const detectPort = require('detect-port');
+const fs = require('fs');
 
 // =============================================================================
 // АВТООБНОВЛЕНИЯ
@@ -647,6 +648,44 @@ function createMenu() {
 // IPC ОБРАБОТЧИКИ
 // =============================================================================
 
+// =============================================================================
+// SECURE STORAGE (API KEY) — безопасное хранение ключа в desktop-версии
+// =============================================================================
+//
+// Задача:
+// - В web/renderer хранить ключ небезопасно (localStorage читается любым JS).
+// - В desktop-версии (Electron) мы можем использовать механизмы ОС:
+//   - Windows: DPAPI / Credential system
+//   - macOS: Keychain
+//   - Linux: Secret Service (libsecret) или fallback механизмы Electron
+//
+// Как работает electron.safeStorage:
+// - encryptString() возвращает Buffer (шифртекст)
+// - decryptString() возвращает исходную строку
+// - Реальный “ключ шифрования” хранится/управляется ОС, а не приложением.
+//
+// ВАЖНО О БЕЗОПАСНОСТИ:
+// - Это НЕ защита от малвари/вредоносных расширений на машине пользователя.
+// - Но это существенное улучшение по сравнению с “ключ лежит в localStorage открытым текстом”.
+//
+// Реализация:
+// - Мы сохраняем только шифртекст в файле внутри app.getPath('userData')
+// - Файл привязан к пользователю ОС, поэтому расшифровка на другой машине/профиле не сработает.
+//
+const SECURE_API_KEY_FILENAME = 'api-key.enc';
+
+/**
+ * Возвращает путь к файлу, где хранится зашифрованный API-ключ.
+ *
+ * Почему файл, а не localStorage:
+ * - localStorage доступен из renderer (небезопасно)
+ * - файл лежит в userData и доступен только main-process и ОС.
+ */
+function getSecureApiKeyFilePath() {
+  const userDataPath = app.getPath('userData');
+  return path.join(userDataPath, SECURE_API_KEY_FILENAME);
+}
+
 /**
  * Обработчик для открытия внешних ссылок из рендерера
  * Используется компонентом DonateModal
@@ -691,6 +730,107 @@ ipcMain.handle('check-for-updates', async () => {
     }
   }
   return false;
+});
+
+// =============================================================================
+// IPC: SECURE API KEY (Electron safeStorage)
+// =============================================================================
+
+/**
+ * Проверить, доступно ли шифрование на текущей системе.
+ *
+ * Примеры, когда может быть недоступно:
+ * - Некоторые headless/минимальные окружения Linux без Secret Service
+ * - Экзотические sandbox-окружения
+ */
+ipcMain.handle('secure-api-key:is-available', () => {
+  try {
+    return Boolean(safeStorage?.isEncryptionAvailable?.());
+  } catch {
+    return false;
+  }
+});
+
+/**
+ * Получить API-ключ из OS vault.
+ *
+ * Возвращает:
+ * - string (ключ) если он сохранён и успешно расшифрован
+ * - null если ключ не найден / шифрование недоступно / произошла ошибка
+ *
+ * ВАЖНО:
+ * - Никогда не логируем ни ключ, ни шифртекст.
+ */
+ipcMain.handle('secure-api-key:get', async () => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return null;
+
+    const filePath = getSecureApiKeyFilePath();
+    if (!fs.existsSync(filePath)) return null;
+
+    // Читаем base64-строку (UTF-8), затем декодируем в Buffer
+    const base64 = await fs.promises.readFile(filePath, 'utf8');
+    const trimmed = String(base64 || '').trim();
+    if (!trimmed) return null;
+
+    const encryptedBuffer = Buffer.from(trimmed, 'base64');
+    const decrypted = safeStorage.decryptString(encryptedBuffer);
+
+    const key = typeof decrypted === 'string' ? decrypted : '';
+    return key.trim().length > 0 ? key : null;
+  } catch {
+    return null;
+  }
+});
+
+/**
+ * Сохранить API-ключ в OS vault.
+ *
+ * Возвращает boolean:
+ * - true если сохранено
+ * - false если недоступно/ошибка/невалидный ввод
+ *
+ * ВАЖНО:
+ * - Мы не “валидируем формат” ключа, потому что провайдеров много.
+ * - Мы не обрезаем пробелы автоматически: ключ — это opaque string.
+ */
+ipcMain.handle('secure-api-key:set', async (event, key) => {
+  try {
+    if (typeof key !== 'string') return false;
+    if (!safeStorage.isEncryptionAvailable()) return false;
+
+    const filePath = getSecureApiKeyFilePath();
+
+    // Создаём директорию userData на всякий случай (обычно Electron уже создаёт её)
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+
+    const encrypted = safeStorage.encryptString(key);
+    const base64 = encrypted.toString('base64');
+
+    // Пишем только шифртекст, без каких-либо метаданных.
+    await fs.promises.writeFile(filePath, base64, 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/**
+ * Удалить API-ключ из OS vault (удаляем файл с шифртекстом).
+ *
+ * Возвращает true, если:
+ * - файл успешно удалён, ИЛИ файла не было (идемпотентность)
+ */
+ipcMain.handle('secure-api-key:delete', async () => {
+  try {
+    const filePath = getSecureApiKeyFilePath();
+    if (!fs.existsSync(filePath)) return true;
+
+    await fs.promises.unlink(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 // =============================================================================

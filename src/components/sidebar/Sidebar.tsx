@@ -434,46 +434,6 @@ export function Sidebar() {
         </div>
       )}
       
-      {/* Кнопки для свёрнутого состояния */}
-      {isSidebarCollapsed && (
-        <div className="flex flex-col items-center gap-2 p-2 border-b border-[#313244]/40">
-          <button
-            onClick={handleCreateCanvas}
-            disabled={isLoading || isSaving}
-            className={cn(
-              'p-2.5 rounded-lg',
-              'bg-gradient-to-r from-[#89b4fa] to-[#b4befe]',
-              'text-[#1e1e2e]',
-              'hover:shadow-lg hover:shadow-[#89b4fa]/25',
-              'hover:scale-105',
-              'active:scale-95',
-              'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100',
-              'transition-all duration-150',
-            )}
-            title={t.sidebar.newCanvas}
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-          
-          <button
-            onClick={handleCreateFolder}
-            disabled={isLoading || isSaving}
-            className={cn(
-              'p-2.5 rounded-lg',
-              'text-[#6c7086] hover:text-[#cdd6f4]',
-              'hover:bg-[#313244]',
-              'hover:scale-105',
-              'active:scale-95',
-              'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100',
-              'transition-all duration-150',
-            )}
-            title={t.sidebar.newFolder}
-          >
-            <FolderPlus className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-      
       {/* ===================================================================== */}
       {/* ОШИБКА */}
       {/* ===================================================================== */}

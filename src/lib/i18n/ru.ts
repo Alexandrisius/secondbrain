@@ -50,6 +50,27 @@ export const ru = {
     showKey: 'Показать ключ',
     hideKey: 'Скрыть ключ',
 
+    // Безопасное хранение API-ключа
+    apiKeyStorage: 'Хранение ключа',
+    apiKeyStorageDescription: 'Выберите, где хранить API ключ. Сам ключ больше не сохраняется в localStorage.',
+    apiKeyStorageMemory: 'Не сохранять',
+    apiKeyStorageMemoryHint: 'Ключ хранится только в памяти. После перезапуска нужно ввести снова.',
+    apiKeyStorageOsVault: 'Хранилище ОС',
+    apiKeyStorageOsVaultHint: 'Сохранить ключ безопасно через хранилище ОС (только Desktop).',
+    apiKeyStorageOsVaultDesktopOnly: 'Доступно только в desktop-версии приложения.',
+    apiKeyStorageOsVaultUnavailable: 'Хранилище ОС недоступно на этой системе (safeStorage недоступен).',
+    apiKeyStorageLocalStorageNotice: 'API ключ больше не хранится в localStorage. В режиме “Не сохранять” он живёт только в памяти.',
+    apiKeyStorageStatusIdle: 'Статус: готово',
+    apiKeyStorageStatusSaving: 'Сохраняем ключ в хранилище ОС...',
+    apiKeyStorageStatusLoading: 'Загружаем ключ из хранилища ОС...',
+    apiKeyStorageStatusDeleting: 'Удаляем ключ из хранилища ОС...',
+    apiKeyStorageStatusSaved: 'Ключ сохранён в хранилище ОС.',
+    apiKeyStorageStatusDeleted: 'Ключ удалён из хранилища ОС.',
+    apiKeyStorageStatusError: 'Ошибка работы с хранилищем ОС.',
+    apiKeyStorageSaveToVault: 'Сохранить в хранилище',
+    apiKeyStorageSavingButton: 'Сохранение...',
+    apiKeyStorageDeleteFromVault: 'Удалить',
+
     // Custom URL
     customApiUrl: 'URL Chat API',
     customApiUrlDescription: 'Базовый URL для OpenAI-совместимого API (без /chat/completions).',

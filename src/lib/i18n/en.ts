@@ -52,6 +52,27 @@ export const en: TranslationKeys = {
     showKey: 'Show key',
     hideKey: 'Hide key',
 
+    // Secure API key storage
+    apiKeyStorage: 'Key storage',
+    apiKeyStorageDescription: 'Choose where to store the API key. The key is no longer saved in localStorage.',
+    apiKeyStorageMemory: 'Do not save',
+    apiKeyStorageMemoryHint: 'Key is kept only in memory. You must enter it again after restart.',
+    apiKeyStorageOsVault: 'OS vault',
+    apiKeyStorageOsVaultHint: 'Store the key securely using the OS vault (Desktop only).',
+    apiKeyStorageOsVaultDesktopOnly: 'Available only in the desktop app.',
+    apiKeyStorageOsVaultUnavailable: 'OS vault is unavailable on this system (safeStorage unavailable).',
+    apiKeyStorageLocalStorageNotice: 'The API key is no longer stored in localStorage. In “Do not save” mode it lives only in memory.',
+    apiKeyStorageStatusIdle: 'Status: ready',
+    apiKeyStorageStatusSaving: 'Saving key to OS vault...',
+    apiKeyStorageStatusLoading: 'Loading key from OS vault...',
+    apiKeyStorageStatusDeleting: 'Deleting key from OS vault...',
+    apiKeyStorageStatusSaved: 'Key saved to OS vault.',
+    apiKeyStorageStatusDeleted: 'Key deleted from OS vault.',
+    apiKeyStorageStatusError: 'OS vault error.',
+    apiKeyStorageSaveToVault: 'Save to vault',
+    apiKeyStorageSavingButton: 'Saving...',
+    apiKeyStorageDeleteFromVault: 'Delete',
+
     // Custom URL
     customApiUrl: 'Chat API URL',
     customApiUrlDescription: 'Base URL for OpenAI-compatible API (without /chat/completions).',

@@ -847,7 +847,25 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                              <Brain className="w-4 h-4 text-indigo-500" />
                           )}
                           
-                          <span className={isExcluded ? "text-muted-foreground line-through decoration-border" : "text-foreground"}>
+                          {/**
+                           * Визуальный стиль "выключенного" блока контекста (isExcluded):
+                           *
+                           * ВАЖНОЕ UX-решение:
+                           * - Раньше мы добавляли зачёркивание (`line-through`) к названию уровня ("Родитель", "Предок [1]" и т.д.).
+                           * - Одновременно весь блок уже становится "выключенным" за счёт:
+                           *   - серого фона/границы
+                           *   - пониженной прозрачности (opacity)
+                           *   - grayscale-фильтра
+                           *
+                           * Из-за этого создавалось ощущение, что элемент "зачёркнут" ещё раз,
+                           * и это выглядело странно/шумно.
+                           *
+                           * Поэтому:
+                           * - при isExcluded мы НЕ используем зачёркивание
+                           * - оставляем только приглушённый цвет текста
+                           * - общий "disabled"-вид обеспечивает контейнер карточки (см. классы выше)
+                           */}
+                          <span className={isExcluded ? "text-muted-foreground" : "text-foreground"}>
                             {block.levelName}
                           </span>
                           
