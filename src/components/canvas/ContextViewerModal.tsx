@@ -17,6 +17,12 @@
 'use client';
 
 import React, { useMemo } from 'react';
+// ВАЖНО (Next.js):
+// - ESLint правило @next/next/no-img-element рекомендует использовать next/image вместо <img>.
+// - Это позволяет Next контролировать загрузку/размеры и (опционально) оптимизацию.
+// - Для наших "локальных" вложений (через /api/attachments/...) мы включаем unoptimized,
+//   чтобы не менять текущую семантику доставки файла и не завязываться на image-optimizer.
+import Image from 'next/image';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -30,6 +36,7 @@ import {
   Maximize2,
   Brain,
   AlertCircle,
+  Paperclip,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,7 +50,8 @@ import { cn } from '@/lib/utils';
 import { useSettingsStore, selectUseSummarization } from '@/store/useSettingsStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { useTranslation, format } from '@/lib/i18n';
-import type { NeuroNode, ContextType, ContextBlock } from '@/types/canvas';
+import type { NeuroNode, ContextType, ContextBlock, NodeAttachment, NeuroNodeData } from '@/types/canvas';
+import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 
 // Re-export типов для обратной совместимости
 export type { ContextType, ContextBlock } from '@/types/canvas';
@@ -56,6 +64,16 @@ interface ContextViewerModalProps {
   isOpen: boolean;
   /** Callback для закрытия окна */
   onClose: () => void;
+  /**
+   * ID текущей ноды, для которой открыта модалка контекста.
+   *
+   * Зачем нужно:
+   * - мы хотим показывать "вложения как контекст" (и уметь их выключать),
+   *   а вложения принадлежат текущей карточке.
+   * - это также даёт нам доступ к node.data.attachmentExcerpts/attachmentSummaries
+   *   без необходимости передавать их отдельными пропами.
+   */
+  currentNodeId: string;
   /** Массив прямых родительских нод */
   directParents: NeuroNode[];
   /** Полная цепочка предков (включая прямых родителей, дедушек и т.д.) */
@@ -70,6 +88,36 @@ interface ContextViewerModalProps {
  * Расширенный тип блока контекста для UI
  */
 interface UiContextBlock extends ContextBlock {
+  /**
+   * Уникальный ключ для React (не всегда совпадает с nodeId).
+   *
+   * Почему не используем nodeId как key:
+   * - для вложений `nodeId` = attachmentId, и он уникален в рамках холста,
+   *   но мы также хотим иметь возможность:
+   *   - отличать "ноды" от "вложений" на уровне UI,
+   *   - безопасно расширять структуру без риска коллизий.
+   */
+  key: string;
+
+  /**
+   * Что именно мы показываем в этом блоке:
+   * - 'node'       → обычная карточка-предок (как раньше)
+   * - 'attachment' → вложение (файл), которое участвует в контексте как "предок"
+   */
+  blockKind: 'node' | 'attachment';
+
+  /** Метаданные вложения (только если blockKind === 'attachment'). */
+  attachment?: NodeAttachment;
+
+  /**
+   * ID ноды-владельца вложения (к какой карточке прикреплён файл).
+   *
+   * Нужен:
+   * - для отладки,
+   * - для объяснения пользователю "откуда" взялся документ в контексте.
+   */
+  attachmentOwnerNodeId?: string;
+
   quoteContent?: string;
   /** Тип ноды: 'neuro' (AI-карточка) или 'note' (личная заметка) */
   nodeType?: 'neuro' | 'note';
@@ -153,16 +201,23 @@ const getContextTypeColor = (type: ContextType): string => {
 export const ContextViewerModal: React.FC<ContextViewerModalProps & {
   excludedContextNodeIds?: string[];
   onToggleContextItem?: (nodeId: string) => void;
+  /** Список attachmentId, которые пользователь выключил из контекста этой карточки */
+  excludedAttachmentIds?: string[];
+  /** Переключить включённость конкретного attachmentId в контексте */
+  onToggleAttachmentItem?: (attachmentId: string) => void;
   neuroSearchResults?: import('@/types/embeddings').SearchResult[]; // Добавляем проп
 }> = ({
   isOpen,
   onClose,
+  currentNodeId,
   directParents,
   ancestorChain,
   quote,
   quoteSourceNodeId,
   excludedContextNodeIds = [],
   onToggleContextItem,
+  excludedAttachmentIds = [],
+  onToggleAttachmentItem,
   neuroSearchResults = [], // Значение по умолчанию
 }) => {
     // ===========================================================================
@@ -191,7 +246,14 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
     // STATE
     // ===========================================================================
 
-    // Состояние свернутых блоков
+    // Состояние свернутых блоков.
+    //
+    // Важно:
+    // - Мы храним НЕ nodeId, а `UiContextBlock.key`.
+    // - Потому что теперь блоки бывают двух типов:
+    //   - node (nodeId = id ноды)
+    //   - attachment (nodeId = attachmentId)
+    // - `key` гарантирует уникальность и не смешивает домены ID.
     const [collapsedBlockIds, setCollapsedBlockIds] = React.useState<Set<string>>(new Set());
 
     // ===========================================================================
@@ -277,13 +339,13 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
       }
     }, [isOpen]);
 
-    const toggleCollapse = (blockId: string) => {
+    const toggleCollapse = (blockKey: string) => {
       setCollapsedBlockIds(prev => {
         const next = new Set(prev);
-        if (next.has(blockId)) {
-          next.delete(blockId);
+        if (next.has(blockKey)) {
+          next.delete(blockKey);
         } else {
-          next.add(blockId);
+          next.add(blockKey);
         }
         return next;
       });
@@ -293,7 +355,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
      * Свернуть всё
      */
     const handleCollapseAll = () => {
-      const allIds = new Set(contextBlocks.map(b => b.nodeId));
+      const allIds = new Set(contextBlocks.map(b => b.key));
       setCollapsedBlockIds(allIds);
     };
 
@@ -316,6 +378,14 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
     
     // Получаем все ноды для поиска виртуальных дедушек по neuroSearchNodeIds
     const nodes = useCanvasStore(state => state.nodes);
+    // Экшены, которые нужны для "прикрепить как ссылку"
+    const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+
+    /**
+     * Активный холст (canvasId) нужен, чтобы строить URL выдачи вложений:
+     * /api/attachments/<canvasId>/<attachmentId>
+     */
+    const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
 
     // ===========================================================================
     // NEURO SEARCH STATE (ZUSTAND)
@@ -406,6 +476,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           const isStale = false; 
 
           blocks.push({
+            key: `node:neuro-search:${result.nodeId}`,
+            blockKind: 'node',
             nodeId: result.nodeId,
             prompt: result.prompt || 'Без вопроса',
             type: 'neuro-search',
@@ -421,6 +493,180 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           });
         });
       }
+
+      // =========================================================================
+      // ЧАСТЬ 0.5: ВЛОЖЕНИЯ (ATTACHMENTS) КАК КОНТЕКСТ
+      // =========================================================================
+      //
+      // Требование:
+      // - "контекст каждого вложения должен быть отдельным блоком" с возможностью отключения
+      // - "вложения ведут себя как предки":
+      //   - у прямого потомка — полный документ (server inline по attachmentId)
+      //   - у дальних потомков — суммаризация/суть документа
+      //
+      // В этой модалке мы показываем:
+      // - вложения текущей карточки
+      // - вложения прямых родителей
+      // - вложения более дальних предков
+      //
+      // ВАЖНО:
+      // - Мы НЕ грузим полный текст файла здесь по умолчанию, чтобы:
+      //   1) не тратить время/трафик
+      //   2) не дублировать функционал превью
+      // - Для текста показываем summary/excerpt, если они сохранены в node.data.
+      const normalizeStringMap = (v: unknown): Record<string, string> => {
+        if (!v || typeof v !== 'object') return {};
+        const obj = v as Record<string, unknown>;
+        const out: Record<string, string> = {};
+        for (const [k, val] of Object.entries(obj)) {
+          if (typeof val === 'string') out[k] = val;
+        }
+        return out;
+      };
+
+      /**
+       * Нормализация “описания изображения” для отображения/контекста.
+       *
+       * Новая семантика:
+       * - node.data.attachmentImageDescriptions[attachmentId] содержит УЖЕ описание (caption-only),
+       *   без OCR и без маркеров.
+       *
+       * Backward-compat:
+       * - в старых данных там мог быть combined "OCR: ... Описание: ...".
+       * - мы безопасно вырезаем часть после "Описание:"/"DESCRIPTION:".
+       *
+       * Важно:
+       * - даже для владельца мы НЕ хотим показывать OCR/вербатим-текст:
+       *   пользователь попросил уйти от OCR и не протаскивать текст (особенно код).
+       * - превью изображения и просмотр файла решаются отдельным UI (attachments preview).
+       */
+      const normalizeImageDescription = (storedText: string): string => {
+        const raw = (storedText || '').trim();
+        if (!raw) return '';
+
+        const descMarkerRu = /(^|\n)Описание:\s*/i;
+        const descIdxRu = raw.search(descMarkerRu);
+        if (descIdxRu !== -1) return raw.slice(descIdxRu).replace(descMarkerRu, '').trim();
+
+        const descMarkerEn = /(^|\n)DESCRIPTION:\s*/i;
+        const descIdxEn = raw.search(descMarkerEn);
+        if (descIdxEn !== -1) return raw.slice(descIdxEn).replace(descMarkerEn, '').trim();
+
+        const hasOcrMarker = /(^|\n)\s*OCR(_TEXT)?:\s*/i.test(raw);
+        if (hasOcrMarker) return '';
+
+        return raw;
+      };
+
+      const getAttachmentText = (
+        owner: NeuroNode,
+        attachmentId: string,
+        preferSummary: boolean
+      ): { text: string; kind: 'full' | 'summary' } => {
+        const summaries = normalizeStringMap(owner.data.attachmentSummaries);
+        const excerpts = normalizeStringMap(owner.data.attachmentExcerpts);
+        const imageDescriptions = normalizeStringMap(owner.data.attachmentImageDescriptions);
+
+        const summary = (summaries[attachmentId] || '').trim();
+        const excerpt = (excerpts[attachmentId] || '').trim();
+        const imageDesc = (imageDescriptions[attachmentId] || '').trim();
+
+        // Изображения: для контекста используем только description (caption-only).
+        if (imageDesc) {
+          // И для “владельца”, и для “потомков” показываем один и тот же безопасный текст:
+          // - новая версия: уже description
+          // - старая версия: вырезаем “Описание:” часть из combined (best-effort)
+          const textForThisBlock = normalizeImageDescription(imageDesc);
+          // Если описания нет — показываем понятный placeholder.
+          const safeText = textForThisBlock.trim() || '(нет описания)';
+          return { text: safeText, kind: preferSummary ? 'summary' : 'full' };
+        }
+
+        // Если мы "предпочитаем summary" (для дальних предков) — сначала summary, потом excerpt.
+        if (preferSummary) {
+          if (summary) return { text: summary, kind: 'summary' };
+          if (excerpt) return { text: excerpt, kind: 'summary' }; // это всё равно "суть", даже если это начало документа
+          return { text: '', kind: 'summary' };
+        }
+
+        // Для уровня 0 (текущая/родитель) мы считаем, что документ будет подмешан как "full",
+        // но для UI показываем excerpt/summary как быстрый preview.
+        if (excerpt) return { text: excerpt, kind: 'full' };
+        if (summary) return { text: summary, kind: 'full' };
+        return { text: '', kind: 'full' };
+      };
+
+      const pushAttachmentBlocks = (
+        owner: NeuroNode,
+        level: number,
+        levelName: string,
+        preferSummary: boolean
+      ) => {
+        const atts = Array.isArray(owner.data.attachments)
+          ? (owner.data.attachments as NodeAttachment[])
+          : [];
+        if (atts.length === 0) return;
+
+        atts.forEach((att) => {
+          if (!att || typeof att.attachmentId !== 'string') return;
+
+          // Тип блока по смыслу:
+          // - для дальних предков (preferSummary=true) показываем как summary
+          // - иначе как full
+          const type: ContextType = preferSummary ? 'summary' : 'full';
+
+          // Важно:
+          // - и для text, и для image мы возвращаем "текстовую суть" (summary/описание изображения),
+          //   чтобы потомки не тащили полный документ/картинку в контекст.
+          const { text, kind } = getAttachmentText(owner, att.attachmentId, preferSummary);
+
+          blocks.push({
+            // ВАЖНО:
+            // - attachmentId теперь может встречаться в нескольких карточках (это "ссылки" на один файл).
+            // - значит key обязан включать owner.id, иначе React будет коллапсить элементы.
+            key: `att:${owner.id}:${att.attachmentId}:${level}`,
+            blockKind: 'attachment',
+            attachment: att,
+            attachmentOwnerNodeId: owner.id,
+            nodeId: att.attachmentId, // для toggles используем attachmentId
+            prompt: att.originalName || att.attachmentId,
+            type,
+            content: text,
+            contentKind: kind,
+            level,
+            levelName,
+            nodeType: owner.type as 'neuro' | 'note',
+          });
+        });
+      };
+
+      // 0.5.1 Вложения ТЕКУЩЕЙ карточки (самый важный "локальный" контекст)
+      const currentNode = nodes.find((n) => n.id === currentNodeId);
+      if (currentNode) {
+        pushAttachmentBlocks(
+          currentNode,
+          0,
+          // Здесь мы используем levelName как "категорию", а не как родство,
+          // потому что это вложения самой текущей карточки.
+          t.contextModal.attachmentsThisCard,
+          false
+        );
+      }
+
+      // 0.5.2 Вложения ПРЯМЫХ родителей (для ребёнка это "контекст предка уровня 1")
+      directParents.forEach((parent, parentIndex) => {
+        if (!parent) return;
+        if (excludedContextNodeIds.includes(parent.id)) return;
+        const label = directParents.length > 1
+          ? format(t.contextModal.attachmentsParentN, { n: parentIndex + 1 })
+          : t.contextModal.attachmentsParent;
+        // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО:
+        // - прямой ребёнок НЕ должен получать полный документ/картинку родителя;
+        // - показываем и передаём только "суть":
+        //   - текст: summary/excerpt
+        //   - изображение: только описание (без OCR)
+        pushAttachmentBlocks(parent, 0, label, true);
+      });
 
       // =========================================================================
       // ЧАСТЬ 1: ПРЯМЫЕ РОДИТЕЛИ
@@ -466,6 +712,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
         if (!content && !quoteContent && !parent.data.prompt) return;
 
         blocks.push({
+          key: `node:parent:${parent.id}`,
+          blockKind: 'node',
           nodeId: parent.id,
           prompt: parent.data.prompt || '',
           type,
@@ -528,6 +776,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           if (!content && !nsNode.data.prompt) return;
 
           blocks.push({
+            key: `node:virtual-grandparent:${parent.id}:${nsNodeId}:${nsIndex}`,
+            blockKind: 'node',
             nodeId: nsNodeId,
             prompt: nsNode.data.prompt || '',
             type: 'neuro-search',
@@ -650,6 +900,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
         if (!content && !quoteContent && !ancestor.data.prompt) return;
 
         blocks.push({
+          key: `node:ancestor:${ancestor.id}:${index}`,
+          blockKind: 'node',
           nodeId: ancestor.id,
           prompt: ancestor.data.prompt || '',
           type,
@@ -661,6 +913,27 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
           // Сохраняем тип ноды для различения AI-карточек и личных заметок
           nodeType: ancestor.type as 'neuro' | 'note',
         });
+
+        // -------------------------------------------------------------------
+        // ВЛОЖЕНИЯ ДАЛЬНИХ ПРЕДКОВ (как "суммаризация документа")
+        // -------------------------------------------------------------------
+        //
+        // Для дальних предков мы НЕ хотим тянуть полный документ (контекст раздуется).
+        // Поэтому показываем (и передаём потомкам) только:
+        // - summary (если есть)
+        // - иначе excerpt (fallback)
+        //
+        // Важно: выключенные вложения (excludedAttachmentIds) остаются видимыми в UI,
+        // но мы будем визуально подсвечивать их как "excluded" на уровне рендера.
+        const ancestorLevel = index + 1; // 1 = дедушка, 2 = прадедушка, ...
+        pushAttachmentBlocks(
+          ancestor,
+          ancestorLevel,
+          format(t.contextModal.attachmentsOfLevel, { level: getLevelName(ancestorLevel) }),
+          // Для НЕ-владельца мы всегда предпочитаем "суть" (не полный документ).
+          // Это предотвращает раздувание контекста и соответствует продуктовой логике.
+          true
+        );
 
         // =======================================================================
         // ВИРТУАЛЬНЫЕ ПРАДЕДУШКИ (NeuroSearch от этого предка)
@@ -706,6 +979,8 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
             if (!nsContent && !nsNode.data.prompt) return;
 
             blocks.push({
+              key: `node:virtual-ancestor:${ancestor.id}:${nsNodeId}:${nsIndex}`,
+              blockKind: 'node',
               nodeId: nsNodeId,
               prompt: nsNode.data.prompt || '',
               type: 'neuro-search',
@@ -721,7 +996,22 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
       return blocks;
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directParents, ancestorChain, quote, quoteSourceNodeId, useSummarization, t, neuroSearchResults, nodes, excludedContextNodeIds]);
+    }, [
+      directParents,
+      ancestorChain,
+      quote,
+      quoteSourceNodeId,
+      useSummarization,
+      t,
+      neuroSearchResults,
+      nodes,
+      excludedContextNodeIds,
+      currentNodeId,
+      // excludedAttachmentIds используется в рендере (isExcluded),
+      // но зависимость добавляем для ясности: если список изменится,
+      // хотим гарантированно перерисовать модалку.
+      excludedAttachmentIds,
+    ]);
 
     // ===========================================================================
     // РЕНДЕР
@@ -738,7 +1028,9 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
         <DialogContent
           ref={dialogContentRef}
-          className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
+          // Делаем окно шире и "резиновее", чтобы оно НЕ было ограничено размером карточки.
+          // Важно: DialogContent рендерится в Portal (body), поэтому это не зависит от ReactFlow трансформов.
+          className="w-[min(1100px,95vw)] max-w-none max-h-[90vh] overflow-hidden flex flex-col"
         >
           {/* Шапка диалога */}
           {/* Шапка диалога */}
@@ -795,12 +1087,38 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
             ) : (
               // Список блоков контекста
               contextBlocks.map((block, index) => {
-                const isExcluded = excludedContextNodeIds.includes(block.nodeId);
-                const isCollapsed = collapsedBlockIds.has(block.nodeId);
+                // ВАЖНО:
+                // - для нод используем excludedContextNodeIds
+                // - для вложений используем excludedAttachmentIds
+                const isExcluded =
+                  block.blockKind === 'attachment'
+                    ? excludedAttachmentIds.includes(block.nodeId)
+                    : excludedContextNodeIds.includes(block.nodeId);
+
+                // Сворачивание — по уникальному ключу
+                const isCollapsed = collapsedBlockIds.has(block.key);
+
+                /**
+                 * ВАЖНОЕ РАЗДЕЛЕНИЕ "ВЛАДЕЛЕЦ vs ПОТОМОК" ДЛЯ ВЛОЖЕНИЙ:
+                 *
+                 * - Если вложение прикреплено к ТЕКУЩЕЙ карточке (owner === currentNodeId),
+                 *   то пользователь явно сделал это вложение частью контекста этой карточки,
+                 *   и мы можем показывать:
+                 *   - превью картинки,
+                 *   - описание изображения (caption-only) в UI.
+                 *
+                 * - Если вложение пришло из РОДИТЕЛЯ/ПРЕДКА (owner !== currentNodeId),
+                 *   то это "наследуемый контекст":
+                 *   - Картинку НЕ показываем (чтобы потомки не "таскали" изображения визуально),
+                 *   - Показываем только ОПИСАНИЕ (caption-only),
+                 *   - Если нужно реально дать картинку в контекст этой карточки — пользователь жмёт "Прикрепить".
+                 */
+                const isAttachmentBlock = block.blockKind === 'attachment';
+                const isAttachmentOwnedByCurrent = isAttachmentBlock && block.attachmentOwnerNodeId === currentNodeId;
 
                 return (
                   <div
-                    key={block.nodeId}
+                    key={block.key}
                     className={cn(
                       'rounded-lg border transition-colors',
                       'p-4',
@@ -815,12 +1133,22 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                       <div className="flex items-center gap-3">
                         {/* Чекбокс исключения контекста */}
                         <button
-                          onClick={() => onToggleContextItem?.(block.nodeId)}
+                          onClick={() => {
+                            if (block.blockKind === 'attachment') {
+                              onToggleAttachmentItem?.(block.nodeId);
+                            } else {
+                              onToggleContextItem?.(block.nodeId);
+                            }
+                          }}
                           className={cn(
                             "flex items-center justify-center w-5 h-5 rounded hover:bg-muted/50 transition-colors",
                             isExcluded ? "text-muted-foreground" : "text-primary"
                           )}
-                          title={isExcluded ? "Включить контекст" : "Исключить из контекста"}
+                          title={
+                            block.blockKind === 'attachment'
+                              ? (isExcluded ? "Включить вложение в контекст" : "Исключить вложение из контекста")
+                              : (isExcluded ? "Включить контекст" : "Исключить из контекста")
+                          }
                         >
                           {isExcluded ? (
                             // Иконка Square (пустой чекбокс) из lucide-react - симуляция uncheck
@@ -845,6 +1173,11 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                           {/* Иконка мозга для NeuroSearch в заголовке */}
                           {block.type === 'neuro-search' && (
                              <Brain className="w-4 h-4 text-indigo-500" />
+                          )}
+
+                          {/* Иконка "скрепка" для вложений */}
+                          {block.blockKind === 'attachment' && (
+                            <Paperclip className="w-4 h-4 text-muted-foreground" />
                           )}
                           
                           {/**
@@ -887,6 +1220,112 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {/* =====================================================================
+                            ACTION: "ПРИКРЕПИТЬ К ЭТОЙ КАРТОЧКЕ" (как ссылка на файл холста)
+
+                            Зачем:
+                            - файл один на холст (глобальный по имени)
+                            - карточки хранят ссылки (attachmentId)
+                            - пользователь может "подключить" к ребёнку тот же документ,
+                              чтобы он стал ПОЛНЫМ контекстом уже для этой карточки (владельца).
+
+                            Важно:
+                            - Мы НЕ копируем файл на диск (без дублей).
+                            - Мы копируем МЕТАДАННЫЕ "текстовой сути" в data текущей карточки:
+                              - для text: excerpt/summary
+                              - для image: описание (caption-only) как текстовый суррогат изображения
+                           ===================================================================== */}
+                        {block.blockKind === 'attachment' &&
+                          block.attachment &&
+                          block.attachmentOwnerNodeId &&
+                          block.attachmentOwnerNodeId !== currentNodeId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => {
+                                const ownerId = block.attachmentOwnerNodeId!;
+                                const att = block.attachment!;
+                                const attId = att.attachmentId;
+
+                                // 1) Находим owner и current ноды
+                                const ownerNode = nodes.find((n) => n.id === ownerId) || null;
+                                const currentNode = nodes.find((n) => n.id === currentNodeId) || null;
+                                if (!ownerNode || !currentNode) return;
+
+                                // 2) Если уже прикреплено — ничего не делаем
+                                const currentAtts = Array.isArray(currentNode.data.attachments)
+                                  ? (currentNode.data.attachments as NodeAttachment[])
+                                  : [];
+                                if (currentAtts.some((a) => a?.attachmentId === attId)) return;
+
+                                // 3) Добавляем ссылку на тот же attachmentId
+                                const nextAtts = [...currentAtts, att];
+
+                                // 4) Копируем метаданные "суть документа" из owner -> current,
+                                //    чтобы потомки current могли использовать суммаризацию/описание.
+                                const safeStringMap = (v: unknown): Record<string, string> => {
+                                  if (!v || typeof v !== 'object') return {};
+                                  const obj = v as Record<string, unknown>;
+                                  const out: Record<string, string> = {};
+                                  for (const [k, val] of Object.entries(obj)) {
+                                    if (typeof val === 'string') out[k] = val;
+                                  }
+                                  return out;
+                                };
+
+                                const ownerSummaries = safeStringMap(ownerNode.data.attachmentSummaries);
+                                const ownerExcerpts = safeStringMap(ownerNode.data.attachmentExcerpts);
+                                const ownerImageDesc = safeStringMap(ownerNode.data.attachmentImageDescriptions);
+
+                                const currentSummaries = safeStringMap(currentNode.data.attachmentSummaries);
+                                const currentExcerpts = safeStringMap(currentNode.data.attachmentExcerpts);
+                                const currentImageDesc = safeStringMap(currentNode.data.attachmentImageDescriptions);
+
+                                const patch: Partial<NeuroNodeData> = {
+                                  attachments: nextAtts,
+                                  updatedAt: Date.now(),
+                                };
+
+                                // Текстовые вложения
+                                if (att.kind === 'text') {
+                                  const nextExcerpts = { ...currentExcerpts };
+                                  const nextSummaries = { ...currentSummaries };
+                                  if (ownerExcerpts[attId] && !nextExcerpts[attId]) {
+                                    nextExcerpts[attId] = ownerExcerpts[attId];
+                                  }
+                                  if (ownerSummaries[attId] && !nextSummaries[attId]) {
+                                    nextSummaries[attId] = ownerSummaries[attId];
+                                  }
+                                  if (Object.keys(nextExcerpts).length > 0) patch.attachmentExcerpts = nextExcerpts;
+                                  if (Object.keys(nextSummaries).length > 0) patch.attachmentSummaries = nextSummaries;
+                                }
+
+                                // Изображения
+                                if (att.kind === 'image') {
+                                  const next = { ...currentImageDesc };
+                                  if (ownerImageDesc[attId] && !next[attId]) {
+                                    next[attId] = ownerImageDesc[attId];
+                                  }
+                                  if (Object.keys(next).length > 0) patch.attachmentImageDescriptions = next;
+                                }
+
+                                updateNodeData(currentNodeId, patch);
+                                // STALE v2:
+                                // - Подключение вложения как "ссылки" меняет PRIMARY-контекст ТОЛЬКО
+                                //   текущей карточки (владельца).
+                                // - Мы намеренно НЕ каскадим stale на потомков здесь, чтобы не получить
+                                //   постоянную подсветку статусов при любых действиях в контекстном окне.
+                                // - Если у владельца есть response, store (updateNodeData) сам пометит его stale.
+                                // - Потомки станут stale только при Generate/Regenerate владельца
+                                //   или при фактическом изменении response владельца.
+                              }}
+                              title="Прикрепить этот файл к текущей карточке (как ссылку, без копирования файла)"
+                            >
+                              Прикрепить
+                            </Button>
+                          )}
+
                         {/* Badge с типом контекста */}
                         <div
                           className={cn(
@@ -900,7 +1339,7 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
 
                         {/* Кнопка сворачивания */}
                         <button
-                          onClick={() => toggleCollapse(block.nodeId)}
+                          onClick={() => toggleCollapse(block.key)}
                           className="p-1 hover:bg-muted/50 rounded transition-colors text-muted-foreground"
                         >
                           <ChevronRight className={cn("w-4 h-4 transition-transform", !isCollapsed && "rotate-90")} />
@@ -915,8 +1354,15 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                         {block.prompt && (
                           <div className="mb-3 p-2 rounded bg-muted/50">
                             <div className="text-xs text-muted-foreground mb-1 font-medium">
-                              {/* Для личных заметок показываем "Название:", для AI-карточек - "Вопрос:" */}
-                              {block.nodeType === 'note' ? t.contextModal.noteTitle : t.contextModal.question}
+                              {/**
+                               * Заголовок "prompt" в зависимости от типа блока:
+                               * - attachment: "Файл:"
+                               * - note: "Название:"
+                               * - neuro: "Вопрос:"
+                               */}
+                              {block.blockKind === 'attachment'
+                                ? t.contextModal.file
+                                : (block.nodeType === 'note' ? t.contextModal.noteTitle : t.contextModal.question)}
                             </div>
                             <div className="text-sm">{block.prompt}</div>
                           </div>
@@ -942,31 +1388,92 @@ export const ContextViewerModal: React.FC<ContextViewerModalProps & {
                           )}
 
                           {/* Основной контент (Контекст) */}
-                          {block.content && (
+                          {/**
+                           * ПРЕВЬЮ ИЗОБРАЖЕНИЯ:
+                           * - показываем ТОЛЬКО если это вложение прикреплено к текущей карточке (owner === currentNodeId)
+                           * - у потомков (вложения предков/родителей) картинку НЕ показываем
+                           */}
+                          {block.blockKind === 'attachment' &&
+                            block.attachment?.kind === 'image' &&
+                            isAttachmentOwnedByCurrent && (
                             <div>
                               <div className="text-xs text-muted-foreground mb-1 font-medium">
-                                {/* Для личных заметок показываем "Содержание:", для AI-карточек - логику с типами */}
-                                {block.nodeType === 'note'
-                                  ? t.contextModal.noteContent
-                                  : (() => {
-                                      /**
-                                       * Лейбл контента для AI-карточек.
-                                       *
-                                       * Ключевой принцип:
-                                       * - Мы подписываем не "тип блока" (quote/full/summary),
-                                       *   а то, что реально отображается в `block.content`.
-                                       *
-                                       * Пример проблемного кейса (исправлено этой логикой):
-                                       * - Ребёнок цитирует родителя → `block.type = 'quote'`
-                                       * - При включённой суммаризации `block.content` берётся из `parent.summary`
-                                       * - Ранее UI показывал лейбл "Ответ:", хотя это была суммаризация.
-                                       */
-                                      const isSummaryContent = block.contentKind === 'summary';
-                                      // `t.contextModal.summary` используется также в badge/легенде без двоеточия,
-                                      // поэтому для лейбла добавляем ":" вручную для единообразия с "Ответ:".
-                                      const summaryLabel = `${t.contextModal.summary}:`;
-                                      return isSummaryContent ? summaryLabel : t.contextModal.response;
-                                    })()}
+                                {t.contextModal.attachmentImage}
+                              </div>
+                              <div className="rounded-md border border-border overflow-hidden bg-muted/10">
+                                {activeCanvasId ? (
+                                  <Image
+                                    // Вложение отдаётся нашим API-роутом.
+                                    // Используем относительный URL — Next сам подставит origin.
+                                    src={`/api/attachments/${activeCanvasId}/${block.attachment.attachmentId}`}
+                                    alt={block.attachment.originalName || block.attachment.attachmentId}
+                                    // Next/Image требует width/height для расчёта соотношения сторон и предотвращения layout shift.
+                                    // Точные размеры заранее неизвестны, поэтому задаём "большой" безопасный baseline,
+                                    // а адаптивность обеспечиваем через классы Tailwind (w-full h-auto) + sizes.
+                                    width={1600}
+                                    height={900}
+                                    sizes="(max-width: 1100px) 95vw, 1100px"
+                                    className="w-full h-auto"
+                                    draggable={false}
+                                    // Не включаем оптимизацию через Next Image Optimizer для /api/attachments,
+                                    // чтобы избежать потенциальных проблем с доступом/заголовками и лишних вычислений.
+                                    unoptimized
+                                  />
+                                ) : (
+                                  <div className="p-3 text-xs text-muted-foreground">
+                                    Нет активного холста: невозможно загрузить изображение.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Для изображений показываем описание отдельным блоком, чтобы не путать с превью "Изображение:" */}
+                          {block.blockKind === 'attachment' && block.attachment?.kind === 'image' && block.content && (
+                            <div className="mt-3">
+                              <div className="text-xs text-muted-foreground mb-1 font-medium">
+                                {/**
+                                 * ЛЕЙБЛ ДЛЯ ТЕКСТА ПО ИЗОБРАЖЕНИЯМ:
+                                 * - мы больше НЕ показываем OCR и не храним его как отдельный слой
+                                 * - поэтому лейбл всегда "Описание:"
+                                 */}
+                                {'Описание:'}
+                              </div>
+                              <div
+                                data-context-card-inner-scroll="true"
+                                className={cn(
+                                  'prose prose-sm dark:prose-invert max-w-none',
+                                  'prose-p:my-1.5 prose-headings:my-2',
+                                  'max-h-[300px] overflow-y-auto pr-2 custom-scrollbar'
+                                )}
+                              >
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {block.content}
+                                </ReactMarkdown>
+                              </div>
+                            </div>
+                          )}
+
+                          {block.content && !(block.blockKind === 'attachment' && block.attachment?.kind === 'image') && (
+                            <div>
+                              <div className="text-xs text-muted-foreground mb-1 font-medium">
+                                {/**
+                                 * Лейбл контента:
+                                 * - attachment: "Текст документа:" / "Изображение:"
+                                 * - note: "Содержание:"
+                                 * - neuro: "Ответ:" или "Суммаризация:"
+                                 */}
+                                {block.blockKind === 'attachment'
+                                  ? (block.attachment?.kind === 'image'
+                                    ? t.contextModal.attachmentImage
+                                    : t.contextModal.attachmentText)
+                                  : (block.nodeType === 'note'
+                                    ? t.contextModal.noteContent
+                                    : (() => {
+                                        const isSummaryContent = block.contentKind === 'summary';
+                                        const summaryLabel = `${t.contextModal.summary}:`;
+                                        return isSummaryContent ? summaryLabel : t.contextModal.response;
+                                      })())}
                               </div>
                               <div
                                 /**

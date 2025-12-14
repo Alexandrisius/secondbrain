@@ -259,7 +259,12 @@ export const ru = {
     parentContextUsed: 'Использован контекст родительской ноды',
     neuroSearchContext: 'NeuroSearch контекст',
     multipleParentContextUsed: 'Использован контекст от {count} родительских нод',
+    attachmentsContextUsed: 'Использован контекст из вложений',
+    attachmentsSuffix: ' + вложения',
     viewFullContext: 'Нажмите для просмотра полного контекста',
+    // Маркер на кнопке контекста (✱) — сигнал, что пользователь выключил часть контекста
+    // (карточки/вложения) и итоговый контекст "настроен".
+    contextHasExclusions: 'Есть исключения в контексте',
 
     // Stale состояние
     staleContext: 'Контекст изменён — требуется регенерация',
@@ -320,6 +325,13 @@ export const ru = {
     question: 'Вопрос:',
     response: 'Ответ:',
     quoteLabel: 'Цитата:',
+    file: 'Файл:',
+    attachmentText: 'Текст документа:',
+    attachmentImage: 'Изображение:',
+    attachmentsThisCard: 'Вложения этой карточки',
+    attachmentsParent: 'Вложения родителя',
+    attachmentsParentN: 'Вложения родителя {n}',
+    attachmentsOfLevel: 'Вложения: {level}',
     excluded: 'Исключен из контекста',
     neuroSearchSimilar: 'Похожая тема (NeuroSearch)',
 

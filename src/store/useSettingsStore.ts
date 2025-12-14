@@ -871,6 +871,48 @@ export const useSettingsStore = create<SettingsStore>()(
         defaultCardContentHeight: state.defaultCardContentHeight,
         apiKeyStorageMode: state.apiKeyStorageMode,
       }),
+
+      /**
+       * Автоподхват API-ключа из OS vault после гидратации persisted-настроек.
+       *
+       * Почему это нужно:
+       * - В режиме `apiKeyStorageMode: 'osVault'` ключ хранится НЕ в localStorage,
+       *   а в защищённом хранилище ОС (Electron safeStorage).
+       * - Следовательно, после перезапуска приложения `apiKey` в store всегда пустой,
+       *   и его нужно восстановить вручную.
+       * - Раньше это происходило только при открытии SettingsModal → UX плохой.
+       *
+       * Почему именно onRehydrateStorage:
+       * - Это гарантированный момент, когда persisted-данные (включая apiKeyStorageMode)
+       *   уже применены к store.
+       * - Мы можем принять решение “надо ли грузить ключ” сразу при старте приложения.
+       *
+       * ВАЖНО (безопасность и стабильность):
+       * - Мы НЕ логируем ключ и не бросаем ошибки наружу.
+       * - В web-режиме window.electronAPI отсутствует → loadApiKeyFromSecureStore вернёт null.
+       * - Мы НЕ перетираем ключ, если он уже есть в памяти (например, пользователь успел ввести).
+       */
+      onRehydrateStorage: () => (state, error) => {
+        // Если произошла ошибка rehydrate — не пытаемся делать дополнительные действия.
+        if (error) return;
+
+        // Zustand может передать undefined в edge-кейсах — защищаемся.
+        if (!state) return;
+
+        // Загружаем ключ только если пользователь выбрал режим OS vault.
+        if (state.apiKeyStorageMode !== 'osVault') return;
+
+        // Если ключ уже есть в памяти — не трогаем.
+        if (typeof state.apiKey === 'string' && state.apiKey.trim().length > 0) return;
+
+        // Вызов асинхронного метода без ожидания (чтобы не блокировать init).
+        // loadApiKeyFromSecureStore сам аккуратно обработает web/electron и ошибки.
+        try {
+          void state.loadApiKeyFromSecureStore();
+        } catch {
+          // Никогда не падаем из-за автоподхвата ключа.
+        }
+      },
       
       // Миграция со старой версии
       migrate: (persistedState, version) => {

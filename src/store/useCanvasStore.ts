@@ -226,6 +226,49 @@ const computeContextHash = (
 
   // Получаем список исключенных нод
   const excludedIds = node.data.excludedContextNodeIds || [];
+  // Получаем список исключенных вложений (attachmentId)
+  //
+  // ВАЖНО:
+  // - этот список хранится в ТЕКУЩЕЙ ноде (а не в ноде-источнике),
+  //   потому что это "настройка контекста" для конкретной генерации.
+  const excludedAttachmentIds = node.data.excludedAttachmentIds || [];
+
+  /**
+   * Нормализация “описания изображения” для иерархического контекста и контекстного хэша.
+   *
+   * Почему это важно:
+   * - stale-логика должна хэшировать РОВНО ТО, что реально участвует в контексте потомков.
+   * - иначе получим рассинхрон: UI/LLM видит одно, а stale переключается от другого.
+   *
+   * Новая семантика:
+   * - `attachmentImageDescriptions[attachmentId]` теперь хранит уже готовое описание (caption-only),
+   *   без OCR и без маркеров.
+   *
+   * Backward-compat (старые холсты):
+   * - там мог лежать combined "OCR: ... \n\nОписание: ...".
+   * - мы вырезаем только часть описания, а OCR намеренно не пропускаем.
+   */
+  const normalizeImageDescriptionForContext = (storedText: string): string => {
+    const raw = (storedText || '').trim();
+    if (!raw) return '';
+
+    // Legacy RU marker.
+    const descMarkerRu = /(^|\n)Описание:\s*/i;
+    const descIdxRu = raw.search(descMarkerRu);
+    if (descIdxRu !== -1) return raw.slice(descIdxRu).replace(descMarkerRu, '').trim();
+
+    // Legacy EN marker.
+    const descMarkerEn = /(^|\n)DESCRIPTION:\s*/i;
+    const descIdxEn = raw.search(descMarkerEn);
+    if (descIdxEn !== -1) return raw.slice(descIdxEn).replace(descMarkerEn, '').trim();
+
+    // Если это явно OCR-формат без маркера описания — не рискуем.
+    const hasOcrMarker = /(^|\n)\s*OCR(_TEXT)?:\s*/i.test(raw);
+    if (hasOcrMarker) return '';
+
+    // Новая версия: это уже чистое описание.
+    return raw;
+  };
 
   // 1. ПРОМПТ самой карточки (всегда включается) - НОРМАЛИЗОВАН
   contextParts.push(`PROMPT:${normalizeForHash(node.data.prompt)}`);
@@ -234,6 +277,47 @@ const computeContextHash = (
   if (node.data.quote) {
     contextParts.push(`QUOTE:${normalizeForHash(node.data.quote)}`);
     contextParts.push(`QUOTE_SOURCE:${node.data.quoteSourceNodeId || ''}`);
+  }
+
+  // =========================================================================
+  // 2.5 ВЛОЖЕНИЯ (ATTACHMENTS)
+  // =========================================================================
+  //
+  // ВАЖНО:
+  // - Вложения влияют на итоговый ответ LLM (они подмешиваются в /api/chat).
+  // - Значит они обязаны участвовать в хэше контекста, иначе stale-логика
+  //   будет считать “контекст тот же”, хотя фактически он изменился.
+  //
+  // Что именно хэшируем:
+  // - attachmentId (основной идентификатор файла)
+  // - kind / ingestionMode / sizeBytes (чтобы изменение метаданных тоже считалось изменением контекста)
+  // - fileHash / fileUpdatedAt (критично для "глобальных файлов" на холст):
+  //   при загрузке файла с тем же именем attachmentId остаётся прежним,
+  //   но содержимое файла меняется → контекст должен считаться изменившимся.
+  // - порядок важен: он влияет на порядок подмешивания (особенно для изображений).
+  if (Array.isArray(node.data.attachments) && node.data.attachments.length > 0) {
+    node.data.attachments.forEach((att: unknown, index: number) => {
+      const o = att && typeof att === 'object' ? (att as Record<string, unknown>) : null;
+      const attachmentId = o && typeof o.attachmentId === 'string' ? o.attachmentId : '';
+      const kind = o && typeof o.kind === 'string' ? o.kind : '';
+      const ingestionMode = o && typeof o.ingestionMode === 'string' ? o.ingestionMode : '';
+      const sizeBytes = o && typeof o.sizeBytes === 'number' ? o.sizeBytes : 0;
+      const fileHash = o && typeof o.fileHash === 'string' ? o.fileHash : '';
+      const fileUpdatedAt = o && typeof o.fileUpdatedAt === 'number' ? o.fileUpdatedAt : 0;
+      contextParts.push(`ATT[${index}]:${attachmentId}|${kind}|${ingestionMode}|${sizeBytes}|${fileHash}|${fileUpdatedAt}`);
+    });
+  }
+
+  // 2.6 ИСКЛЮЧЕНИЯ ВЛОЖЕНИЙ (ATTACHMENTS EXCLUSIONS)
+  //
+  // Важно:
+  // - выключение/включение вложения в контекст меняет то, что получает LLM,
+  //   даже если сами файлы (attachments[]) не изменились.
+  // - значит excludedAttachmentIds обязаны участвовать в контекстном хэше.
+  if (Array.isArray(excludedAttachmentIds) && excludedAttachmentIds.length > 0) {
+    excludedAttachmentIds.forEach((attId: string, index: number) => {
+      contextParts.push(`ATT_EXCLUDED[${index}]:${attId}`);
+    });
   }
 
   // 3. Находим ПРЯМЫХ РОДИТЕЛЕЙ (через edges или parentId/parentIds)
@@ -271,6 +355,75 @@ const computeContextHash = (
       }
       // Prompt родителя - НОРМАЛИЗОВАН
       contextParts.push(`PARENT_PROMPT[${index}]:${normalizeForHash(parent.data.prompt)}`);
+
+      // -----------------------------------------------------------------------
+      // ВЛОЖЕНИЯ РОДИТЕЛЯ КАК "СУММАРИЗИРОВАННЫЙ КОНТЕКСТ"
+      // -----------------------------------------------------------------------
+      //
+      // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО:
+      // - полный контент вложений доступен только у карточки-владельца
+      // - в контекст ребёнка вложения родителей попадают как "суть":
+      //   - text: summary/excerpt
+      //   - image: ТОЛЬКО описание (без OCR)
+      //
+      // Поэтому "контекстный хэш" ребёнка обязан учитывать:
+      // - какие вложения есть у родителей
+      // - какая у них "версия" (fileHash/fileUpdatedAt)
+      // - какая сохранена суммаризация/описание (иначе stale не будет работать корректно)
+      //
+      // Важно:
+      // - мы НЕ добавляем полный текст документов в хэш
+      // - вместо этого берём короткие строки и хэшируем их как часть общей строки
+      const normalizeStringMap = (v: unknown): Record<string, string> => {
+        if (!v || typeof v !== 'object') return {};
+        const obj = v as Record<string, unknown>;
+        const out: Record<string, string> = {};
+        for (const [k, val] of Object.entries(obj)) {
+          if (typeof val === 'string') out[k] = val;
+        }
+        return out;
+      };
+
+      const clamp = (txt: string, maxChars: number) => {
+        const t = (txt || '').trim();
+        if (!t) return '';
+        return t.length <= maxChars ? t : t.slice(0, maxChars) + '...';
+      };
+
+      const parentSummaries = normalizeStringMap(parent.data.attachmentSummaries);
+      const parentExcerpts = normalizeStringMap(parent.data.attachmentExcerpts);
+      const parentImageDesc = normalizeStringMap(parent.data.attachmentImageDescriptions);
+
+      const parentAtts = Array.isArray(parent.data.attachments)
+        ? (parent.data.attachments as unknown[])
+        : [];
+
+      parentAtts.forEach((att, attIndex) => {
+        const ao = att && typeof att === 'object' ? (att as Record<string, unknown>) : null;
+        const attId = ao && typeof ao.attachmentId === 'string' ? ao.attachmentId : '';
+        if (!attId) return;
+        // Если пользователь В ТЕКУЩЕЙ ноде выключил этот attachmentId из контекста,
+        // то он НЕ должен влиять на контекстный хэш.
+        // Иначе stale будет срабатывать даже когда вложение "не используется".
+        if (excludedAttachmentIds.includes(attId)) return;
+
+        const kind = ao && typeof ao.kind === 'string' ? ao.kind : '';
+        const fileHash = ao && typeof ao.fileHash === 'string' ? ao.fileHash : '';
+        const fileUpdatedAt = ao && typeof ao.fileUpdatedAt === 'number' ? ao.fileUpdatedAt : 0;
+
+        // Выбираем "суть" (как в useNodeContext)
+        const snippet =
+          kind === 'text'
+            ? (parentSummaries[attId] || parentExcerpts[attId] || '')
+            : kind === 'image'
+              ? normalizeImageDescriptionForContext(parentImageDesc[attId] || '')
+              : '';
+
+        const snippetNorm = normalizeForHash(clamp(snippet, 500));
+        contextParts.push(
+          `PARENT_ATT[${index}][${attIndex}]:${attId}|${kind}|${fileHash}|${fileUpdatedAt}|${snippetNorm}`
+        );
+      });
     }
   });
 
@@ -310,13 +463,71 @@ const computeContextHash = (
 
       const grandparent = nodes.find((n) => n.id === grandparentId);
       if (grandparent) {
+        // Фиксируем индекс ОДНОГО предка, чтобы:
+        // - summary/prompt и его attachments попадали под одним и тем же ANC_IDX
+        // - не было коллизий вида: "attachments предка 0" помечены как "предок 1"
+        const ancIdx = ancestorIndex;
+
         // Для дальних предков берём summary (или сокращённый response) - НОРМАЛИЗОВАН
         const summaryContent = grandparent.data.summary
           || (grandparent.data.response?.slice(0, 300) + '...')
           || '';
-        contextParts.push(`ANCESTOR[${ancestorIndex}]:${normalizeForHash(summaryContent)}`);
+        contextParts.push(`ANCESTOR[${ancIdx}]:${normalizeForHash(summaryContent)}`);
         // Prompt предка - НОРМАЛИЗОВАН
-        contextParts.push(`ANCESTOR_PROMPT[${ancestorIndex}]:${normalizeForHash(grandparent.data.prompt)}`);
+        contextParts.push(`ANCESTOR_PROMPT[${ancIdx}]:${normalizeForHash(grandparent.data.prompt)}`);
+
+        // ---------------------------------------------------------------------
+        // ВЛОЖЕНИЯ ДАЛЬНИХ ПРЕДКОВ (как "суть документа")
+        // ---------------------------------------------------------------------
+        // Аналогично прямым родителям: для stale/hash нам нужно учитывать,
+        // что потомок реально "видит" из вложений предка (summary/описание изображения).
+        const normalizeStringMap = (v: unknown): Record<string, string> => {
+          if (!v || typeof v !== 'object') return {};
+          const obj = v as Record<string, unknown>;
+          const out: Record<string, string> = {};
+          for (const [k, val] of Object.entries(obj)) {
+            if (typeof val === 'string') out[k] = val;
+          }
+          return out;
+        };
+        const clamp = (txt: string, maxChars: number) => {
+          const t = (txt || '').trim();
+          if (!t) return '';
+          return t.length <= maxChars ? t : t.slice(0, maxChars) + '...';
+        };
+
+        const summaries = normalizeStringMap(grandparent.data.attachmentSummaries);
+        const excerpts = normalizeStringMap(grandparent.data.attachmentExcerpts);
+        const imageDesc = normalizeStringMap(grandparent.data.attachmentImageDescriptions);
+        const atts = Array.isArray(grandparent.data.attachments)
+          ? (grandparent.data.attachments as unknown[])
+          : [];
+
+        atts.forEach((att, attIndex) => {
+          const ao = att && typeof att === 'object' ? (att as Record<string, unknown>) : null;
+          const attId = ao && typeof ao.attachmentId === 'string' ? ao.attachmentId : '';
+          if (!attId) return;
+          // Аналогично прямым родителям: если attachmentId выключен в текущей ноде,
+          // он не должен участвовать в контекстном хэше.
+          if (excludedAttachmentIds.includes(attId)) return;
+          const kind = ao && typeof ao.kind === 'string' ? ao.kind : '';
+          const fileHash = ao && typeof ao.fileHash === 'string' ? ao.fileHash : '';
+          const fileUpdatedAt = ao && typeof ao.fileUpdatedAt === 'number' ? ao.fileUpdatedAt : 0;
+
+          const snippet =
+            kind === 'text'
+              ? (summaries[attId] || excerpts[attId] || '')
+              : kind === 'image'
+                ? normalizeImageDescriptionForContext(imageDesc[attId] || '')
+                : '';
+
+          const snippetNorm = normalizeForHash(clamp(snippet, 300));
+          contextParts.push(
+            `ANCESTOR_ATT[${ancIdx}][${attIndex}]:${attId}|${kind}|${fileHash}|${fileUpdatedAt}|${snippetNorm}`
+          );
+        });
+
+        // Увеличиваем индекс ПОСЛЕ того, как добавили и summary/prompt, и attachments
         ancestorIndex++;
 
         // Добавляем в очередь для дальнейшего обхода
@@ -336,6 +547,32 @@ const computeContextHash = (
     node.data.neuroSearchNodeIds.forEach((nsNodeId, index) => {
       // Пропускаем исключённые ноды
       if (excludedIds.includes(nsNodeId)) return;
+
+      // =====================================================================
+      // КРИТИЧНО ДЛЯ STALE: хэшируем САМ ФАКТ подключения виртуального родителя
+      // =====================================================================
+      //
+      // Почему это нужно:
+      // - NeuroSearch контекст влияет на LLM ответ владельца.
+      // - Если список `neuroSearchNodeIds` изменился, контекст владельца изменился,
+      //   даже если у конкретной найденной ноды:
+      //   - временно пустой response (например, карточка только создана),
+      //   - или prompt/response короткие/пустые,
+      //   - или нода по какой-то причине не нашлась в nodes (битые данные/индекс).
+      //
+      // Если хэшировать только nsNode.response/nsNode.prompt (как было раньше),
+      // то в крайних случаях хэш владельца может НЕ измениться и stale будет
+      // тут же сниматься reconcile-логикой, хотя пользователь реально включил
+      // виртуальных родителей.
+      //
+      // Поэтому мы добавляем в контекстный хэш стабильную подпись:
+      // - ID виртуального родителя
+      // - и его позицию в списке (порядок важен)
+      //
+      // ВАЖНО:
+      // - Мы делаем это ТОЛЬКО для НЕисключённых (excludedContextNodeIds) результатов,
+      //   чтобы выключение конкретной нейрокарточки корректно меняло хэш.
+      contextParts.push(`NS_ID[${index}]:${nsNodeId}`);
 
       const nsNode = nodes.find((n) => n.id === nsNodeId);
       if (nsNode) {
@@ -953,6 +1190,17 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             // Игнорируем переход пустое → пустое (undefined ↔ [])
             !(oldExcluded.length === 0 && newExcludedNormalized.length === 0);
 
+          // Аналогичная логика для excludedAttachmentIds:
+          // - `undefined` и `[]` считаем эквивалентными ("ничего не выключено")
+          // - но отличаем "патч не передали" от "патч явно очистили/изменили"
+          const oldExcludedAttachments = oldNode?.data.excludedAttachmentIds || [];
+          const hasExcludedAttachmentsPatch = Object.prototype.hasOwnProperty.call(data, 'excludedAttachmentIds');
+          const newExcludedAttachmentsRaw = data.excludedAttachmentIds;
+          const newExcludedAttachmentsNormalized = (newExcludedAttachmentsRaw || []);
+          const excludedAttachmentsChanged = hasExcludedAttachmentsPatch &&
+            JSON.stringify(oldExcludedAttachments) !== JSON.stringify(newExcludedAttachmentsNormalized) &&
+            !(oldExcludedAttachments.length === 0 && newExcludedAttachmentsNormalized.length === 0);
+
           const oldNeuroSearch = oldNode?.data.neuroSearchNodeIds || [];
           const hasNeuroSearchPatch = Object.prototype.hasOwnProperty.call(data, 'neuroSearchNodeIds');
           const newNeuroSearchRaw = data.neuroSearchNodeIds;
@@ -964,7 +1212,84 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             // Игнорируем переход пустое → пустое (undefined ↔ [])
             !(oldNeuroSearch.length === 0 && newNeuroSearchNormalized.length === 0);
           
-          const contextConfigChanged = excludedChanged || neuroSearchChanged;
+          // =========================================================================
+          // ИЗМЕНЕНИЯ ВЛОЖЕНИЙ / ИХ "СУТИ" (excerpt/summary/описание изображения)
+          // =========================================================================
+          //
+          // Почему это важно:
+          // - Вложения являются частью контекста LLM.
+          // - Кроме самих ссылок (attachments[]) у нас есть дополнительные поля,
+          //   которые влияют на потомков:
+          //   - attachmentExcerpts / attachmentSummaries (тексты)
+          //   - attachmentImageDescriptions (OCR + подробное описание)
+          //
+          // Если эти поля поменялись, а у карточки уже есть response,
+          // она должна становиться stale (и должна иметь возможность автоматически снять stale,
+          // если пользователь "откатил" изменения и контекст вернулся к lastContextHash).
+          const hasAttachmentsPatch = Object.prototype.hasOwnProperty.call(data, 'attachments');
+          const oldAttachments = Array.isArray(oldNode?.data.attachments) ? oldNode!.data.attachments : [];
+          const newAttachments = Array.isArray(data.attachments) ? (data.attachments as unknown[]) : [];
+          const attachmentsChanged = hasAttachmentsPatch &&
+            JSON.stringify(oldAttachments) !== JSON.stringify(newAttachments) &&
+            !(oldAttachments.length === 0 && newAttachments.length === 0);
+
+          const hasExcerptsPatch = Object.prototype.hasOwnProperty.call(data, 'attachmentExcerpts');
+          const oldExcerpts = (oldNode?.data.attachmentExcerpts && typeof oldNode.data.attachmentExcerpts === 'object')
+            ? oldNode.data.attachmentExcerpts
+            : {};
+          const newExcerpts = data.attachmentExcerpts && typeof data.attachmentExcerpts === 'object'
+            ? data.attachmentExcerpts
+            : {};
+          const excerptsChanged = hasExcerptsPatch &&
+            JSON.stringify(oldExcerpts) !== JSON.stringify(newExcerpts) &&
+            !(Object.keys(oldExcerpts).length === 0 && Object.keys(newExcerpts).length === 0);
+
+          const hasSummariesPatch = Object.prototype.hasOwnProperty.call(data, 'attachmentSummaries');
+          const oldSummaries = (oldNode?.data.attachmentSummaries && typeof oldNode.data.attachmentSummaries === 'object')
+            ? oldNode.data.attachmentSummaries
+            : {};
+          const newSummaries = data.attachmentSummaries && typeof data.attachmentSummaries === 'object'
+            ? data.attachmentSummaries
+            : {};
+          const summariesChanged = hasSummariesPatch &&
+            JSON.stringify(oldSummaries) !== JSON.stringify(newSummaries) &&
+            !(Object.keys(oldSummaries).length === 0 && Object.keys(newSummaries).length === 0);
+
+          const hasImageDescPatch = Object.prototype.hasOwnProperty.call(data, 'attachmentImageDescriptions');
+          const oldImageDesc = (oldNode?.data.attachmentImageDescriptions && typeof oldNode.data.attachmentImageDescriptions === 'object')
+            ? oldNode.data.attachmentImageDescriptions
+            : {};
+          const newImageDesc = (data.attachmentImageDescriptions && typeof data.attachmentImageDescriptions === 'object')
+            ? data.attachmentImageDescriptions
+            : {};
+          const imageDescChanged = hasImageDescPatch &&
+            JSON.stringify(oldImageDesc) !== JSON.stringify(newImageDesc) &&
+            !(Object.keys(oldImageDesc).length === 0 && Object.keys(newImageDesc).length === 0);
+
+          // =========================================================================
+          // РАЗДЕЛЯЕМ "PRIMARY" vs "DERIVED" ИЗМЕНЕНИЯ КОНТЕКСТА
+          // =========================================================================
+          //
+          // Почему это нужно (новая продуктовая логика "ленивого анализа вложений"):
+          // - Теперь summary/описание изображения для файлов считается В ФОНЕ (при генерации), и результаты
+          //   могут приходить ПОСЛЕ того, как пользователь уже получил ответ.
+          // - Эти результаты являются DERIVED-метаданными:
+          //   - они НЕ должны делать "владельца" (текущую карточку) stale
+          //     (ответ ведь не стал хуже/неактуальнее из-за того, что появились метаданные)
+          //   - но они МОГУТ изменить контекст ДЛЯ ПОТОМКОВ (детей/внуков),
+          //     потому что потомки используют summary/описание как "суть вложения".
+          //
+          // Поэтому:
+          // - PRIMARY изменения (влияют на LLM-запрос этой карточки) → делают её stale + каскадят stale потомкам
+          // - DERIVED изменения (метаданные вложений) → НЕ делают владельца stale, но каскадят stale потомкам
+          const derivedAttachmentsMetaChanged = excerptsChanged || summariesChanged || imageDescChanged;
+
+          const primaryContextChanged =
+            excludedChanged ||
+            excludedAttachmentsChanged ||
+            neuroSearchChanged ||
+            // Ссылки на файлы (attachments[]) — это именно primary контекст.
+            attachmentsChanged;
 
           set((state) => {
             // Находим индекс ноды
@@ -1104,9 +1429,16 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
 
           // =======================================================================
-          // УСТАРЕВАНИЕ ПРИ ИЗМЕНЕНИИ КОНТЕКСТА (NeuroSearch или исключения)
+          // УСТАРЕВАНИЕ ПРИ ИЗМЕНЕНИИ PRIMARY-КОНТЕКСТА
           // =======================================================================
-          if (contextConfigChanged) {
+          //
+          // PRIMARY-контекст — это то, что напрямую влияет на запрос LLM этой карточки:
+          // - attachments[]
+          // - excludedAttachmentIds / excludedContextNodeIds
+          // - neuroSearchNodeIds
+          //
+          // Если он изменился, а ответ уже был — текущая карточка stale + каскад stale потомкам.
+          if (primaryContextChanged) {
             const { nodes: currentNodes } = get();
             const currentNode = currentNodes.find((n) => n.id === nodeId);
             
@@ -1127,11 +1459,55 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
                 nodeId,
                 '- карточка помечена как stale'
               );
-              
-              const { checkAndClearStale } = get();
-              checkAndClearStale(nodeId);
             }
+
+            // =====================================================================
+            // STALE v2 (новая семантика продукта)
+            // =====================================================================
+            //
+            // Правило:
+            // - Любые изменения PRIMARY-контекста должны делать stale ТОЛЬКО владельца.
+            // - Потомков НЕ трогаем при контекстных правках, чтобы:
+            //   1) не "мучить" поддерево постоянной подсветкой,
+            //   2) убрать мерцание stale у потомков в сценариях, где response родителя
+            //      ещё не изменился (контекст переключили, но LLM ещё не вызывали).
+            //
+            // Потомки будут помечаться stale:
+            // - при старте Generate/Regenerate у владельца (см. useNodeGeneration),
+            // - и/или при фактическом изменении response (responseChanged, ниже).
+            //
+            // Требование: если пользователь вернул контекст к эталону (lastContextHash),
+            // stale должен сняться.
+            //
+            // Поэтому после любого PRIMARY-изменения запускаем reconcile по хэшам:
+            // - снимет stale у владельца, если контекст реально вернулся,
+            // - и безопасно рекурсивно очистит stale у потомков ТОЛЬКО если они уже stale
+            //   и их хэш совпадает с эталоном (то есть не создаёт ложных подсветок).
+            const { checkAndClearStale } = get();
+            checkAndClearStale(nodeId);
           }
+
+          // =======================================================================
+          // DERIVED МЕТАДАННЫЕ ВЛОЖЕНИЙ: НЕ ДЕЛАЮТ ВЛАДЕЛЬЦА STALE, НО КАСКАДЯТ ПОТОМКОВ
+          // =======================================================================
+          //
+          // Пример:
+          // - в фоне посчитали `attachmentSummaries` или `attachmentImageDescriptions`
+          // - это НЕ меняет ответ владельца (он уже получен)
+          // - но меняет "контекст наследования" для детей/внуков
+          //
+          // STALE v2:
+          // - DERIVED метаданные вложений (excerpt/summary/описания изображений) могут меняться
+          //   асинхронно и без участия пользователя.
+          // - По новой продуктовой семантике мы НЕ должны каскадить stale на потомков
+          //   из-за таких фоновых обновлений.
+          //
+          // Итог:
+          // - владельца не делаем stale,
+          // - потомков тоже не трогаем,
+          // - потомки будут становиться stale только при Generate/Regenerate владельца
+          //   или при реальном изменении response (responseChanged).
+          void derivedAttachmentsMetaChanged;
         },
 
         /**
@@ -1171,13 +1547,30 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             const childEdges = state.edges.filter((e) => e.source === nodeId);
 
             // Для каждого ребёнка устанавливаем isStale = true
+            //
+            // ВАЖНО (STALE v2):
+            // - stale имеет смысл только для карточек, у которых уже есть response
+            //   (иначе нечего "перегенерировать").
+            // - Однако даже если у промежуточного ребёнка НЕТ response, у его потомков
+            //   response может быть (редкие, но возможные сценарии).
+            // - Поэтому мы:
+            //   1) помечаем stale только те ноды, где response уже есть,
+            //   2) но рекурсивно продолжаем обход вниз по дереву.
             childEdges.forEach((edge) => {
               const childIndex = state.nodes.findIndex((n) => n.id === edge.target);
 
               if (childIndex !== -1) {
+                const child = state.nodes[childIndex];
+
+                // Если у ребёнка нет ответа — не помечаем stale (но ниже всё равно уйдём глубже).
+                if (!child.data.response) return;
+
+                // Если уже stale — не трогаем updatedAt лишний раз (меньше ререндеров/шума).
+                if (child.data.isStale) return;
+
                 // Создаём новый объект data для правильного отслеживания изменений
                 state.nodes[childIndex].data = {
-                  ...state.nodes[childIndex].data,
+                  ...child.data,
                   isStale: true,
                   updatedAt: Date.now(),
                 };
@@ -1205,6 +1598,40 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          * @param nodeId - ID ноды для удаления
          */
         removeNode: (nodeId) => {
+          // =========================================================================
+          // ВЛОЖЕНИЯ: собираем список ДО удаления из state
+          // =========================================================================
+          //
+          // Почему это делаем заранее:
+          // - внутри set(...) мы удаляем ноду из state.nodes
+          // - после этого у нас уже нет доступа к её attachments
+          //
+          // Graceful degradation:
+          // - если currentCanvasId неизвестен, мы не можем построить URL удаления файлов
+          // - в таком случае просто пропускаем cleanup (файлы останутся на диске)
+          const { nodes: nodesBefore, currentCanvasId } = get();
+          const nodeBefore = nodesBefore.find((n) => n.id === nodeId);
+          const attachmentsToDelete = Array.isArray(nodeBefore?.data?.attachments)
+            ? (nodeBefore!.data.attachments as Array<{ attachmentId: string }>)
+            : [];
+          // ВАЖНО (глобальные вложения на холст):
+          // - Теперь вложения — это "файлы холста", а карточки хранят ссылки.
+          // - Поэтому удалять файл с диска можно только если на него больше нет ссылок.
+          //
+          // Здесь мы вычисляем список attachmentId, которые действительно можно удалить
+          // (т.е. они прикреплены только к удаляемой ноде).
+          const attachmentIdsSafeToDelete = attachmentsToDelete
+            .map((att) => String(att?.attachmentId || '').trim())
+            .filter(Boolean)
+            .filter((attachmentId) => {
+              // Если хотя бы одна другая нода (не nodeId) ссылается на этот attachmentId — не удаляем файл.
+              return !nodesBefore.some((n) => {
+                if (n.id === nodeId) return false;
+                const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as Array<{ attachmentId: string }>) : [];
+                return atts.some((a) => String(a?.attachmentId || '').trim() === attachmentId);
+              });
+            });
+
           set((state) => {
             // =================================================================
             // ОЧИСТКА ССЫЛОК В ДРУГИХ НОДАХ
@@ -1276,6 +1703,28 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           if (isUndoRedoOperation) {
             console.log('[removeNode] Пропуск удаления из индексов (undo/redo операция)');
             return;
+          }
+
+          // =========================================================================
+          // ОЧИСТКА ВЛОЖЕНИЙ (файлов на диске)
+          // =========================================================================
+          //
+          // ВАЖНО:
+          // - Это “best-effort” удаление: даже если запросы упали, нода уже удалена.
+          // - Мы используем API endpoint удаления файла:
+          //   DELETE /api/attachments/<canvasId>/<attachmentId>
+          //
+          // Почему не удаляем напрямую через fs:
+          // - это клиентский код (браузер/renderer), у него нет доступа к fs
+          // - серверная сторона уже содержит всю защиту (валидация ID, path traversal)
+          if (currentCanvasId && attachmentIdsSafeToDelete.length > 0) {
+            attachmentIdsSafeToDelete.forEach((attachmentId) => {
+              fetch(`/api/attachments/${currentCanvasId}/${attachmentId}`, { method: 'DELETE' }).catch((error) => {
+                console.warn('[removeNode] Не удалось удалить файл вложения:', { nodeId, attachmentId, error });
+              });
+            });
+          } else if (!currentCanvasId && attachmentIdsSafeToDelete.length > 0) {
+            console.warn('[removeNode] Нельзя удалить вложения: currentCanvasId = null', { nodeId });
           }
 
           // 1. Удаляем эмбеддинг из IndexedDB (асинхронно, fire-and-forget)
@@ -1364,6 +1813,67 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
                 }
               }
             }
+
+            // =========================================================================
+            // ВЛОЖЕНИЯ: best-effort удаление файлов на диске
+            // =========================================================================
+            //
+            // Почему это нужно:
+            // - React Flow может удалять ноды напрямую (Delete / multi-delete),
+            //   минуя наш removeNode().
+            // - Тогда attachments файлы останутся “сиротами”.
+            //
+            // Как удаляем:
+            // - через API endpoint:
+            //   DELETE /api/attachments/<canvasId>/<attachmentId>
+            //
+            // Graceful degradation:
+            // - если currentCanvasId неизвестен — не можем построить URL и пропускаем cleanup
+            if (removedNodeIds.length > 0) {
+              const { nodes, currentCanvasId } = get();
+              if (!currentCanvasId) {
+                // Не валим UX; просто предупреждаем.
+                console.warn('[onNodesChange] currentCanvasId = null, пропускаем удаление вложений для удалённых нод');
+              } else {
+                // ВАЖНО (глобальные вложения):
+                // - Удаление ноды удаляет только "ссылки" на файлы.
+                // - Файл на диске удаляем только если после удаления нод-ссылок
+                //   больше нет ни одной карточки, которая ссылается на этот attachmentId.
+                const removedSet = new Set(removedNodeIds);
+                const safeToDelete = new Set<string>();
+
+                for (const removedNodeId of removedNodeIds) {
+                  const node = nodes.find((n) => n.id === removedNodeId);
+                  const attachments = Array.isArray(node?.data?.attachments)
+                    ? (node!.data.attachments as Array<{ attachmentId: string }>)
+                    : [];
+
+                  attachments.forEach((att) => {
+                    const attachmentId = String(att?.attachmentId || '').trim();
+                    if (!attachmentId) return;
+
+                    // Есть ли ссылки на этот файл в НЕудаляемых нодах?
+                    const stillReferenced = nodes.some((n) => {
+                      if (removedSet.has(n.id)) return false;
+                      const atts = Array.isArray(n.data.attachments)
+                        ? (n.data.attachments as Array<{ attachmentId: string }>)
+                        : [];
+                      return atts.some((a) => String(a?.attachmentId || '').trim() === attachmentId);
+                    });
+
+                    if (!stillReferenced) {
+                      safeToDelete.add(attachmentId);
+                    }
+                  });
+                }
+
+                safeToDelete.forEach((attachmentId) => {
+                  fetch(`/api/attachments/${currentCanvasId}/${attachmentId}`, { method: 'DELETE' }).catch((error) => {
+                    console.warn('[onNodesChange] Не удалось удалить файл вложения:', { attachmentId, error });
+                  });
+                });
+              }
+            }
           }
 
           // Применяем все изменения к нодам
@@ -1386,25 +1896,24 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          * @param changes - массив изменений от React Flow
          */
         onEdgesChange: (changes: EdgeChange<NeuroEdge>[]) => {
-          // Собираем target ноды для последующей рекурсивной пометки потомков
-          const targetsToMarkChildrenStale: string[] = [];
-
           // Сначала обрабатываем удаления связей
           changes.forEach((change) => {
             if (change.type === 'remove') {
               // Находим удаляемую связь
-              const { edges, nodes } = get();
+              // Берём текущий список связей из стора.
+              //
+              // ВАЖНО:
+              // - Ранее здесь также доставались `nodes` и вычислялась `targetNode`,
+              //   но результат нигде не использовался, из-за чего ESLint падал на сборке.
+              // - Для обновления target-ноды нам не нужен "снимок" nodes из get():
+              //   мы обновляем данные целевой ноды внутри `set((state) => ...)`,
+              //   где гарантированно работаем с актуальным состоянием.
+              const { edges } = get();
               const edgeToRemove = edges.find((e) => e.id === change.id);
 
               if (edgeToRemove) {
-                const targetNode = nodes.find((n) => n.id === edgeToRemove.target);
-
-                // Если у target есть response - добавляем в список для рекурсивной пометки
-                if (targetNode?.data.response) {
-                  targetsToMarkChildrenStale.push(edgeToRemove.target);
-                }
-
-                // Находим target ноду и обновляем её данные
+                // Находим target-ноду в state и обновляем её data
+                // (parentId/parentIds/isStale/updatedAt) на основании оставшихся входящих связей.
                 set((state) => {
                   const targetIndex = state.nodes.findIndex(
                     (n) => n.id === edgeToRemove.target
@@ -1456,11 +1965,12 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             state.edges = applyEdgeChanges(changes, state.edges);
           });
 
-          // Рекурсивно помечаем всех потомков как stale
-          const { markChildrenStale, checkAllStaleNodes } = get();
-          targetsToMarkChildrenStale.forEach((targetId) => {
-            markChildrenStale(targetId);
-          });
+          // STALE v2:
+          // - изменение связей меняет контекст ТОЛЬКО у target-карточки,
+          //   но НЕ должно автоматически "мучить" её потомков stale-подсветкой.
+          // - потомки станут stale только при Generate/Regenerate target-карточки
+          //   или при фактическом изменении response (responseChanged).
+          const { checkAllStaleNodes } = get();
 
           // =======================================================================
           // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
@@ -1549,15 +2059,11 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             }
           });
 
-          // Рекурсивно помечаем всех потомков target ноды как stale
-          // (их контекст тоже изменился через цепочку)
-          const { markChildrenStale, checkAllStaleNodes, nodes } = get();
-          const targetNode = nodes.find((n) => n.id === connection.target);
-
-          // Только если у target есть response (то есть была генерация)
-          if (targetNode?.data.response) {
-            markChildrenStale(connection.target!);
-          }
+          // STALE v2:
+          // - создание связи меняет контекст ТОЛЬКО у target-карточки.
+          // - потомков НЕ помечаем stale автоматически, чтобы не создавать постоянную подсветку
+          //   в поддереве при любых структурных правках.
+          const { checkAllStaleNodes } = get();
 
           // =======================================================================
           // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
@@ -2150,17 +2656,26 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
             }
           });
 
-          // Помечаем всех потомков как устаревших (их контекст тоже изменился)
-          const { markChildrenStale, checkAndClearStale } = get();
-          markChildrenStale(nodeId);
-
           // =======================================================================
-          // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE
-          // Если цитата вернулась к эталонному состоянию - снимаем stale
+          // STALE v2 (новая семантика продукта)
           // =======================================================================
+          //
+          // Правило:
+          // - Изменение цитаты — это изменение контекста ВЛАДЕЛЬЦА (данной карточки).
+          // - Поэтому мы помечаем stale только эту карточку (что уже сделано выше),
+          //   но НЕ каскадим stale на потомков.
+          //
+          // Потомки станут stale только когда пользователь примет решение
+          // перегенерировать эту карточку (Generate/Regenerate),
+          // либо когда у владельца реально изменится response (responseChanged).
+          //
+          // При этом мы сохраняем важное требование:
+          // - если пользователь вернул цитату к прежнему состоянию (hash == lastContextHash),
+          //   stale должен сниматься автоматически.
+          const { checkAndClearStale } = get();
           checkAndClearStale(nodeId);
 
-          console.log('[updateQuote] Обновлена цитата для ноды:', nodeId, '- помечена как stale вместе с потомками');
+          console.log('[updateQuote] Обновлена цитата для ноды:', nodeId, '- помечена как stale (без каскада к потомкам)');
         },
 
         /**

@@ -8,12 +8,19 @@ import { useCanvasStore } from '@/store/useCanvasStore';
 import { useSettingsStore, selectApiKey, selectApiBaseUrl, selectModel, selectCorporateMode, selectUseSummarization, selectEmbeddingsBaseUrl } from '@/store/useSettingsStore';
 import { streamChatCompletion, generateSummary, HttpError } from '@/services/aiService';
 import { useTranslation } from '@/lib/i18n';
-import type { NeuroNode } from '@/types/canvas';
+import type { NeuroNode, NodeAttachment } from '@/types/canvas';
+import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 
 interface UseNodeGenerationProps {
   id: string;
   data: NeuroNode['data'];
   buildParentContext: () => string | undefined;
+  // NOTE:
+  // - Раньше сюда передавались прямые родители (directParents) на случай,
+  //   если мы захотим автоматически подмешивать их вложения в запрос генерации.
+  // - В текущей реализации генерации это НЕ используется: вложения берём только из текущей ноды,
+  //   а родительский контекст собирается через `buildParentContext()`.
+  // - Поэтому directParents удалён из API хука, чтобы ESLint не валил сборку из-за unused vars.
   localPrompt: string;
   setIsAnswerExpanded: (val: boolean) => void;
 }
@@ -165,6 +172,8 @@ export const useNodeGeneration = ({
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const saveContextHash = useCanvasStore((s) => s.saveContextHash);
   const onBatchNodeComplete = useCanvasStore((s) => s.onBatchNodeComplete);
+  const markChildrenStale = useCanvasStore((s) => s.markChildrenStale);
+  const checkAndClearStale = useCanvasStore((s) => s.checkAndClearStale);
 
   // Settings
   const apiKey = useSettingsStore(selectApiKey);
@@ -178,6 +187,209 @@ export const useNodeGeneration = ({
   // Системная инструкция холста
   const systemPrompt = useCanvasStore((s) => s.systemPrompt);
 
+  // Активный холст (нужен для вложений: data/attachments/<canvasId>/...)
+  const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
+
+  /**
+   * ЛЕНИВЫЙ АНАЛИЗ ВЛОЖЕНИЙ (summary / image description) — FIRE-AND-FORGET
+   *
+   * Ключевая продуктовая логика:
+   * - upload вложений должен быть быстрым → НЕ считаем LLM-атрибуты при загрузке
+   * - но потомкам нужны "суть документа" и "описание картинки"
+   * - поэтому при первой генерации ответа карточки, где есть attachments, мы:
+   *   1) запускаем `/api/attachments/analyze` в фоне (без await)
+   *   2) когда ответ пришёл — кэшируем результаты в node.data (attachmentSummaries / attachmentImageDescriptions)
+   *   3) пропагируем эти кэши по другим карточкам-ссылкам (best-effort)
+   *
+   * Важно:
+   * - Это НЕ должно тормозить streaming ответа пользователю
+   * - Поэтому мы никогда не await'им этот запрос в основном потоке генерации
+   */
+  const triggerAttachmentsAnalyzeInBackground = useCallback((params: {
+    canvasId: string;
+    attachmentIds: string[];
+    /**
+     * Языковая “подсказка” — текст вопроса пользователя.
+     *
+     * Почему передаём сюда:
+     * - серверу нужно понять, на каком языке генерировать описание изображения,
+     *   чтобы оно соответствовало языку вопроса (требование пользователя).
+     *
+     * Важно:
+     * - это не секрет и не токен,
+     * - но мы всё равно не хотим слать сюда мегабайты текста,
+     *   поэтому ниже ограничиваем длину.
+     */
+    languageHintText?: string;
+  }) => {
+    // Минимальная защита от бессмысленных запросов
+    if (!params.canvasId || params.attachmentIds.length === 0) return;
+    if (!apiKey) return;
+
+    // Fire-and-forget: мы намеренно НЕ ждём результат здесь.
+    void (async () => {
+      try {
+        // Языковая подсказка: берём вопрос пользователя, но ограничиваем длину,
+        // чтобы:
+        // - не раздувать request body,
+        // - не тратить лишние токены на стороне LLM,
+        // - избежать потенциальных проблем со слишком длинными строками.
+        const languageHintText = (params.languageHintText || '').trim();
+        const safeLanguageHintText =
+          languageHintText.length > 2000 ? languageHintText.slice(0, 2000) : languageHintText;
+
+        const res = await fetch('/api/attachments/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            canvasId: params.canvasId,
+            attachmentIds: params.attachmentIds,
+            languageHintText: safeLanguageHintText,
+            apiKey,
+            apiBaseUrl,
+            model,
+            corporateMode,
+            // Важно: по вашему решению summary считаем только если настройка включена.
+            useSummarization,
+          }),
+        });
+
+        if (!res.ok) {
+          // Best-effort: не валим генерацию и не показываем ошибку пользователю.
+          // Это фоновая оптимизация контекста.
+          return;
+        }
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          attachmentSummaries?: unknown;
+          attachmentImageDescriptions?: unknown;
+        };
+
+        const safeStringMap = (v: unknown): Record<string, string> => {
+          if (!v || typeof v !== 'object') return {};
+          const obj = v as Record<string, unknown>;
+          const out: Record<string, string> = {};
+          for (const [k, val] of Object.entries(obj)) {
+            if (typeof val === 'string') out[k] = val;
+          }
+          return out;
+        };
+
+        const newSummaries = safeStringMap(payload.attachmentSummaries);
+        const newImageDescriptions = safeStringMap(payload.attachmentImageDescriptions);
+
+        // Если сервер ничего нового не посчитал — не трогаем store (избегаем лишних ререндеров).
+        if (Object.keys(newSummaries).length === 0 && Object.keys(newImageDescriptions).length === 0) {
+          return;
+        }
+
+        // Достаём актуальные nodes и updateNodeData прямо из store,
+        // чтобы не зависеть от устаревших замыканий (closures).
+        const { nodes, updateNodeData } = useCanvasStore.getState();
+
+        // ---------------------------------------------------------------------
+        // 1) Кэшируем результаты в текущей карточке
+        // ---------------------------------------------------------------------
+        //
+        // Важно:
+        // - берём текущие значения из store (а не из `data` пропса),
+        //   потому что `data` может быть "старым" в момент, когда фон завершился.
+        const currentNode = nodes.find((n) => n.id === id) || null;
+        if (currentNode) {
+          const existingSummaries =
+            currentNode.data.attachmentSummaries && typeof currentNode.data.attachmentSummaries === 'object'
+              ? (currentNode.data.attachmentSummaries as Record<string, string>)
+              : {};
+          const existingImageDescriptions =
+            currentNode.data.attachmentImageDescriptions && typeof currentNode.data.attachmentImageDescriptions === 'object'
+              ? (currentNode.data.attachmentImageDescriptions as Record<string, string>)
+              : {};
+
+          const nextSummaries = { ...existingSummaries, ...newSummaries };
+          const nextImageDescriptions = { ...existingImageDescriptions, ...newImageDescriptions };
+
+          // Патчим только если действительно что-то добавили/изменили.
+          // Это важно для производительности и для корректной stale-логики.
+          const summariesChanged = JSON.stringify(existingSummaries) !== JSON.stringify(nextSummaries);
+          const imagesChanged = JSON.stringify(existingImageDescriptions) !== JSON.stringify(nextImageDescriptions);
+
+          if (summariesChanged || imagesChanged) {
+            updateNodeData(id, {
+              ...(summariesChanged ? { attachmentSummaries: nextSummaries } : {}),
+              ...(imagesChanged ? { attachmentImageDescriptions: nextImageDescriptions } : {}),
+            });
+          }
+        }
+
+        // ---------------------------------------------------------------------
+        // 2) Пропагируем по всем карточкам-ссылкам (best-effort)
+        // ---------------------------------------------------------------------
+        //
+        // Это приближает нас к модели "файловый менеджер холста":
+        // - файл один на холст
+        // - карточек-ссылок много
+        // - метаданные "суть файла" должны быть одинаковыми у всех ссылок
+        const summaryKeys = Object.keys(newSummaries);
+        const imageKeys = Object.keys(newImageDescriptions);
+        if (summaryKeys.length === 0 && imageKeys.length === 0) return;
+
+        nodes.forEach((node) => {
+          if (node.id === id) return;
+          const atts = Array.isArray(node.data.attachments) ? (node.data.attachments as NodeAttachment[]) : [];
+          if (atts.length === 0) return;
+
+          const hasAnySummary = summaryKeys.some((k) => atts.some((a) => a.attachmentId === k));
+          const hasAnyImage = imageKeys.some((k) => atts.some((a) => a.attachmentId === k));
+          if (!hasAnySummary && !hasAnyImage) return;
+
+          const existingSummaries =
+            node.data.attachmentSummaries && typeof node.data.attachmentSummaries === 'object'
+              ? (node.data.attachmentSummaries as Record<string, string>)
+              : {};
+          const existingImageDescriptions =
+            node.data.attachmentImageDescriptions && typeof node.data.attachmentImageDescriptions === 'object'
+              ? (node.data.attachmentImageDescriptions as Record<string, string>)
+              : {};
+
+          let changed = false;
+          const nextSummaries = { ...existingSummaries };
+          const nextImages = { ...existingImageDescriptions };
+
+          if (hasAnySummary) {
+            summaryKeys.forEach((k) => {
+              if (!atts.some((a) => a.attachmentId === k)) return;
+              if (nextSummaries[k] !== newSummaries[k]) {
+                nextSummaries[k] = newSummaries[k];
+                changed = true;
+              }
+            });
+          }
+
+          if (hasAnyImage) {
+            imageKeys.forEach((k) => {
+              if (!atts.some((a) => a.attachmentId === k)) return;
+              if (nextImages[k] !== newImageDescriptions[k]) {
+                nextImages[k] = newImageDescriptions[k];
+                changed = true;
+              }
+            });
+          }
+
+          if (changed) {
+            updateNodeData(node.id, {
+              ...(hasAnySummary ? { attachmentSummaries: nextSummaries } : {}),
+              ...(hasAnyImage ? { attachmentImageDescriptions: nextImages } : {}),
+            });
+          }
+        });
+      } catch (err) {
+        // Best-effort: игнорируем любые ошибки фона.
+        // Если анализ не случился — ничего критичного, просто потомки будут видеть fallback.
+        console.warn('[useNodeGeneration] Attachments analyze failed (background):', err);
+      }
+    })();
+  }, [apiKey, apiBaseUrl, model, corporateMode, useSummarization, id]);
+
   // Local state
   const [streamingText, setStreamingText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -185,6 +397,17 @@ export const useNodeGeneration = ({
   const [hasGeneratedOnce, setHasGeneratedOnce] = useState(Boolean(data.response));
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  /**
+   * STALE v2: флаг "в этой попытке мы уже каскадили stale потомкам".
+   *
+   * Зачем он нужен:
+   * - по новой семантике мы помечаем потомков stale НЕ при каждом изменении контекста,
+   *   а только когда пользователь решил запускать Generate/Regenerate у владельца.
+   * - если генерация отменена/упала и response владельца фактически НЕ изменился,
+   *   мы должны уметь быстро снять stale у потомков (reconcile по lastContextHash).
+   */
+  const cascadedChildrenStaleThisAttemptRef = useRef(false);
 
   /**
    * Генерация summary (фоновая)
@@ -272,6 +495,28 @@ export const useNodeGeneration = ({
     setIsGenerating(true);
     setIsAnswerExpanded(true); // Автораскрытие
 
+    // =====================================================================
+    // STALE v2: помечаем потомков stale на СТАРТЕ генерации
+    // =====================================================================
+    //
+    // Продуктовая логика:
+    // - любые "контекстные" правки делают stale только владельца (см. useCanvasStore.updateNodeData),
+    //   чтобы не подсвечивать поддерево постоянно.
+    // - но когда пользователь нажимает Generate/Regenerate в карточке, которая уже имеет ответ,
+    //   это сигнал "родитель сейчас потенциально поменяет response" → контекст потомков потенциально изменится.
+    //
+    // Поэтому:
+    // - если у карточки УЖЕ БЫЛ ответ (hasGeneratedOnce || data.response),
+    //   помечаем потомков stale сразу при старте запроса.
+    // - если это первая генерация (ответа ещё не было) — потомков не трогаем, потому что
+    //   им нечего "устаревать" относительно несуществующего ответа родителя.
+    cascadedChildrenStaleThisAttemptRef.current = false;
+    const hadResponseBeforeThisGenerate = Boolean(data.response) || hasGeneratedOnce;
+    if (hadResponseBeforeThisGenerate) {
+      markChildrenStale(id);
+      cascadedChildrenStaleThisAttemptRef.current = true;
+    }
+
     // Update store state
     updateNodeData(id, {
       prompt: localPrompt,
@@ -328,10 +573,93 @@ export const useNodeGeneration = ({
        * Возвращаем собранный текст (commit в store сделаем снаружи).
        */
       const runSingleStreamingAttempt = async (): Promise<string> => {
+        // ---------------------------------------------------------------------
+        // ВЛОЖЕНИЯ (ATTACHMENTS)
+        // ---------------------------------------------------------------------
+        //
+        // ВАЖНО:
+        // - Вложения хранятся на диске и подтягиваются сервером (/api/chat).
+        // - Клиент должен передать:
+        //   - canvasId (чтобы сервер нашёл папку)
+        //   - attachments (метаданные + attachmentId)
+        //
+        // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО (файловый менеджер холста):
+        // - ПОЛНЫЙ контент вложений (текст целиком / image parts) должен попадать в LLM
+        //   ТОЛЬКО для той карточки, где файл прикреплён напрямую.
+        // - Ни родители, ни дети, ни предки не должны автоматически "таскать" полные файлы.
+        // - Для иерархического контекста мы используем ТОЛЬКО суммаризации/описания (без “полных файлов”).
+        //   (см. useNodeContext и ContextViewerModal).
+        //
+        // Graceful degradation:
+        // - Если canvasId по какой-то причине отсутствует — мы НЕ валим генерацию,
+        //   а просто отправляем запрос без вложений (и логируем предупреждение).
+        // 0) Какие вложения пользователь выключил из контекста в этой ноде
+        const excludedAttachmentIds = Array.isArray(data.excludedAttachmentIds)
+          ? (data.excludedAttachmentIds as string[])
+          : [];
+
+        // 1) Вложения самой текущей ноды (input пользователя)
+        const rawSelfAttachments = Array.isArray(data.attachments) ? data.attachments : [];
+
+        const ATTACHMENT_ID_RE =
+          /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.[a-z0-9]+$/;
+
+        const isValidAttachment = (a: unknown): a is NodeAttachment => {
+          if (!a || typeof a !== 'object') return false;
+          const o = a as Record<string, unknown>;
+          return (
+            typeof o.attachmentId === 'string' &&
+            ATTACHMENT_ID_RE.test(o.attachmentId) &&
+            // Остальные поля опциональны для /api/chat, но если они есть — это бонус для контекста.
+            // (Сервер всё равно не доверяет mime/size и читает файл сам.)
+            true
+          );
+        };
+
+        // Собираем "безопасный" список вложений:
+        // - валидный attachmentId
+        // - не выключен пользователем (excludedAttachmentIds)
+        // - порядок: как в списке вложений текущей карточки (важно для multimodal)
+        const combined = [...rawSelfAttachments].filter(isValidAttachment);
+        const safeAttachments = combined.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
+
+        // Дедуп по attachmentId (на всякий случай), сохраняя порядок "первого появления"
+        const seen = new Set<string>();
+        const dedupedAttachments = safeAttachments.filter((a) => {
+          if (seen.has(a.attachmentId)) return false;
+          seen.add(a.attachmentId);
+          return true;
+        });
+
+        const canSendAttachments = Boolean(activeCanvasId) && dedupedAttachments.length > 0;
+        if (dedupedAttachments.length > 0 && !activeCanvasId) {
+          console.warn('[useNodeGeneration] Attachments exist but activeCanvasId is null; sending request without attachments.');
+        }
+
+        // ---------------------------------------------------------------------
+        // ЛЕНИВЫЙ АНАЛИЗ ВЛОЖЕНИЙ (BACKGROUND)
+        // ---------------------------------------------------------------------
+        //
+        // Важно:
+        // - Этот запрос НЕ должен блокировать LLM streaming.
+        // - Поэтому он запускается "в фоне" (fire-and-forget).
+        // - Сервер сам решит, нужно ли что-то считать (если уже посчитано и актуально — вернёт пусто).
+        if (canSendAttachments) {
+          triggerAttachmentsAnalyzeInBackground({
+            canvasId: activeCanvasId || '',
+            attachmentIds: dedupedAttachments.map((a) => a.attachmentId),
+            // Ключевое требование: описание картинки должно быть на языке вопроса.
+            // Поэтому передаём текст вопроса как “language hint”.
+            languageHintText: localPrompt,
+          });
+        }
+
         const response = await streamChatCompletion({
           messages: [{ role: 'user', content: localPrompt }],
           context: parentContext,
           systemPrompt: systemPrompt || undefined, // Передаём системную инструкцию холста
+          canvasId: canSendAttachments ? activeCanvasId || undefined : undefined,
+          attachments: canSendAttachments ? (dedupedAttachments as NodeAttachment[]) : undefined,
           apiKey,
           apiBaseUrl,
           model,
@@ -541,15 +869,48 @@ export const useNodeGeneration = ({
           ? { response: partial, isGenerating: false, isStale: false }
           : { isGenerating: false }
       );
+
+      // STALE v2:
+      // - если мы пометили потомков stale на старте этой попытки,
+      //   но генерация не завершилась успешно, то:
+      //   - если response владельца не изменился, reconcile снимет stale у потомков,
+      //   - если response изменился (например мы сохранили partial), reconcile НЕ снимет stale,
+      //     потому что их текущий hash уже не совпадает с lastContextHash.
+      if (cascadedChildrenStaleThisAttemptRef.current) {
+        checkAndClearStale(id);
+      }
     } finally {
       setIsGenerating(false);
       abortControllerRef.current = null;
+      cascadedChildrenStaleThisAttemptRef.current = false;
     }
   }, [
     id, localPrompt, apiKey, t.node.apiKeyMissing, buildParentContext, 
     apiBaseUrl, model, corporateMode, systemPrompt, updateNodeData, saveContextHash, 
     onBatchNodeComplete, handleGenerateEmbedding, useSummarization, 
-    handleGenerateSummary, setIsAnswerExpanded
+    handleGenerateSummary, setIsAnswerExpanded,
+    // STALE v2
+    markChildrenStale,
+    checkAndClearStale,
+    hasGeneratedOnce,
+    // ВАЖНО (React hooks / exhaustive-deps):
+    // - Внутри handleGenerate мы читаем `data.response` (см. hadResponseBeforeThisGenerate).
+    // - Если НЕ добавить `data.response` в зависимости, то handleGenerate может "захватить"
+    //   устаревшее значение ответа и принять неверное решение:
+    //   - нужно ли помечать потомков stale на старте (когда у ноды уже был ответ),
+    //   - или считать это первой генерацией (когда ответа ещё не было).
+    // - Это проявляется как "неожиданные" stale-подсветки/их отсутствие при Regenerate.
+    data.response,
+    // Вложения
+    data.attachments,
+    data.excludedAttachmentIds,
+    // ВАЖНО (React hooks / exhaustive-deps):
+    // - Ранее сюда были добавлены `data.excludedContextNodeIds` и `directParents`,
+    //   но внутри handleGenerate они НЕ используются напрямую.
+    // - Если эти значения влияют на контекст, то это уже отражено через `buildParentContext`
+    //   (его ссылка меняется при изменении зависимостей внутри самого buildParentContext).
+    activeCanvasId,
+    triggerAttachmentsAnalyzeInBackground,
   ]);
 
   /**
@@ -573,7 +934,16 @@ export const useNodeGeneration = ({
     } else {
         updateNodeData(id, { isGenerating: false });
     }
-  }, [id, streamingText, updateNodeData]);
+
+    // STALE v2:
+    // - если в этой попытке мы пометили потомков stale на старте,
+    //   то при отмене нужно дать reconcile шанс снять stale у тех потомков,
+    //   чей контекст фактически не менялся (hash == lastContextHash).
+    if (cascadedChildrenStaleThisAttemptRef.current) {
+      checkAndClearStale(id);
+      cascadedChildrenStaleThisAttemptRef.current = false;
+    }
+  }, [id, streamingText, updateNodeData, checkAndClearStale]);
 
   /**
    * Регенерация

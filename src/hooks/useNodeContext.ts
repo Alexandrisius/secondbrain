@@ -172,7 +172,142 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
     if (directParents.length === 0 && !hasNeuroSearch) return undefined;
 
     const excludedIds = data.excludedContextNodeIds || [];
+    const excludedAttachmentIds = Array.isArray(data.excludedAttachmentIds)
+      ? (data.excludedAttachmentIds as string[])
+      : [];
     const contextParts: string[] = [];
+
+    // Безопасный "string map" (Record<string,string>) из unknown.
+    // Используем для attachmentSummaries/attachmentExcerpts.
+    const normalizeStringMap = (v: unknown): Record<string, string> => {
+      if (!v || typeof v !== 'object') return {};
+      const obj = v as Record<string, unknown>;
+      const out: Record<string, string> = {};
+      for (const [k, val] of Object.entries(obj)) {
+        if (typeof val === 'string') out[k] = val;
+      }
+      return out;
+    };
+
+    /**
+     * Укорачиваем "документный" текст для контекста.
+     *
+     * Почему это нужно:
+     * - суммаризации/OCR описания могут быть длинными;
+     * - мы хотим, чтобы контекст оставался управляемым;
+     * - лимиты на токены в /api/chat уже есть для вложений самой карточки,
+     *   но "контекст предков" мы формируем на клиенте и должны быть осторожны.
+     */
+    const clampContextText = (text: string, maxChars: number): string => {
+      const t = (text || '').trim();
+      if (!t) return '';
+      if (t.length <= maxChars) return t;
+      return t.slice(0, maxChars) + '...';
+    };
+
+    /**
+     * Нормализация “описания изображения” для потомков.
+     *
+     * Новая семантика (актуальная):
+     * - мы храним в node.data.attachmentImageDescriptions[attachmentId] УЖЕ ГОТОВОЕ описание (caption-only),
+     *   без OCR и без маркеров. Его можно передавать потомкам напрямую.
+     *
+     * Backward-compat (старые данные):
+     * - раньше там могла лежать строка combined формата:
+     *   "OCR:\n...\n\nОписание:\n..."
+     * - или вариант с "DESCRIPTION:"/"OCR_TEXT:".
+     *
+     * Правило безопасности (критично):
+     * - потомкам нельзя протаскивать OCR/текст с картинки (особенно скриншоты кода/логов),
+     *   поэтому если видим OCR-маркеры, но НЕ видим маркер описания — возвращаем пусто.
+     */
+    const normalizeImageDescriptionForDescendants = (storedText: string): string => {
+      const raw = (storedText || '').trim();
+      if (!raw) return '';
+
+      // Legacy маркер на русском.
+      const descMarkerRu = /(^|\n)Описание:\s*/i;
+      const descIdxRu = raw.search(descMarkerRu);
+      if (descIdxRu !== -1) return raw.slice(descIdxRu).replace(descMarkerRu, '').trim();
+
+      // Legacy маркер на английском.
+      const descMarkerEn = /(^|\n)DESCRIPTION:\s*/i;
+      const descIdxEn = raw.search(descMarkerEn);
+      if (descIdxEn !== -1) return raw.slice(descIdxEn).replace(descMarkerEn, '').trim();
+
+      // Если видим OCR-маркеры — не рискуем.
+      const hasOcrMarker = /(^|\n)\s*OCR(_TEXT)?:\s*/i.test(raw);
+      if (hasOcrMarker) return '';
+
+      // Новая версия: это уже чистое description.
+      return raw;
+    };
+
+    /**
+     * Минимальный тип вложения, который нам нужен в контексте.
+     *
+     * Мы специально не используем "полный" NodeAttachment, потому что:
+     * - данные могут быть старыми/повреждёнными,
+     * - в buildParentContext мы хотим быть максимально устойчивыми к мусору.
+     */
+    type AttachmentLike = {
+      attachmentId: string;
+      kind?: unknown;
+      originalName?: unknown;
+    };
+
+    const isAttachmentLike = (v: unknown): v is AttachmentLike => {
+      if (!v || typeof v !== 'object') return false;
+      const o = v as Record<string, unknown>;
+      return typeof o.attachmentId === 'string' && o.attachmentId.length > 0;
+    };
+
+    /**
+     * Достаём "суть" вложения для передачи потомкам.
+     *
+     * Правило продукта:
+     * - ПОЛНЫЙ контент вложения должен быть только у карточки-владельца (там, где прикреплено напрямую).
+     * - Для всех остальных (дети/предки) мы передаём только суммаризацию/выжимку:
+     *   - text: attachmentSummaries → fallback attachmentExcerpts
+     *   - image: attachmentImageDescriptions (в ноде хранится описание изображения (caption-only))
+     *
+     * Важно:
+     * - Мы всегда возвращаем КОРОТКИЙ текст, чтобы не раздувать контекст.
+     */
+    const getAttachmentContextSnippet = (
+      owner: NeuroNode,
+      att: AttachmentLike
+    ): string => {
+      const attachmentId = att.attachmentId;
+      const kind = typeof att.kind === 'string' ? att.kind : '';
+
+      // Текстовые вложения: summary → excerpt
+      if (kind === 'text') {
+        const summaries = normalizeStringMap(owner.data.attachmentSummaries);
+        const excerpts = normalizeStringMap(owner.data.attachmentExcerpts);
+
+        const summary = (summaries[attachmentId] || '').trim();
+        const excerpt = (excerpts[attachmentId] || '').trim();
+
+        // В потомков уходит всегда "суть": сначала summary, иначе excerpt.
+        const chosen = summary || excerpt;
+        return clampContextText(chosen, 1200);
+      }
+
+      // Изображения: description-only (caption-only).
+      if (kind === 'image') {
+        const imageDescriptions = normalizeStringMap(owner.data.attachmentImageDescriptions);
+        const stored = (imageDescriptions[attachmentId] || '').trim();
+
+        // Для потомков используем только безопасное описание:
+        // - новая версия: сразу description
+        // - старая версия: вырезаем часть “Описание:” из combined (если можем)
+        const descriptionOnly = normalizeImageDescriptionForDescendants(stored);
+        return clampContextText(descriptionOnly, 1200);
+      }
+
+      return '';
+    };
 
     // =========================================================================
     // ЧАСТЬ 0: NEUROSEARCH КОНТЕКСТ (ВИРТУАЛЬНЫЕ РОДИТЕЛИ)
@@ -242,6 +377,46 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
         } else if (parent.data.response) {
             const responseLabel = isNote ? 'Note Content' : 'Ответ';
             parentParts.push(`${responseLabel}: ${parent.data.response}`);
+        }
+
+        // ---------------------------------------------------------------------
+        // ВЛОЖЕНИЯ ПРЯМОГО РОДИТЕЛЯ (как "контекст предка" уровня 1)
+        // ---------------------------------------------------------------------
+        //
+        // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО:
+        // - ПОЛНЫЙ контент вложений получает только карточка-владелец (где файл прикреплён напрямую).
+        // - Потомки (включая прямого ребёнка) получают ТОЛЬКО суммаризацию/суть:
+        //   - text: summary/excerpt
+        //   - image: описание изображения (caption-only)
+        //
+        // Поэтому здесь мы НЕ подмешиваем файлы через /api/chat attachments,
+        // а добавляем в строковый контекст короткие выдержки.
+        const parentAttsRaw = Array.isArray(parent.data.attachments) ? parent.data.attachments : [];
+        const parentAtts = parentAttsRaw.filter(isAttachmentLike);
+        const visibleParentAtts = parentAtts.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
+        if (visibleParentAtts.length > 0) {
+          parentParts.push(`[Вложения родителя]:`);
+          visibleParentAtts.slice(0, 10).forEach((a) => {
+            const name =
+              (typeof a.originalName === 'string' && a.originalName.trim())
+                ? a.originalName.trim()
+                : a.attachmentId;
+            const snippet = getAttachmentContextSnippet(parent, a);
+            if (snippet) {
+              parentParts.push(`- ${name}: ${snippet}`);
+            } else {
+              // Мы пишем максимально нейтрально и без "OCR" в тексте,
+              // потому что по требованию продукта OCR НЕ должен попадать потомкам.
+              const attKind = typeof a.kind === 'string' ? a.kind : '';
+              const missingWhat =
+                attKind === 'image'
+                  ? 'описания изображения'
+                  : attKind === 'text'
+                    ? 'выжимки/суммаризации текста'
+                    : 'текстовой сути';
+              parentParts.push(`- ${name}: (нет сохранённой ${missingWhat}; откройте превью в карточке-источнике)`);
+            }
+          });
         }
 
         // =====================================================================
@@ -323,6 +498,50 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
             ancestorParts.push(`Суть ответа: ${ancestor.data.response.slice(0, 300)}...`);
         }
 
+        // ---------------------------------------------------------------------
+        // ВЛОЖЕНИЯ ДАЛЬНЕГО ПРЕДКА (2+ поколения): только summary/excerpt
+        // ---------------------------------------------------------------------
+        //
+        // Требование:
+        // - "вложения ведут себя как предки"
+        // - для дальних потомков мы НЕ передаём полный документ, только суть
+        //
+        // Здесь мы используем:
+        // - attachmentSummaries[attachmentId] (если есть)
+        // - иначе attachmentExcerpts[attachmentId] (fallback)
+        //
+        // Важно:
+        // - Это работает только если мы ранее сохранили excerpts/summaries на ноде-владельце
+        //   (см. QuestionSection.uploadAttachments).
+        const ancestorAttsRaw = Array.isArray(ancestor.data.attachments) ? ancestor.data.attachments : [];
+        const ancestorAtts = ancestorAttsRaw.filter(isAttachmentLike);
+        const visibleAtts = ancestorAtts.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
+
+        if (visibleAtts.length > 0) {
+          ancestorParts.push(`[Вложения предка]:`);
+          visibleAtts.slice(0, 10).forEach((a) => {
+            const name =
+              (typeof a.originalName === 'string' && a.originalName.trim())
+                ? a.originalName.trim()
+                : a.attachmentId;
+            const snippet = getAttachmentContextSnippet(ancestor, a);
+            if (snippet) {
+              ancestorParts.push(`- ${name}: ${snippet}`);
+            } else {
+              // Аналогично блоку выше: не упоминаем OCR, чтобы не закреплять его как "норму"
+              // в контексте потомков. OCR может существовать в данных владельца, но не в наследовании.
+              const attKind = typeof a.kind === 'string' ? a.kind : '';
+              const missingWhat =
+                attKind === 'image'
+                  ? 'описания изображения'
+                  : attKind === 'text'
+                    ? 'выжимки/суммаризации текста'
+                    : 'текстовой сути';
+              ancestorParts.push(`- ${name}: (нет сохранённой ${missingWhat}; откройте превью в карточке-источнике)`);
+            }
+          });
+        }
+
         // =====================================================================
         // NEUROSEARCH КОНТЕКСТ ИЗ ПРЕДКА (КАК ВИРТУАЛЬНЫЕ ПРАДЕДУШКИ)
         // =====================================================================
@@ -361,6 +580,7 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
     neuroSearchResults,
     nodes,
     data.excludedContextNodeIds, 
+    data.excludedAttachmentIds,
     data.quote, 
     data.quoteSourceNodeId, 
     useSummarization, 

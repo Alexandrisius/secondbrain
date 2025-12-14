@@ -53,6 +53,133 @@ let isShowingUpdateDialog = false;
  */
 let forceQuit = false;
 
+/**
+ * Флаг защиты от повторного открытия диалога закрытия.
+ *
+ * Почему это нужно:
+ * - В Electron событие `close` может приходить повторно:
+ *   - мы сами вызываем `mainWindow.close()` после подтверждения
+ *   - закрытие может инициировать внешний процесс (установщик/обновление)
+ * - Без этого флага можно случайно показать диалог дважды.
+ */
+let isCloseDialogOpen = false;
+
+/**
+ * Флаг «приложение сейчас закрывается ради установки обновления».
+ *
+ * Смысл:
+ * - Когда `electron-updater` вызывает `quitAndInstall()`, приложение должно
+ *   закрыться максимально бесшумно, иначе модальные окна (confirm save)
+ *   могут заблокировать установщик и привести к повторным попыткам закрытия.
+ */
+let isQuittingForUpdate = false;
+
+/**
+ * Флаг «Windows завершает сессию пользователя» (logout/shutdown).
+ *
+ * В таких сценариях:
+ * - нельзя показывать UI-диалоги (часто они даже не видны пользователю)
+ * - нельзя долго блокировать выход
+ * - можно попытаться сделать best-effort автосохранение
+ */
+let isSessionEnding = false;
+
+// =============================================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ БЕЗОПАСНОГО ВЫЗОВА РЕНДЕРЕРА ПРИ ЗАКРЫТИИ
+// =============================================================================
+
+/**
+ * Выполняет Promise с таймаутом. Если таймаут наступил — возвращает fallback.
+ *
+ * Важно:
+ * - Закрытие приложения — это «горячая» зона. Мы НЕ должны зависнуть навсегда,
+ *   если рендерер подвис, вкладка перегружена или JS-колбэки не зарегистрированы.
+ *
+ * @template T
+ * @param {Promise<T>} promise - выполняемая операция
+ * @param {number} timeoutMs - сколько ждать максимум
+ * @param {T} fallbackValue - что вернуть при таймауте/ошибке
+ * @returns {Promise<T>}
+ */
+async function withTimeout(promise, timeoutMs, fallbackValue) {
+  try {
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let timer = null;
+
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallbackValue), timeoutMs);
+    });
+
+    const result = await Promise.race([promise, timeoutPromise]);
+    if (timer) clearTimeout(timer);
+    return result;
+  } catch {
+    return fallbackValue;
+  }
+}
+
+/**
+ * Безопасно вызывает JS в рендерере.
+ *
+ * Почему отдельная функция:
+ * - `mainWindow` может быть null/уже разрушено
+ * - `webContents` может быть уничтожен
+ * - executeJavaScript может бросать ошибки (например, если страница еще не загрузилась)
+ *
+ * @param {string} js - JS выражение/код
+ * @param {any} fallbackValue - значение по умолчанию
+ * @param {number} timeoutMs - таймаут выполнения
+ * @returns {Promise<any>}
+ */
+async function safeExecuteInRenderer(js, fallbackValue, timeoutMs) {
+  try {
+    if (!mainWindow) return fallbackValue;
+    const wc = mainWindow.webContents;
+    if (!wc || wc.isDestroyed()) return fallbackValue;
+
+    // ВАЖНО: `executeJavaScript` может "повиснуть" при проблемах рендерера,
+    // поэтому всегда оборачиваем в таймаут.
+    return await withTimeout(wc.executeJavaScript(js, true), timeoutMs, fallbackValue);
+  } catch {
+    return fallbackValue;
+  }
+}
+
+/**
+ * Best-effort сохранение без диалогов и без бесконечного ожидания.
+ *
+ * Как работает:
+ * - В рендерере Canvas регистрирует `window.__saveCanvas` (см. preload.js + CanvasContent.tsx)
+ * - Мы вызываем её, если она есть
+ * - Если её нет/рендерер не готов — просто продолжаем закрытие
+ *
+ * Важно:
+ * - Это НЕ "гарантированное" сохранение (по определению best-effort).
+ * - Но это снижает риск потери данных, при этом не ломая обновления/установщик.
+ *
+ * @param {{timeoutMs?: number}} [options]
+ * @returns {Promise<boolean>} true если похоже что сохранение вызвалось/прошло, иначе false
+ */
+async function bestEffortSave(options) {
+  const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 1200;
+
+  // Если `__saveCanvas` не зарегистрирован, просто выходим.
+  // Оборачиваем в IIFE, чтобы результатом был boolean.
+  const js = `
+    (async () => {
+      try {
+        if (typeof window.__saveCanvas !== 'function') return false;
+        await window.__saveCanvas();
+        return true;
+      } catch {
+        return false;
+      }
+    })()
+  `;
+
+  return Boolean(await safeExecuteInRenderer(js, false, timeoutMs));
+}
+
 // =============================================================================
 // КОНСТАНТЫ И НАСТРОЙКИ
 // =============================================================================
@@ -334,94 +461,137 @@ function createWindow() {
   /**
    * Обработчик события 'close' - перехватываем закрытие окна
    * 
-   * ЛОГИКА: ВСЕГДА показываем диалог подтверждения закрытия!
-   * При подтверждении - ВСЕГДА сохраняем данные перед закрытием.
-   * Это гарантирует, что данные не потеряются даже если автосохранение не успело сработать.
+   * ОБНОВЛЁННАЯ ЛОГИКА (чтобы не ломать автообновления/установщик):
+   * - Диалог показываем ТОЛЬКО если в приложении есть несохранённые изменения.
+   * - Если изменений нет — закрываемся молча (опционально делаем best-effort сохранение).
+   * - При установке обновления / завершении сессии Windows — НИКОГДА не показываем диалог,
+   *   чтобы не блокировать установщик и системные сценарии.
    * 
    * Варианты:
-   * - "Сохранить и выйти" - принудительно сохраняем и закрываем
-   * - "Отмена" - отменяем закрытие, продолжаем работу
+   * - Если есть изменения:
+   *   - "Сохранить и выйти" - принудительно сохраняем и закрываем
+   *   - "Выйти без сохранения" - закрываем сразу
+   *   - "Отмена" - отменяем закрытие, продолжаем работу
    */
   mainWindow.on('close', async (event) => {
-    // Если уже разрешили выход - не блокируем
+    // 1) Если закрытие уже разрешено — не вмешиваемся.
+    //    Это важно, когда мы повторно вызываем mainWindow.close() после подтверждения.
     if (forceQuit) {
       console.log('[Electron] Закрытие разрешено (forceQuit=true)');
       return;
     }
 
-    // Предотвращаем закрытие окна до подтверждения пользователем
+    // 2) Если мы закрываемся ради обновления или Windows завершает сессию —
+    //    не показываем никаких диалогов (они ломают сценарии обновления/установки).
+    //
+    //    При этом можно попытаться "тихо" сохранить состояние, но строго best-effort.
+    if (isQuittingForUpdate || isSessionEnding) {
+      console.log('[Electron] Закрытие без диалога (update/session-end). Пытаемся тихо сохранить...');
+      event.preventDefault();
+
+      // Важно: не зависаем. Ждём максимум короткий таймаут.
+      await bestEffortSave({ timeoutMs: 900 });
+
+      forceQuit = true;
+      // Повторно инициируем закрытие — теперь обработчик пропустит его (forceQuit=true).
+      mainWindow.close();
+      return;
+    }
+
+    // 3) Защита от повторного показа диалога, если close уже обрабатывается.
+    if (isCloseDialogOpen) {
+      console.log('[Electron] Диалог закрытия уже открыт, игнорируем повторный close');
+      event.preventDefault();
+      return;
+    }
+
+    // 4) Проверяем, есть ли несохранённые изменения в рендерере.
+    //    Рендерер регистрирует callback window.__getUnsavedChangesStatus через preload.js.
+    //    Если callback не зарегистрирован — считаем что изменений нет (fail-safe).
+    const hasUnsavedChanges = Boolean(
+      await safeExecuteInRenderer(
+        'typeof window.__getUnsavedChangesStatus === "function" ? window.__getUnsavedChangesStatus() : false',
+        false,
+        600
+      )
+    );
+
+    // 5) Если изменений нет — закрываемся без диалога.
+    //    Дополнительно делаем best-effort сохранение (на случай "краевых" изменений).
+    if (!hasUnsavedChanges) {
+      console.log('[Electron] Несохранённых изменений нет — закрываем без диалога');
+      event.preventDefault();
+
+      await bestEffortSave({ timeoutMs: 700 });
+
+      forceQuit = true;
+      mainWindow.close();
+      return;
+    }
+
+    // 6) Если изменения есть — показываем диалог пользователю.
     event.preventDefault();
-    console.log('[Electron] Перехвачено закрытие окна, показываем диалог подтверждения...');
+    isCloseDialogOpen = true;
+    console.log('[Electron] Есть несохранённые изменения — показываем диалог закрытия');
 
     try {
-      // ВСЕГДА показываем диалог подтверждения закрытия
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: 'question',
         title: 'Закрыть NeuroCanvas?',
-        message: 'Вы уверены, что хотите закрыть приложение?',
-        detail: 'Все данные будут сохранены перед закрытием.',
-        buttons: ['Сохранить и выйти', 'Отмена'],
+        message: 'Есть несохранённые изменения.',
+        detail: 'Что сделать перед закрытием приложения?',
+        buttons: ['Сохранить и выйти', 'Выйти без сохранения', 'Отмена'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
         noLink: true,
       });
 
+      // 0 — сохранить
       if (response === 0) {
-        // "Сохранить и выйти" - ПРИНУДИТЕЛЬНО сохраняем и закрываем
-        console.log('[Electron] Пользователь подтвердил закрытие, сохраняем данные...');
-        
-        try {
-          // Вызываем сохранение через executeJavaScript
-          // Это гарантирует сохранение даже если автосохранение не успело сработать
-          await mainWindow.webContents.executeJavaScript(
-            'window.__saveCanvas ? window.__saveCanvas() : Promise.resolve()'
-          );
-          console.log('[Electron] Данные сохранены успешно, закрываем окно');
-        } catch (saveError) {
-          console.error('[Electron] Ошибка при сохранении:', saveError);
-          
-          // При ошибке сохранения - спрашиваем, всё равно выйти или нет
+        console.log('[Electron] Пользователь выбрал: Сохранить и выйти');
+
+        // Пытаемся сохранить. Если сохранение "упало" — покажем отдельный вопрос.
+        const saved = await bestEffortSave({ timeoutMs: 3000 });
+        if (!saved) {
+          console.warn('[Electron] Не удалось гарантировать сохранение, спрашиваем пользователя');
+
           const { response: errorResponse } = await dialog.showMessageBox(mainWindow, {
-            type: 'error',
-            title: 'Ошибка сохранения',
-            message: 'Не удалось сохранить данные',
-            detail: `Ошибка: ${saveError.message || saveError}\n\nВсё равно выйти без сохранения?`,
+            type: 'warning',
+            title: 'Не удалось сохранить данные',
+            message: 'Сохранение не завершилось успешно.',
+            detail: 'Выйти без сохранения или отменить закрытие?',
             buttons: ['Выйти без сохранения', 'Отмена'],
             defaultId: 1,
             cancelId: 1,
+            noLink: true,
           });
-          
+
           if (errorResponse === 1) {
-            // Пользователь отменил - не закрываем
-            console.log('[Electron] Пользователь отменил закрытие после ошибки сохранения');
+            console.log('[Electron] Пользователь отменил закрытие после проблемы сохранения');
             return;
           }
         }
-        
+
         forceQuit = true;
         mainWindow.close();
-      } else {
-        // "Отмена" - ничего не делаем, окно остаётся открытым
-        console.log('[Electron] Пользователь отменил закрытие');
+        return;
       }
+
+      // 1 — выйти без сохранения
+      if (response === 1) {
+        console.log('[Electron] Пользователь выбрал: Выйти без сохранения');
+        forceQuit = true;
+        mainWindow.close();
+        return;
+      }
+
+      // 2 — отмена
+      console.log('[Electron] Пользователь отменил закрытие');
     } catch (error) {
       console.error('[Electron] Ошибка при показе диалога закрытия:', error);
-      
-      // При критической ошибке - показываем запасной диалог
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        title: 'Закрыть приложение?',
-        message: 'Произошла ошибка',
-        detail: 'Не удалось выполнить сохранение. Всё равно выйти?',
-        buttons: ['Выйти', 'Отмена'],
-        defaultId: 1,
-        cancelId: 1,
-      });
-
-      if (response === 0) {
-        forceQuit = true;
-        mainWindow.close();
-      }
+    } finally {
+      // Важно сбросить флаг, иначе в будущем close будет игнорироваться.
+      isCloseDialogOpen = false;
     }
   });
 
@@ -856,6 +1026,31 @@ function initAutoUpdater() {
     // Настройки
     autoUpdater.autoDownload = false; // Не скачивать автоматически, спросить пользователя
     autoUpdater.autoInstallOnAppQuit = true; // Установить при выходе
+
+    // =========================================================================
+    // КРИТИЧНО: ЗАКРЫТИЕ ПРИ ОБНОВЛЕНИИ БЕЗ ДИАЛОГОВ
+    // =========================================================================
+    //
+    // Почему:
+    // - Во время установки обновления установщик/обновлятор ожидает, что приложение
+    //   закроется быстро и без вмешательства пользователя.
+    // - Любой "confirm" (например диалог сохранения) может:
+    //   - заблокировать закрытие
+    //   - вызвать повторные попытки закрытия (и визуально выглядит как "спросили два раза")
+    //
+    // Что делаем:
+    // - Подписываемся на сигнал electron-updater, что начинается quit для обновления
+    // - В этот момент выставляем флаги, чтобы обработчик `mainWindow.on('close')`
+    //   НЕ показывал диалоги и делал лишь best-effort сохранение.
+    autoUpdater.on('before-quit-for-update', async () => {
+      console.log('[Updater] before-quit-for-update: закрываемся для установки обновления');
+      isQuittingForUpdate = true;
+      forceQuit = true;
+
+      // Важно: это best-effort и не должно повиснуть.
+      // Обновление важнее, чем бесконечное ожидание сохранения.
+      await bestEffortSave({ timeoutMs: 900 });
+    });
     
     // =========================================================================
     // ОБРАБОТЧИКИ СОБЫТИЙ
@@ -1014,15 +1209,26 @@ function initAutoUpdater() {
         if (response === 0) {
           // Перезапускаем приложение для установки обновления
           console.log('[Updater] Перезапуск для установки обновления...');
+
+          // КРИТИЧНО:
+          // - выставляем флаги ДО quitAndInstall()
+          // - иначе close-handler может успеть показать диалог сохранения
+          // - и это ломает UX и иногда мешает установщику.
+          isQuittingForUpdate = true;
+          forceQuit = true;
           
           // Показываем что идёт установка
           if (mainWindow) {
             mainWindow.setTitle('NeuroCanvas - Установка обновления...');
           }
-          
-          // quitAndInstall: первый параметр - isSilent (без диалогов установщика)
-          // второй параметр - isForceRunAfter (запустить после установки)
-          autoUpdater.quitAndInstall(false, true);
+
+          // Пытаемся "тихо" сохранить данные прямо перед выходом.
+          // Это дополнительно страхует пользователя, но не блокирует обновление надолго.
+          bestEffortSave({ timeoutMs: 1200 }).finally(() => {
+            // quitAndInstall: первый параметр - isSilent (без диалогов установщика)
+            // второй параметр - isForceRunAfter (запустить после установки)
+            autoUpdater.quitAndInstall(false, true);
+          });
         } else {
           console.log('[Updater] Обновление будет установлено при следующем запуске');
           if (mainWindow) {
@@ -1171,6 +1377,44 @@ app.on('window-all-closed', () => {
     console.log('[Electron] Все окна закрыты, завершаем работу');
     app.quit();
   }
+});
+
+// =============================================================================
+// WINDOWS: ЗАВЕРШЕНИЕ СЕССИИ (LOGOFF / SHUTDOWN)
+// =============================================================================
+//
+// Почему это важно:
+// - При завершении сессии Windows приложение может быть закрыто системой.
+// - В таких сценариях любые UI-диалоги (включая "сохранить перед выходом")
+//   либо не отображаются, либо блокируют корректное завершение.
+// - Поэтому мы переводим приложение в "тихий" режим закрытия:
+//   - НЕ показываем диалоги
+//   - делаем короткую попытку best-effort сохранения (в close-handler)
+//
+// Как это работает в нашем коде:
+// - Здесь мы выставляем флаг `isSessionEnding=true`
+// - Инициируем закрытие окна (если оно есть)
+// - Дальше `mainWindow.on('close')` увидит `isSessionEnding`
+//   и выполнит silent-close + best-effort сохранение, не показывая UI.
+app.on('session-end', () => {
+  console.log('[Electron] Windows session-end: система завершает сессию, закрываемся без диалогов');
+  isSessionEnding = true;
+
+  // Если окно существует — просим его закрыться.
+  // Важно: НЕ ставим forceQuit здесь, иначе close-handler пропустит и не сделает save-attempt.
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+      return;
+    }
+  } catch {
+    // Игнорируем — ниже всё равно попытаемся корректно завершиться.
+  }
+
+  // Если окна нет (или оно уже разрушено) — просто выходим.
+  // Диалоги всё равно запрещены в session-end.
+  forceQuit = true;
+  app.quit();
 });
 
 // Обрабатываем завершение приложения

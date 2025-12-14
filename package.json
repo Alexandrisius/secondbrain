@@ -1,6 +1,6 @@
 {
   "name": "neurocanvas",
-  "version": "1.0.15",
+  "version": "1.0.18",
   "private": true,
   "description": "AI-powered visual canvas for building prompts and knowledge graphs",
   "author": "NeuroCanvas Team",
@@ -32,6 +32,7 @@
     "detect-port": "^1.6.1",
     "dexie": "^4.2.1",
     "electron-updater": "^6.6.2",
+    "file-type": "^19.6.0",
     "framer-motion": "^12.23.26",
     "immer": "^11.0.1",
     "lucide-react": "^0.556.0",

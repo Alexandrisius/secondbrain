@@ -261,7 +261,12 @@ export const en: TranslationKeys = {
     parentContextUsed: 'Parent node context used',
     neuroSearchContext: 'NeuroSearch Context',
     multipleParentContextUsed: 'Context from {count} parent nodes used',
+    attachmentsContextUsed: 'Attachment context used',
+    attachmentsSuffix: ' + attachments',
     viewFullContext: 'Click to view full context',
+    // Marker on the context button (✱) — indicates that the user excluded
+    // some context items (nodes/attachments), i.e. the context is "configured".
+    contextHasExclusions: 'Context has exclusions',
 
     // Stale state
     staleContext: 'Context changed — regeneration required',
@@ -322,6 +327,13 @@ export const en: TranslationKeys = {
     question: 'Question:',
     response: 'Response:',
     quoteLabel: 'Quote:',
+    file: 'File:',
+    attachmentText: 'Document text:',
+    attachmentImage: 'Image:',
+    attachmentsThisCard: 'This card attachments',
+    attachmentsParent: 'Parent attachments',
+    attachmentsParentN: 'Parent {n} attachments',
+    attachmentsOfLevel: 'Attachments: {level}',
     excluded: 'Excluded from context',
     neuroSearchSimilar: 'Similar Topic (NeuroSearch)',
 

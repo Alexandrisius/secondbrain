@@ -33,7 +33,7 @@ export const useNodeInput = ({
   setIsEditing,
 }: UseNodeInputProps) => {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
-  const markChildrenStale = useCanvasStore((s) => s.markChildrenStale);
+  const setNodeStale = useCanvasStore((s) => s.setNodeStale);
   const createLinkedNodeRight = useCanvasStore((s) => s.createLinkedNodeRight);
   const createSiblingNode = useCanvasStore((s) => s.createSiblingNode);
   
@@ -73,10 +73,20 @@ export const useNodeInput = ({
   const handlePromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     setLocalPrompt(newValue);
-    if (data.response) {
-      markChildrenStale(id);
+
+    // STALE v2:
+    // - Во время редактирования prompt мы НЕ должны "мучить" потомков stale-статусом.
+    // - Но сама карточка должна быстро становиться stale при любом изменении контекста.
+    //
+    // Почему делаем это именно так (через setNodeStale и только один раз):
+    // - мы не хотим писать prompt в store на каждом символе (лишние ререндеры/шум),
+    // - но хотим, чтобы UI показывал "контекст изменён" сразу,
+    // - если пользователь откатит текст обратно и уйдёт с поля (blur) — сработает reconcile
+    //   через handleCheckAndClearStale(id), и stale снимется при совпадении хэша.
+    if (data.response && !data.isStale && newValue !== data.prompt) {
+      setNodeStale(id, true);
     }
-  }, [data.response, id, markChildrenStale, setLocalPrompt]);
+  }, [data.response, data.isStale, data.prompt, id, setLocalPrompt, setNodeStale]);
 
   const handlePromptBlur = useCallback(() => {
     setIsEditing(false);

@@ -27,7 +27,27 @@ export const NeuroSearchButton: React.FC<NeuroSearchButtonProps> = ({
         'relative flex-shrink-0 mb-2 mr-2',
         'w-8 h-8 rounded-md',
         'flex items-center justify-center',
-        'transition-all duration-200',
+        // =====================================================================
+        // ЕДИНЫЙ ВИЗУАЛЬНЫЙ СТИЛЬ КНОПОК (UX)
+        //
+        // Проблема (как в DOM-инспекторе у тебя):
+        // - Кнопка "скрепка" (attach) имеет базовый фон bg-muted/40 + тень shadow-sm,
+        //   поэтому выглядит как "настоящая" кнопка даже в idle состоянии.
+        // - Кнопка NeuroSearch в выключенном состоянии раньше была почти "плоским" значком:
+        //   без базового фона и без тени (фон появлялся только при hover).
+        //
+        // Из-за этого ряд кнопок в строке вопроса визуально выглядит разношёрстным.
+        //
+        // Решение:
+        // - Добавляем базовый фон и тень ТОЧНО в том же стиле, что и у attach-кнопки:
+        //   bg-muted/40 + hover:bg-muted/60 + shadow-sm + hover:shadow-md
+        // - При активных состояниях (enabled / stale / deepthink) мы всё равно
+        //   переопределяем фон и цвет текста (см. ниже), поэтому:
+        //   * общий "каркас" остаётся единым,
+        //   * а смысловая подсветка NeuroSearch не ломается.
+        // =====================================================================
+        'bg-muted/40 shadow-sm hover:shadow-md',
+        'transition-all duration-150',
         'nodrag group',
         isEnabled 
           ? [
@@ -35,11 +55,12 @@ export const NeuroSearchButton: React.FC<NeuroSearchButtonProps> = ({
               isStale 
                 ? 'bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-950/30 dark:text-orange-400'
                 : 'bg-primary/10 text-primary hover:bg-primary/20',
-              'shadow-sm'
             ] 
           : [
+              // В выключенном состоянии сохраняем "приглушённый" цвет иконки,
+              // но базовый фон/тень уже есть (выше) → стиль совпадает с attach-кнопкой.
               'text-muted-foreground/60',
-              'hover:text-primary hover:bg-muted/50',
+              'hover:text-primary hover:bg-muted/60',
             ],
         isDeepThink && isEnabled && !isStale && 'text-indigo-600 bg-indigo-50 dark:text-indigo-400 dark:bg-indigo-950/30'
       )}

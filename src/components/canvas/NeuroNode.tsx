@@ -149,7 +149,14 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
           data={data}
           isEditing={isEditing}
           localPrompt={localPrompt}
-          hasParentContext={Boolean(directParents.length > 0 || ancestorChain.some(n => n.data.summary) || neuroSearchResults.length > 0)}
+          // hasParentContext в UI = "пользователю есть что показать как контекст".
+          // Помимо предков/NeuroSearch, вложения текущей карточки тоже являются контекстом (LLM input).
+          hasParentContext={Boolean(
+            directParents.length > 0 ||
+            ancestorChain.some(n => n.data.summary) ||
+            neuroSearchResults.length > 0 ||
+            (Array.isArray(data.attachments) && data.attachments.length > 0)
+          )}
           directParents={directParents}
           isGenerating={generation.isGenerating}
           hasContent={hasContent}
@@ -211,11 +218,13 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
       <ContextViewerModal
         isOpen={isContextModalOpen}
         onClose={() => setIsContextModalOpen(false)}
+        currentNodeId={id}
         directParents={directParents}
         ancestorChain={ancestorChain}
         quote={data.quote}
         quoteSourceNodeId={data.quoteSourceNodeId}
         excludedContextNodeIds={data.excludedContextNodeIds}
+        excludedAttachmentIds={data.excludedAttachmentIds}
         neuroSearchResults={neuroSearchResults} // Передаем результаты поиска
         onToggleContextItem={(targetId) => {
             const currentExcluded = data.excludedContextNodeIds || [];
@@ -225,16 +234,29 @@ const NeuroNodeComponent = ({ id, data, selected }: NeuroNodeProps) => {
             } else {
                 newExcluded = [...currentExcluded, targetId];
             }
-            if (data.response) {
-                updateNodeData(id, { 
-                    excludedContextNodeIds: newExcluded,
-                    isStale: true,
-                    updatedAt: Date.now()
-                });
-                setTimeout(() => checkAndClearStale(id), 0);
-            } else {
-                updateNodeData(id, { excludedContextNodeIds: newExcluded });
-            }
+
+            // STALE v2:
+            // - переключение контекстных блоков меняет контекст ТОЛЬКО текущей карточки;
+            // - потомков НЕ трогаем, чтобы не было постоянной подсветки/мерцания;
+            // - stale для текущей карточки вычисляется централизованно в store (updateNodeData),
+            //   включая авто-снятие stale при возврате контекста к lastContextHash.
+            updateNodeData(id, {
+              excludedContextNodeIds: newExcluded.length > 0 ? newExcluded : undefined,
+            });
+        }}
+        onToggleAttachmentItem={(attachmentId) => {
+          const currentExcluded = Array.isArray(data.excludedAttachmentIds) ? data.excludedAttachmentIds : [];
+          const newExcluded = currentExcluded.includes(attachmentId)
+            ? currentExcluded.filter((x) => x !== attachmentId)
+            : [...currentExcluded, attachmentId];
+
+          // STALE v2:
+          // - исключение/включение вложения меняет контекст только текущей карточки;
+          // - потомков НЕ помечаем stale здесь — они станут stale только при Generate/Regenerate
+          //   этой карточки или при фактическом изменении её response.
+          updateNodeData(id, {
+            excludedAttachmentIds: newExcluded.length > 0 ? newExcluded : undefined,
+          });
         }}
       />
 

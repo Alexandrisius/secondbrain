@@ -19,7 +19,8 @@ import {
   getDataDirectory, 
   getCanvasesDirectory, 
   getCanvasFilePath,
-  getIndexFilePath 
+  getIndexFilePath,
+  getCanvasAttachmentsDirectory
 } from '@/lib/paths';
 
 // =============================================================================
@@ -190,6 +191,52 @@ async function copyCanvasFile(sourceId: string, newId: string): Promise<void> {
   }
 }
 
+/**
+ * Копирует директорию вложений одного холста в другой.
+ *
+ * ВАЖНО:
+ * - Если у исходного холста нет папки вложений — просто выходим.
+ * - Используем fs.cp (Node.js) с recursive:true.
+ */
+async function copyCanvasAttachmentsDirectory(sourceId: string, newId: string): Promise<void> {
+  const srcDir = getCanvasAttachmentsDirectory(sourceId);
+  const dstDir = getCanvasAttachmentsDirectory(newId);
+
+  try {
+    await fs.access(srcDir);
+  } catch {
+    // У исходного холста нет вложений — это нормально.
+    return;
+  }
+
+  // Создаём родительскую директорию, если её нет.
+  await ensureDirectoryExists(getDataDirectory());
+
+  // fs.cp сам создаст dstDir, но мы оставляем явное создание для ясности и логов.
+  await ensureDirectoryExists(dstDir);
+
+  await fs.cp(srcDir, dstDir, {
+    recursive: true,
+    force: true,
+  });
+}
+
+/**
+ * Удаляет директорию вложений холста (best-effort).
+ *
+ * ВАЖНО:
+ * - force:true позволяет не падать, если папки нет (ENOENT)
+ * - recursive:true удаляет всё содержимое
+ */
+async function deleteCanvasAttachmentsDirectory(canvasId: string): Promise<void> {
+  const dir = getCanvasAttachmentsDirectory(canvasId);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn('[Canvas API] Не удалось удалить директорию вложений:', dir, err);
+  }
+}
+
 // =============================================================================
 // GET - Загрузка холста
 // =============================================================================
@@ -287,38 +334,70 @@ export async function POST(
     // =========================================================================
     if (body.action === 'duplicate') {
       const { newId, newName } = body;
-      
-      // Копируем файл холста
-      await copyCanvasFile(canvasId, newId);
-      
-      // Обновляем workspace
-      const workspace = await readWorkspaceIndex();
-      if (workspace) {
-        // Находим исходный холст для копирования метаданных
-        const sourceCanvas = workspace.canvases.find(c => c.id === canvasId);
-        
-        if (sourceCanvas) {
-          // Добавляем новый холст в workspace
-          workspace.canvases.push({
-            id: newId,
-            name: newName || `${sourceCanvas.name} (копия)`,
-            folderId: sourceCanvas.folderId,
-            order: workspace.canvases.filter(c => c.folderId === sourceCanvas.folderId).length,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            nodesCount: sourceCanvas.nodesCount,
-          });
-          
-          await writeWorkspaceIndex(workspace);
+
+      // =========================================================================
+      // ТРАНЗАКЦИОННОСТЬ (best-effort)
+      //
+      // Мы хотим избежать состояния:
+      // - canvas файл создан
+      // - а вложения не скопировались
+      // - или workspace index обновился частично
+      //
+      // Поэтому порядок такой:
+      // 1) копируем canvas файл
+      // 2) копируем папку вложений (если есть)
+      // 3) только после этого обновляем workspace index
+      //
+      // Если что-то падает — делаем cleanup (удаляем новый canvas файл и папку вложений).
+      // =========================================================================
+      try {
+        // 1) Копируем файл холста
+        await copyCanvasFile(canvasId, newId);
+
+        // 2) Копируем вложения
+        await copyCanvasAttachmentsDirectory(canvasId, newId);
+
+        // 3) Обновляем workspace
+        const workspace = await readWorkspaceIndex();
+        if (workspace) {
+          const sourceCanvas = workspace.canvases.find(c => c.id === canvasId);
+
+          if (sourceCanvas) {
+            workspace.canvases.push({
+              id: newId,
+              name: newName || `${sourceCanvas.name} (копия)`,
+              folderId: sourceCanvas.folderId,
+              order: workspace.canvases.filter(c => c.folderId === sourceCanvas.folderId).length,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              nodesCount: sourceCanvas.nodesCount,
+            });
+
+            await writeWorkspaceIndex(workspace);
+          }
         }
+
+        console.log(`[Canvas API] Скопирован холст ${canvasId} -> ${newId}`);
+
+        return NextResponse.json({
+          success: true,
+          message: 'Холст успешно скопирован',
+        });
+      } catch (dupErr) {
+        console.error('[Canvas API] Ошибка копирования холста (duplicate):', dupErr);
+
+        // Cleanup: удаляем “хвосты”
+        await deleteCanvasFile(newId);
+        await deleteCanvasAttachmentsDirectory(newId);
+
+        return NextResponse.json(
+          {
+            error: 'Не удалось скопировать холст',
+            details: dupErr instanceof Error ? dupErr.message : String(dupErr),
+          },
+          { status: 500 }
+        );
       }
-      
-      console.log(`[Canvas API] Скопирован холст ${canvasId} -> ${newId}`);
-      
-      return NextResponse.json({
-        success: true,
-        message: 'Холст успешно скопирован',
-      });
     }
     
     // =========================================================================
@@ -402,6 +481,9 @@ export async function DELETE(
     
     // Удаляем файл холста
     await deleteCanvasFile(canvasId);
+
+    // Удаляем папку вложений (best-effort; не падаем если папки уже нет)
+    await deleteCanvasAttachmentsDirectory(canvasId);
     
     // Обновляем workspace
     const workspace = await readWorkspaceIndex();
