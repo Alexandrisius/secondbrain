@@ -71,6 +71,14 @@ export const en: TranslationKeys = {
     apiKeyStorageStatusError: 'OS vault error.',
     apiKeyStorageSaveToVault: 'Save to vault',
     apiKeyStorageSavingButton: 'Saving...',
+    /**
+     * Button label after a successful save.
+     *
+     * Keep it short:
+     * - status line uses a full sentence (`apiKeyStorageStatusSaved`)
+     * - button needs a compact “state label”
+     */
+    apiKeyStorageSavedButton: 'Saved',
     apiKeyStorageDeleteFromVault: 'Delete',
 
     // Custom URL
@@ -310,6 +318,8 @@ export const en: TranslationKeys = {
     descriptionPlural: 'Context from {count} ancestors used',
     noContext: 'No context from parent cards',
     rootCard: 'This is a root card without parents',
+    noAttachments: 'No attachments',
+    noVirtualContext: 'No virtual context (NeuroSearch)',
 
     // Levels
     parent: 'Parent',
@@ -340,6 +350,25 @@ export const en: TranslationKeys = {
     // Labels for personal notes (NoteNode)
     noteTitle: 'Title:',
     noteContent: 'Content:',
+
+    // -------------------------------------------------------------------------
+    // UI: tabs and filters (context priority)
+    // -------------------------------------------------------------------------
+    tabLineage: 'Lineage',
+    tabAttachments: 'Attachments',
+    tabVirtual: 'NeuroSearch',
+    tabLineageHint: 'Real links: parents and ancestors (primary context)',
+    tabAttachmentsHint: 'This card attachments and inherited attachments',
+    tabVirtualHint: 'Virtual context from NeuroSearch (often noisy)',
+
+    // Excluded filter
+    showExcluded: 'Show excluded',
+    hideExcluded: 'Hide excluded',
+    showExcludedToggleHint: 'Toggle visibility of excluded context blocks',
+
+    // Tab descriptions (modal header)
+    attachmentsTabDescription: 'Attachments: {count} files',
+    virtualTabDescription: 'NeuroSearch: {count} results',
   },
 
   // ===========================================================================
@@ -474,6 +503,305 @@ export const en: TranslationKeys = {
     kofiDescription: 'For international payments (PayPal)',
     githubDescription: 'Give us a star on GitHub!',
     thanks: 'Thank you for using NeuroCanvas!',
+  },
+
+  // ===========================================================================
+  // FILE MANAGER
+  // ===========================================================================
+  fileManager: {
+    title: 'Files',
+    all: 'All',
+    trash: 'Trash',
+    searchPlaceholder: 'Search documents...',
+    /**
+     * Tooltip for the “collapse” button in FileManagerSidebar.
+     *
+     * Note: this is not a generic “close” action (the panel can be expanded back),
+     * so we keep a dedicated wording.
+     */
+    collapse: 'Collapse',
+
+    /**
+     * Compact “time ago” labels for file lists.
+     * Keep them short (m/h/d) so the UI stays tight in both locales.
+     */
+    time: {
+      justNow: 'just now',
+      minutesAgo: '{count}m ago',
+      hoursAgo: '{count}h ago',
+      daysAgo: '{count}d ago',
+    },
+    
+    // Toolbar
+    newFolder: 'New Folder',
+    upload: 'Upload',
+    uploadTooltip: 'Upload files to current folder',
+    gc: 'GC',
+    gcTooltip: 'Permanently delete unlinked documents',
+    /**
+     * "Trash unlinked" button (move unlinked live docs to trash).
+     *
+     * Important:
+     * - this is NOT "Empty trash" (that is permanent delete),
+     * - and NOT "GC" (product meaning: permanent delete).
+     * Here we do a soft cleanup: move "live" orphaned files into Trash.
+     */
+    trashUnlinkedTooltip: 'Move unlinked files to trash',
+    /**
+     * ARIA label for the numeric badge on the "unlinked" button.
+     */
+    trashUnlinkedCountAria: 'Unlinked files: {count}',
+    /**
+     * ARIA label for the Trash tab badge.
+     */
+    trashCountAria: 'Files in trash: {count}',
+    emptyTrash: 'Empty',
+    emptyTrashTooltip: 'Empty trash',
+    refresh: 'Refresh',
+    refreshTooltip: 'Recalculate links (usage-index)',
+    filters: 'Filters',
+    viewList: 'List',
+    viewGrid: 'Grid',
+    
+    // Upload Zone
+    dropFiles: 'Drop files here',
+    clickToUpload: 'or click to select',
+    uploadingTo: 'Uploading to:',
+    root: 'root',
+
+    // Upload Conflict Modal (when a folder already contains a file with the same name)
+    conflicts: {
+      title: 'File name conflict',
+      description: 'Selected folder already contains documents with the same name. Choose an action for each file.',
+      matchesInFolder: 'Matches in folder: {count}',
+      // Strategies
+      strategyReplace: 'Replace',
+      strategyUploadAsNew: 'Upload as new',
+      strategySkip: 'Skip',
+      // Strategy hints
+      replaceHint: 'We will replace the content of an existing document. Its docId will stay the same, but the file version (hash/updatedAt) will change.',
+      replaceTarget: 'Replace target:',
+      uploadAsNewHint: 'We will upload this as a new document (a new docId will be created). Provide a new name:',
+      // Naming helpers
+      copySuffix: '(copy)',
+      defaultFileBaseName: 'file',
+      newNamePlaceholder: 'Example: {example}',
+      // Buttons
+      apply: 'Apply',
+    },
+
+    // File/Folder item UI (tooltips, short labels)
+    fileItem: {
+      actionsTooltip: 'Actions',
+      processingFallback: 'Processing...',
+      staleFallback: 'Needs analysis/update',
+      /**
+       * Tooltip for the yellow "stale" status when API key is NOT set.
+       *
+       * Key UX case:
+       * - user uploads files without an API key,
+       * - background analysis cannot run,
+       * - user still needs a clear explanation and a recovery path.
+       */
+      staleHintNoKey:
+        'Needs analysis/update, but no API key is set. Open Settings, add a key, then run “Refresh LLM data”.',
+      /**
+       * Tooltip for the yellow "stale" status when API key IS set.
+       * We explicitly point to the exact action so users don’t have to guess.
+       */
+      staleHintWithKey: 'Needs analysis/update. Right-click the file → “Refresh LLM data”.',
+      errorFallback: 'Error',
+      usedInCanvasesTooltip: 'Used in canvases: {count}',
+    },
+    folderItem: {
+      actionsTooltip: 'Actions',
+    },
+
+    // FileDetails panel (if used in the UI)
+    details: {
+      panelTitle: 'Properties',
+      tabView: 'View',
+      tabMeta: 'Metadata',
+      tabLinks: 'Links',
+      root: 'Root',
+      // Viewer / actions
+      typeImage: 'Image',
+      typeText: 'Text',
+      openFileInNewTabTooltip: 'Open file in new tab',
+      reloadTextTooltip: 'Reload text',
+      fitImageTooltip: 'Fit image',
+      zoomOutTooltip: 'Zoom out',
+      zoomInTooltip: 'Zoom in',
+      currentZoomTooltip: 'Current zoom',
+      // Text viewer
+      loadingText: 'Loading text…',
+      failedToLoadText: 'Failed to load text',
+      nonTextHint: 'Tip: if this is not a text document, use “Open in new tab”.',
+      textTruncatedInfo: 'Showing first {limit} characters out of {total}.',
+      showFullText: 'Show full text',
+      showFullTextTooltip: 'Show full text (may be heavy for the browser)',
+      // Quick labels
+      sizeLabel: 'Size',
+      updatedLabel: 'Updated',
+      // Summary section
+      descriptionTitle: 'Description',
+      summaryTitle: 'Summary',
+      noImageDescription:
+        'No image description yet. It usually appears a few seconds after upload (analysis runs in the background). Check that an API key is set in Settings.',
+      noSummary:
+        'No summary yet. For texts an excerpt may be available right after upload; LLM summarization runs in the background.',
+      // Meta tab
+      nameLabel: 'Name',
+      folderLabel: 'Folder',
+      statusLabel: 'Status',
+      // Links tab
+      usedInTitle: 'Used in',
+      canvasLabel: 'Canvas',
+      cardLabel: 'Card',
+      goToCardTooltip: 'Go to card (center + highlight)',
+      noCardsInCanvas: 'No cards (canvas link only)',
+      noLinkedCanvases: 'No linked canvases',
+      // Footer action tooltips / labels
+      trashedFirstRestore: 'Document is in trash: restore it first',
+      renameTooltip: 'Rename document',
+      moveTooltip: 'Move document',
+      replaceTooltip: 'Replace file content (docId stays the same)',
+      renameShort: 'Rename',
+      moveShort: 'Move',
+      replaceShort: 'Replace',
+      download: 'Download',
+    },
+    
+    // Actions
+    actions: {
+      open: 'Open',
+      download: 'Download',
+      rename: 'Rename',
+      move: 'Move',
+      replace: 'Replace file',
+      /**
+       * Manual trigger for LLM analysis for a library document.
+       *
+       * What analysis does:
+       * - text: short summary
+       * - image: caption-only description
+       *
+       * Why “Refresh”:
+       * - analysis is idempotent; if already up to date, the server will skip.
+       * - users think in terms of “rebuild missing context”.
+       */
+      analyzeLlm: 'Refresh LLM data',
+      delete: 'Delete',
+      restore: 'Restore',
+      trash: 'Move to trash',
+      createSubfolder: 'Create subfolder',
+    },
+
+    // Dialogs
+    dialogs: {
+      renameDocTitle: 'Rename document',
+      renameDocDesc: 'docId: {id}',
+      renameFolderTitle: 'Rename folder',
+      renameFolderDesc: 'folderId: {id}',
+      moveDocTitle: 'Move document',
+      /**
+       * Short description for the “move document” dialog.
+       * Keep it a translation key to avoid hardcoded labels in JSX.
+       */
+      moveDocDesc: 'docId: {id}',
+      createFolderTitle: 'New folder',
+      deleteFolderTitle: 'Delete folder?',
+      deleteFolderDesc: 'Folder will be deleted only if empty.',
+      emptyTrashTitle: 'Empty trash?',
+      /**
+       * Important: "Empty trash" permanently deletes ALL documents in trash.
+       *
+       * Server semantics:
+       * - first remove links from cards (unlink),
+       * - then delete files physically.
+       */
+      emptyTrashDesc: 'All documents in trash will be permanently deleted. Links in cards will be removed automatically.',
+      /**
+       * Confirmation dialog for "trash unlinked".
+       * This is a soft action: move to trash (NOT permanent delete).
+       */
+      trashUnlinkedTitle: 'Move unlinked files to trash?',
+      trashUnlinkedDesc: '{count} unlinked documents will be moved to trash. This is not a permanent delete.',
+      gcTitle: 'GC (Garbage Collection)',
+      gcDesc: 'Delete unused documents?',
+      /**
+       * Label for the “GC include live” checkbox (dangerous action).
+       */
+      gcIncludeLiveLabel: 'Also delete “live” unlinked documents (dangerous)',
+      trashUsedTitle: 'Document is in use',
+      trashUsedDesc: 'This document is used in canvases. Links will remain, but the file will be in trash.',
+      /**
+       * Dialog shown when user tries to run analysis but has no API key.
+       */
+      llmMissingKeyTitle: 'API key is required for analysis',
+      llmMissingKeyDesc:
+        'Document: {name}. To restore summary/description, open Settings and provide an API key.',
+      llmMissingKeyHint:
+        'Tip: open Settings via the Settings button (gear) in the canvas toolbar. After adding the key, run “Refresh LLM data” again.',
+      cancel: 'Cancel',
+      save: 'Save',
+      create: 'Create',
+      delete: 'Delete',
+      confirm: 'Confirm',
+    },
+
+    // Preview Modal
+    preview: {
+      title: 'Preview',
+      openInNewTab: 'Open in new tab',
+      download: 'Download',
+      fileInfo: 'File Info',
+      size: 'Size',
+      created: 'Created',
+      updated: 'Updated',
+      type: 'Type',
+      links: 'Links',
+      noContent: 'Preview not available for this file type.',
+      /**
+       * Copy used both in the “Links” tab and in the “file is in use” delete warning.
+       */
+      linksUsedIn: 'Used in',
+      linksCanvases: 'canvases',
+      linksNoLinks: 'No links',
+      linksNoCards: 'No linked cards',
+      currentCanvasBadge: 'current',
+      /**
+       * Tooltip in the image viewer (“fit to screen”).
+       */
+      fitToScreen: 'Fit to screen',
+      /**
+       * Error shown when loading text preview failed (network/server error).
+       */
+      loadContentError: 'Failed to load file content',
+
+      // Metadata fields
+      docId: 'Doc ID',
+      mimeType: 'MIME Type',
+      fileHash: 'File Hash',
+      aiDescription: 'AI Description',
+      aiSummary: 'AI Summary',
+    },
+    
+    // Filters
+    filterCanvas: 'Filter by canvas',
+    filterExt: 'Filter by extension',
+    /**
+     * Placeholder for the extensions input field.
+     * Kept neutral; works for both locales.
+     */
+    filterExtPlaceholder: 'md, pdf, png',
+    apply: 'Apply',
+    reset: 'Reset',
+    
+    // Status
+    itemsSelected: 'Selected: {count}',
+    processing: 'Processing...',
+    noFiles: 'No files',
   },
 
   // ===========================================================================

@@ -10,7 +10,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2, Monitor, LayoutTemplate } from 'lucide-react';
+import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2, Monitor, LayoutTemplate, Check } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -204,6 +204,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     apiKeyStorageStatusError: string;
     apiKeyStorageSaveToVault: string;
     apiKeyStorageSavingButton: string;
+    apiKeyStorageSavedButton: string;
     apiKeyStorageDeleteFromVault: string;
   };
   
@@ -1195,6 +1196,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="text-xs text-muted-foreground">
                     {settings.apiKeyStorageOsVaultHint}
                   </span>
+
+                  {/*
+                    “Промышленная” микро-обратная связь прямо на плитке режима.
+
+                    Почему это полезно:
+                    - пользователь кликает “Хранилище ОС” (особенно если ключ уже введён),
+                      и ожидает немедленного подтверждения, что сохранение реально случилось;
+                    - статусная строка ниже может быть незаметна (мелкий текст),
+                      а визуальная метка на самой кнопке — более очевидна.
+
+                    Важно:
+                    - показываем только при реальном успехе (secureKeyStatus === 'saved');
+                    - при изменении ключа в поле ввода статус сбрасывается в `idle`
+                      (см. handleApiKeyChange), поэтому “Сохранено ✓” не врёт.
+                  */}
+                  {apiKeyStorageMode === 'osVault' && secureKeyStatus === 'saved' && (
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                      <Check className="w-3 h-3" />
+                      {settings.apiKeyStorageSavedButton}
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -1233,10 +1255,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() => void handleSaveApiKeyToVault()}
                       disabled={!apiKey || secureKeyStatus === 'saving' || secureKeyStatus === 'loading' || secureKeyStatus === 'deleting'}
                     >
+                      {/*
+                        Контент кнопки “Сохранить в хранилище” зависит от статуса операции.
+
+                        UX-логика:
+                        - saving  → показываем спиннер и “Сохранение...”
+                        - saved   → показываем ✓ и “Сохранено”
+                        - иначе   → обычная кнопка “Сохранить в хранилище”
+
+                        Почему так “по‑промышленному”:
+                        - пользователь видит мгновенную реакцию именно на той кнопке,
+                          по которой он кликнул (а не только где-то рядом в статусе);
+                        - “Сохранено” остаётся до тех пор, пока пользователь не изменит ключ
+                          (см. handleApiKeyChange), это предотвращает ложное ощущение,
+                          что новый ключ тоже уже сохранён.
+                      */}
                       {secureKeyStatus === 'saving' ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                           {settings.apiKeyStorageSavingButton}
+                        </>
+                      ) : secureKeyStatus === 'saved' ? (
+                        <>
+                          <Check className="w-4 h-4 mr-2" />
+                          {settings.apiKeyStorageSavedButton}
                         </>
                       ) : (
                         settings.apiKeyStorageSaveToVault

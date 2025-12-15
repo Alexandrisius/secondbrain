@@ -53,101 +53,104 @@ export function getCanvasesDirectory(): string {
   return path.join(getDataDirectory(), 'canvases');
 }
 
+// =============================================================================
+// ГЛОБАЛЬНАЯ БИБЛИОТЕКА ДОКУМЕНТОВ (data/library)
+// =============================================================================
+//
+// Новый слой хранения (по согласованной архитектуре):
+// - Мы используем глобальную библиотеку документов, доступную с любого холста по `docId`.
+//
+// Почему библиотека — это отдельная директория:
+// - У документов появляется собственный жизненный цикл (rename/move/trash/gc),
+// - Ссылки на документ живут в разных холстах (usage-index),
+// - Один и тот же файл может быть привязан к разным карточкам/холстам.
+//
+// Структура на диске:
+// - data/library/files/<docId>       — "живой" файл (имя = docId, без дополнительных поддиректорий)
+// - data/library/.trash/<docId>      — корзина (soft-delete)
+// - data/library/library-index.json  — основной индекс (папки + метаданные документов)
+// - data/library/usage-index.json    — обратные ссылки (какие холсты/ноды используют docId)
+//
+// ВАЖНО (безопасность):
+// - Эти функции ТОЛЬКО строят пути.
+// - Валидация docId (формат UUID+ext) должна выполняться в API routes
+//   ДО вызова getLibraryFilePath()/getLibraryTrashFilePath(), чтобы исключить path traversal.
+
 /**
- * Получает путь к директории, где хранятся ВСЕ вложения приложения.
+ * Получает путь к корневой директории глобальной библиотеки документов.
+ *
+ * @returns Абсолютный путь к `data/library`
+ */
+export function getLibraryDirectory(): string {
+  return path.join(getDataDirectory(), 'library');
+}
+
+/**
+ * Получает путь к директории, где лежат "живые" файлы документов библиотеки.
  *
  * Структура:
- * - data/attachments/<canvasId>/<attachmentId>
- *
- * Почему отдельная директория:
- * - canvas JSON остаётся компактным (не храним base64)
- * - проще отдавать файлы для превью
- * - проще чистить при удалении/дубликате холста
+ * - data/library/files/<docId>
  */
-export function getAttachmentsDirectory(): string {
-  return path.join(getDataDirectory(), 'attachments');
+export function getLibraryFilesDirectory(): string {
+  return path.join(getLibraryDirectory(), 'files');
 }
 
 /**
- * Получает путь к директории вложений конкретного холста.
- *
- * @param canvasId - ID холста
- * @returns Абсолютный путь к директории `data/attachments/<canvasId>`
- */
-export function getCanvasAttachmentsDirectory(canvasId: string): string {
-  return path.join(getAttachmentsDirectory(), canvasId);
-}
-
-/**
- * Получает путь к "корзине" вложений конкретного холста.
+ * Получает путь к директории "корзины" библиотеки.
  *
  * Зачем нужна корзина (soft-delete):
- * - В UI есть undo/redo (zundo), которое откатывает JSON-состояние холста.
- * - Но файловая система НЕ откатывается автоматически.
- * - Если мы физически удалим файл при удалении последней ссылки,
- *   а затем пользователь сделает undo — ссылка вернётся, а файл уже исчез → ошибки.
- *
- * Поэтому:
- * - "Удаление" вложения на уровне карточек = удаление ссылок.
- * - Физическое удаление файла делаем отложенно (GC) или через будущий файловый менеджер.
- * - На первом этапе мы просто переносим файл в `.trash`.
+ * - UI/undo/redo может временно вернуть ссылку на документ,
+ * - пользователь может передумать и "восстановить",
+ * - GC (удаление навсегда) делаем отдельно и только если нет ссылок.
  *
  * Структура:
- * - data/attachments/<canvasId>/.trash/<attachmentId>
- *
- * Важно:
- * - `.trash` лежит ВНУТРИ папки холста, поэтому rename/move обычно атомарны.
- * - Это позволяет быстро "восстановить" файл при необходимости.
+ * - data/library/.trash/<docId>
  */
-export function getCanvasAttachmentsTrashDirectory(canvasId: string): string {
-  return path.join(getCanvasAttachmentsDirectory(canvasId), '.trash');
+export function getLibraryTrashDirectory(): string {
+  return path.join(getLibraryDirectory(), '.trash');
 }
 
 /**
- * Путь к файлу вложения внутри "корзины" холста.
+ * Путь к основному индексному файлу библиотеки.
  *
- * @param canvasId - ID холста
- * @param attachmentId - ID вложения (UUID + ext)
+ * Структура:
+ * - data/library/library-index.json
  */
-export function getAttachmentTrashFilePath(canvasId: string, attachmentId: string): string {
-  return path.join(getCanvasAttachmentsTrashDirectory(canvasId), attachmentId);
+export function getLibraryIndexPath(): string {
+  return path.join(getLibraryDirectory(), 'library-index.json');
 }
 
 /**
- * Путь к индексному файлу вложений конкретного холста.
+ * Путь к файлу индекса "использований" (обратных ссылок).
  *
- * Зачем он нужен:
- * - В будущем у холста появится полноценный файловый менеджер, а карточки будут хранить только ссылки.
- * - Уже сейчас нам нужно уметь:
- *   1) дедуплицировать файлы по имени (в пределах холста),
- *   2) "обновлять файл" при загрузке с тем же именем (upsert),
- *   3) быстро получать метаданные версии файла (updatedAt/fileHash) без сканирования диска.
- *
- * Формат хранения:
- * - data/attachments/<canvasId>/attachments-index.json
- *
- * Важно:
- * - Этот индекс НЕ используется для построения путей к файлам напрямую (пути строятся через attachmentId).
- * - Сам attachmentId остаётся "не угадываемым" (UUID + ext), чтобы не открывать путь для path traversal.
+ * Структура:
+ * - data/library/usage-index.json
  */
-export function getCanvasAttachmentsIndexPath(canvasId: string): string {
-  return path.join(getCanvasAttachmentsDirectory(canvasId), 'attachments-index.json');
+export function getLibraryUsageIndexPath(): string {
+  return path.join(getLibraryDirectory(), 'usage-index.json');
 }
 
 /**
- * Получает путь к файлу вложения по canvasId + attachmentId.
+ * Получает путь к файлу документа (живой файл) по docId.
  *
  * ВАЖНО:
- * - Эта функция НЕ делает валидацию `attachmentId` на формат.
- *   Валидацию (regex) мы обязаны делать в API routes ДО вызова этой функции.
- * - Путь строится только через path.join — никаких “сырых” конкатенаций.
- *
- * @param canvasId - ID холста
- * @param attachmentId - ID вложения (UUID + ext)
- * @returns Абсолютный путь к файлу вложения
+ * - Эта функция НЕ валидирует docId.
+ * - docId должен быть проверен в API route на соответствие ожидаемому формату
+ *   (UUID + '.' + ext), чтобы исключить path traversal.
  */
-export function getAttachmentFilePath(canvasId: string, attachmentId: string): string {
-  return path.join(getCanvasAttachmentsDirectory(canvasId), attachmentId);
+export function getLibraryFilePath(docId: string): string {
+  return path.join(getLibraryFilesDirectory(), docId);
+}
+
+/**
+ * Получает путь к файлу документа внутри корзины по docId.
+ *
+ * ВАЖНО:
+ * - Эта функция НЕ валидирует docId.
+ * - docId должен быть проверен в API route на соответствие ожидаемому формату.
+ */
+export function getLibraryTrashFilePath(docId: string): string {
+  return path.join(getLibraryTrashDirectory(), docId);
 }
 
 /**
@@ -177,6 +180,11 @@ export function logPathsInfo(): void {
   console.log('  USER_DATA_PATH:', process.env.USER_DATA_PATH || '(не установлено)');
   console.log('  Data directory:', getDataDirectory());
   console.log('  Canvases directory:', getCanvasesDirectory());
+  console.log('  Library directory:', getLibraryDirectory());
+  console.log('  Library files directory:', getLibraryFilesDirectory());
+  console.log('  Library trash directory:', getLibraryTrashDirectory());
+  console.log('  Library index:', getLibraryIndexPath());
+  console.log('  Library usage index:', getLibraryUsageIndexPath());
   console.log('  Index file:', getIndexFilePath());
 }
 

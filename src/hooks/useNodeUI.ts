@@ -55,6 +55,35 @@ export const useNodeUI = ({
   // Используется для однонаправленной синхронизации (store → local)
   const prevIsQuoteModeActiveRef = useRef<boolean | undefined>(data.isQuoteModeActive);
 
+  /**
+   * Гарантированно раскрывает ответ (если он свернут), чтобы пользователь
+   * мог СРАЗУ выделять текст при входе в режим цитирования.
+   *
+   * Почему это важно:
+   * - Кнопка "Выделить цитату" находится в тулбаре, который виден даже когда ответ свернут.
+   * - Режим цитирования включает select-text и подсказки, но если блок ответа скрыт
+   *   (maxHeight: 0 + opacity: 0), пользователь не видит текст и не может начать выделение.
+   *
+   * Мы обновляем состояние в ДВУХ местах:
+   * - локально (lifted state) через setIsAnswerExpanded — чтобы UI раскрылся мгновенно,
+   * - в store (node.data.isAnswerExpanded) через updateNodeData — чтобы состояние сохранилось
+   *   и было консистентно для других частей приложения/последующих рендеров.
+   *
+   * NOTE:
+   * - Это действие относится к UI (как раскрытие/скрытие ответа), поэтому поле
+   *   `isAnswerExpanded` уже помечено как "не влияющее на историю undo/redo".
+   */
+  const ensureAnswerExpandedForQuoteMode = useCallback(() => {
+    // Если уже раскрыто — ничего не делаем (важно не плодить лишние записи/рендеры).
+    if (isAnswerExpanded) return;
+
+    // 1) Мгновенно раскрываем в текущем UI (lifted state)
+    setIsAnswerExpanded(true);
+
+    // 2) Синхронизируем в store, чтобы раскрытие было "истинным" состоянием ноды
+    updateNodeData(id, { isAnswerExpanded: true });
+  }, [id, isAnswerExpanded, setIsAnswerExpanded, updateNodeData]);
+
   // --- COPY STATE ---
   const [copied, setCopied] = useState(false);
 
@@ -95,10 +124,22 @@ export const useNodeUI = ({
         // При активации режима цитирования из store сбрасываем выделенный текст
         if (data.isQuoteModeActive) {
           setSelectedQuoteText('');
+
+          /**
+           * Критично для UX:
+           * Если режим цитирования активирован "снаружи" (например, из дочерней карточки
+           * при обновлении/инвалидации цитаты), родительская карточка может быть свернута.
+           * В таком случае мы автоматически раскрываем ответ, чтобы пользователь сразу
+           * увидел текст и мог его выделить — без лишнего клика по "Показать ответ".
+           */
+          ensureAnswerExpandedForQuoteMode();
         }
       }
     }
-  }, [data.isQuoteModeActive]); // Убрали isQuoteMode из зависимостей!
+    // Важно: не добавляем isQuoteMode в зависимости (см. комментарий выше).
+    // ensureAnswerExpandedForQuoteMode безопасно добавлять: внутри есть жесткая защита,
+    // что эффект реально отреагирует только на изменение store-поля isQuoteModeActive.
+  }, [data.isQuoteModeActive, ensureAnswerExpandedForQuoteMode]); // Убрали isQuoteMode из зависимостей!
 
   // Scroll observer
   useEffect(() => {
@@ -200,9 +241,16 @@ export const useNodeUI = ({
 
   // Quote handlers
   const handleEnterQuoteMode = useCallback(() => {
+    /**
+     * UX-требование:
+     * При клике на "Выделить цитату" на свернутой карточке мы ДОЛЖНЫ автоматически
+     * раскрыть блок ответа. Иначе пользователь увидит, что режим включился (иконка/подсветка),
+     * но выделять текст не получится, потому что контент скрыт.
+     */
+    ensureAnswerExpandedForQuoteMode();
     setIsQuoteMode(true);
     setSelectedQuoteText('');
-  }, []);
+  }, [ensureAnswerExpandedForQuoteMode]);
 
   const handleExitQuoteMode = useCallback(() => {
     setIsQuoteMode(false);

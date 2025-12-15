@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 // ВАЖНО (Next.js):
 // - ESLint правило @next/next/no-img-element рекомендует использовать next/image вместо <img>.
-// - Для вложений, которые мы отдаём через /api/attachments (локальный API-роут),
-//   используем unoptimized, чтобы не менять текущий путь доставки файлов и избежать
-//   потенциальных нюансов с оптимизатором изображений.
+// - Мы отдаём файлы вложений через API библиотеки (`/api/library/file/[docId]`).
+// - Для таких URL используем `unoptimized`, чтобы:
+//   - избежать нюансов/кеширования оптимизатора изображений,
+//   - оставить предсказуемую семантику отображения "как отдал сервер".
 import Image from 'next/image';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Handle, Position } from '@xyflow/react';
@@ -28,17 +29,16 @@ import { NeuroSearchButton } from './NeuroSearchButton';
 import { useNeuroSearchStore } from '@/store/useNeuroSearchStore';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { searchSimilar } from '@/lib/search/semantic';
-import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 import {
   useSettingsStore,
   selectApiKey,
-  selectApiBaseUrl,
-  selectModel,
   selectEmbeddingsBaseUrl,
   selectCorporateMode,
   selectEmbeddingsModel,
   selectNeuroSearchMinSimilarity,
 } from '@/store/useSettingsStore';
+import { useLibraryStore, type UploadConflict, type LibraryDocDTO } from '@/store/useLibraryStore';
+import { UploadConflictModal, ConflictAction } from '@/components/file-manager/UploadConflictModal';
 
 // Пустой массив для предотвращения лишних ререндеров (типизированный)
 const EMPTY_SEARCH_RESULTS: import('@/types/embeddings').SearchResult[] = [];
@@ -47,6 +47,72 @@ const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_SNAPSHOT: Record<string, number> = {};
 // Пустой массив для вложений (важно: один и тот же reference)
 const EMPTY_ATTACHMENTS: NodeAttachment[] = [];
+
+// =============================================================================
+// Drag & Drop: библиотечный docId → в attachments ноды
+// =============================================================================
+//
+// Здесь мы реализуем "второй тип" DnD, помимо уже существующего DnD реальных файлов:
+// - Реальные файлы (DataTransfer.files) → upload в глобальную библиотеку (/api/library/upload)
+// - Ссылка на документ (docId) → node.data.attachments (attachmentId = docId) без загрузки файла
+//
+// Почему нужен кастомный MIME:
+// - чтобы не конфликтовать со стандартными типами браузера (text/plain, Files и т.п.)
+// - чтобы drop handler мог однозначно понять: это "ссылка на библиотеку", а не upload
+const LIB_DOC_DND_MIME = 'application/x-secondbrain-doc';
+
+/**
+ * Regex, который “похож” на серверный формат docId (UUID + '.' + ext).
+ *
+ * Важно:
+ * - Это НЕ security boundary. Истинная валидация делается на сервере.
+ * - Здесь это нужно только для UX:
+ *   - валидировать, что attachmentId “похож” на docId библиотеки (UUID + '.' + ext),
+ *   - отсеять очевидный мусор до отправки в серверные API.
+ */
+const DOC_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,16}$/i;
+
+const isLibraryDocIdLike = (id: string): boolean => DOC_ID_REGEX.test(String(id || '').trim());
+
+/**
+ * Payload, который мы кладём в DataTransfer при drag из FileManager.
+ *
+ * Почему он такой “похож на NodeAttachment”:
+ * - нам удобно сразу создать NodeAttachment snapshot без доп. запросов к API,
+ * - это помогает stale-логике (fileHash/fileUpdatedAt).
+ */
+type LibraryDocDragPayload = {
+  docId: string;
+  name?: string;
+  kind?: 'image' | 'text';
+  mime?: string;
+  sizeBytes?: number;
+  fileHash?: string;
+  fileUpdatedAt?: number;
+};
+
+/**
+ * Best-effort пытается прочитать docId payload из DataTransfer.
+ *
+ * Важно:
+ * - Если payload невалиден/пустой — возвращаем null и позволяем существующему
+ *   обработчику DnD файлов продолжить работу.
+ */
+function tryReadLibraryDocDragPayload(dt: DataTransfer | null): LibraryDocDragPayload | null {
+  if (!dt) return null;
+  const raw = dt.getData(LIB_DOC_DND_MIME);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as LibraryDocDragPayload;
+    const docId = String(parsed?.docId || '').trim();
+    if (!docId) return null;
+    if (!isLibraryDocIdLike(docId)) return null;
+    return { ...parsed, docId };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Ограничения для построения поискового запроса NeuroSearch.
@@ -209,13 +275,25 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   questionSectionRef,
 }) => {
   const { t } = useTranslation();
+
+  const { 
+    checkUploadConflicts, 
+    upload: uploadToLibrary, 
+    replace: replaceInLibrary 
+  } = useLibraryStore();
+  
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [uploadConflicts, setUploadConflicts] = useState<UploadConflict[]>([]);
+  const [safeFiles, setSafeFiles] = useState<File[]>([]);
   
   // === STORES ===
   
   // Settings Store
   const apiKey = useSettingsStore(selectApiKey);
-  const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
-  const model = useSettingsStore(selectModel);
+  // NOTE:
+  // apiBaseUrl/model в этом компоненте не используются напрямую:
+  // - генерация/чатовые запросы делаются через другие слои (useNodeGeneration/aiService),
+  // - но eslint ругается на "unused", поэтому не держим лишние переменные.
   const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
   const corporateMode = useSettingsStore(selectCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
@@ -228,22 +306,13 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   // чтобы NeuroSearch не подмешивал в контекст уже “родственные” карточки.
   const edges = useCanvasStore(state => state.edges);
   const updateNodeData = useCanvasStore(state => state.updateNodeData);
-  // Контекст-хэш stale-логики живёт в store, поэтому и проверку делаем через store.
-  //
-  // Зачем это нужно именно для вложений:
-  // - При повторной загрузке "того же" файла (имя то же, контент тот же) мы НЕ хотим:
-  //   - оставлять карточку stale,
-  //   - ждать "глобального события" (например drag), которое триггерит reconcile.
-  // - Поэтому после apply вложений мы делаем моментальную проверку:
-  //   если текущий контекст == lastContextHash → снимаем stale по всему поддереву.
-  const getContextHash = useCanvasStore((state) => state.getContextHash);
-  const checkAndClearStale = useCanvasStore((state) => state.checkAndClearStale);
 
-  // Workspace Store — нужен, чтобы понять, в каком холсте лежат файлы вложений на диске.
-  // ВАЖНО:
-  // - Файлы мы сохраняем в data/attachments/<canvasId>/...
-  // - Поэтому без activeCanvasId мы не можем ни загрузить, ни удалить вложения.
-  const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
+  /**
+   * ВАЖНОЕ ИЗМЕНЕНИЕ:
+   * - Раньше вложения были привязаны к активному холсту и лежали в отдельном дисковом слое.
+   * - Теперь вложения — это документы глобальной библиотеки (docId), и для работы с файлами
+   *   `activeCanvasId` больше не нужен.
+   */
   
   // NeuroSearch Store
   const setNeuroSearchResults = useNeuroSearchStore(state => state.setResults);
@@ -270,16 +339,37 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     for (const result of neuroSearchResults) {
       // Находим карточку в текущем состоянии canvas
       const sourceNode = nodes.find(n => n.id === result.nodeId);
+
+      // =========================================================================
+      // ВАЖНО (продуктовая семантика stale для NeuroSearch):
+      //
+      // Мы различаем две вещи:
+      // 1) `data.isStale` у карточки (это про "ответ этой карточки устарел и требует Regenerate")
+      // 2) `isNeuroSearchStale` у кнопки мозга (это про "результаты NeuroSearch устарели и
+      //    поиск нужно перезапустить", НО сама карточка ещё не обязана быть stale)
+      //
+      // Критичный кейс из бага:
+      // - NeuroSearch нашёл карточку-предка
+      // - пользователь удалил найденную карточку
+      // - результаты NeuroSearch (и нейроконтекст) всё ещё могут существовать в store
+      //   (например, в виде сохранённых `SearchResult`/preview)
+      // - но источник на холсте пропал, и значит результаты надо пересчитать при следующем клике
+      //
+      // Поэтому:
+      // - если нода-источник НЕ найдена в `nodes`, считаем NeuroSearch устаревшим (stale=true),
+      //   и подсвечиваем ТОЛЬКО кнопку мозга, НЕ трогая `data.isStale` владельца.
+      // =========================================================================
+      if (!sourceNode) {
+        return true;
+      }
+
+      // Получаем сохранённый updatedAt на момент поиска
+      const savedUpdatedAt = sourceNodesSnapshot[result.nodeId];
       
-      if (sourceNode) {
-        // Получаем сохранённый updatedAt на момент поиска
-        const savedUpdatedAt = sourceNodesSnapshot[result.nodeId];
-        
-        // Если карточка была обновлена позже снимка - контекст устарел
-        // Также считаем устаревшим если снимка нет (savedUpdatedAt === undefined)
-        if (!savedUpdatedAt || sourceNode.data.updatedAt > savedUpdatedAt) {
-          return true;
-        }
+      // Если карточка была обновлена позже снимка - NeuroSearch контекст устарел
+      // Также считаем устаревшим если снимка нет (savedUpdatedAt === undefined)
+      if (!savedUpdatedAt || sourceNode.data.updatedAt > savedUpdatedAt) {
+        return true;
       }
     }
     
@@ -295,8 +385,8 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   //
   // Цель MVP:
   // - прикреплять маленькие файлы (image + text)
-  // - хранить их на диске через /api/attachments
-  // - сохранять в node.data только метаданные (attachmentId, mime, sizeBytes, ...)
+  // - хранить их в глобальной библиотеке документов
+  // - сохранять в node.data только метаданные + ссылку (attachmentId = docId)
   //
   // ВАЖНО:
   // - Мы не делаем progress bar в MVP (fetch не даёт простого прогресса).
@@ -323,18 +413,15 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   const [isDragOverAttachments, setIsDragOverAttachments] = useState(false);
 
   // ===========================================================================
-  // ЗАМЕНА ФАЙЛА ПО ИМЕНИ (ФАЙЛОВЫЙ МЕНЕДЖЕР ХОЛСТА)
+  // LEGACY UI: ЗАМЕНА ФАЙЛА ПО ИМЕНИ (в старом "файловом менеджере холста")
   // ===========================================================================
   //
-  // Продуктовое правило:
-  // - файл на холсте уникален по имени (с дедупликацией),
-  // - НО: спрашиваем "Заменить?" только если файл реально ДРУГОЙ (SHA-256 отличается),
-  //   а если файл идентичен — просто прикрепляем ссылку без диалога.
-  // - Если файл другой, пользователь должен выбирать:
-  //   1) заменить существующий "глобальный файл холста"
-  //   2) или загрузить этот файл под новым именем (чтобы оба существовали параллельно)
+  // После перехода на глобальную библиотеку этот диалог больше НЕ используется:
+  // - upload всегда создаёт новый docId,
+  // - replace выполняется отдельно и адресно по docId через FileManager.
   //
-  // Мы делаем это через preflight endpoint (/api/attachments/preflight).
+  // Оставлено временно, чтобы не делать большой рефактор UI в одном PR;
+  // блок будет удалён/переработан в следующем шаге.
   const [isReplaceDialogOpen, setIsReplaceDialogOpen] = useState(false);
   const [replaceConflicts, setReplaceConflicts] = useState<Array<{ originalName: string; attachmentId: string }>>([]);
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
@@ -512,13 +599,15 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   };
 
   /**
-   * Нормализуем имя файла так же, как сервер (attachments-index.json):
+   * Нормализуем имя файла для сравнений в UI:
    * - trim
    * - удаление управляющих символов
    * - ограничение длины
    * - lower-case (важно для Windows)
    *
-   * Это нужно, чтобы "конфликты по имени" в UI совпадали с тем, что видит сервер.
+   * Исторически это использовалось для диалога "conflict/rename" в legacy слое вложений.
+   * После перехода на библиотеку этот диалог почти не нужен, но helper остаётся
+   * (он безвреден и может пригодиться в будущих UI-операциях).
    */
   const normalizeNameKey = (name: string): string => {
     const cleaned = (name || '').trim().replace(/[\u0000-\u001F\u007F]/g, '');
@@ -543,65 +632,10 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     return limited || 'file';
   };
 
-  /**
-   * Быстро посчитать SHA-256 (hex) для File в браузере.
-   *
-   * Зачем это нужно:
-   * - Серверный «файловый менеджер холста» уникализирует файлы ПО ИМЕНИ.
-   * - Но UX «спрашивать замену» должен срабатывать только если файл реально изменился.
-   * - Поэтому мы делаем hash-aware preflight:
-   *   1) считаем SHA-256 локально (дёшево на наших лимитах 1–3MB),
-   *   2) отправляем его в /api/attachments/preflight,
-   *   3) сервер отвечает: attach-only (тот же файл) или real conflict (файл другой).
-   *
-   * ВАЖНО:
-   * - В некоторых окружениях `crypto.subtle` может быть недоступен/ограничен.
-   *   Тогда мы возвращаем null и просто пропускаем preflight (пусть сервер решит по факту upload).
-   */
-  const computeSha256Hex = async (file: File): Promise<string | null> => {
-    try {
-      // Защищаемся от окружений без WebCrypto (редко, но бывает в нестандартном Electron/iframe).
-      const subtle = globalThis?.crypto?.subtle;
-      if (!subtle || typeof subtle.digest !== 'function') return null;
-
-      // Читаем файл в память. На наших лимитах это безопасно (MVP).
-      const ab = await file.arrayBuffer();
-      const digest = await subtle.digest('SHA-256', ab);
-
-      // Превращаем ArrayBuffer в hex строку.
-      // (Делаем вручную, чтобы не тянуть лишние зависимости.)
-      const bytes = new Uint8Array(digest);
-      let hex = '';
-      for (const b of bytes) {
-        hex += b.toString(16).padStart(2, '0');
-      }
-      return hex;
-    } catch {
-      return null;
-    }
-  };
-
-  /**
-   * Инициализирует "переименование" для конфликтующих файлов в модалке.
-   *
-   * Мы храним имена по индексу файла в `pendingUploadFiles`, потому что:
-   * - один и тот же `nameKey` может встретиться несколько раз (две разные папки, одинаковые имена),
-   * - а индекс — это простой и стабильный ключ для конкретного File-объекта в текущем batch.
-   */
-  const buildDefaultRenameByIndex = (
-    files: File[],
-    conflicts: Array<{ originalName: string; attachmentId: string }>
-  ): Record<string, string> => {
-    const conflictKeys = new Set(conflicts.map((c) => normalizeNameKey(c.originalName)));
-    const out: Record<string, string> = {};
-    files.forEach((f, idx) => {
-      if (!conflictKeys.has(normalizeNameKey(f.name))) return;
-      // По умолчанию предлагаем текущее имя (после sanitize),
-      // чтобы пользователь мог быстро поправить только нужную часть.
-      out[String(idx)] = sanitizeOriginalName(f.name);
-    });
-    return out;
-  };
+  // NOTE:
+  // - Раньше здесь были helper'ы для hash-aware preflight и инициализации rename-диалога.
+  // - После перехода на глобальную библиотеку этот слой больше не используется,
+  //   поэтому helper'ы удалены, чтобы не тащить legacy-логику и не путать читателя кода.
 
   /**
    * Определяем "это текстовый файл?" так же, как в клиентской валидации.
@@ -670,11 +704,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
    * ВАЖНО:
    * - сервер всё равно валидирует повторно (клиенту нельзя доверять).
    */
-  const validateFilesForUpload = (files: File[]): { ok: boolean; error?: string } => {
-    if (!activeCanvasId) {
-      return { ok: false, error: 'Нет активного холста: невозможно прикрепить файл.' };
-    }
-
+  const validateFilesForUpload = useCallback((files: File[]): { ok: boolean; error?: string } => {
     if (!files.length) {
       return { ok: false, error: 'Нет файлов для загрузки.' };
     }
@@ -733,32 +763,145 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     }
 
     return { ok: true };
-  };
+  }, [
+    // ВАЖНО:
+    // - перечисляем ВСЕ значения, которые используются в callback через замыкание,
+    //   чтобы `react-hooks/exhaustive-deps` не выдавал предупреждения.
+    // - Даже “константы” MAX_* объявлены внутри компонента (пересоздаются на каждый render),
+    //   поэтому eslint просит их явно указать.
+    attachments,
+    allowedImageMimes,
+    allowedTextExts,
+    MAX_TEXT_BYTES,
+    MAX_IMAGE_BYTES,
+    MAX_TOTAL_BYTES_PER_NODE,
+  ]);
+
+  const linkDocsToNode = useCallback((docs: LibraryDocDTO[]) => {
+      // 1) Превращаем docs[] → NodeAttachment[]
+      const incomingAttachments: NodeAttachment[] = docs.map((d) => ({
+          attachmentId: d.docId,
+          kind: d.kind,
+          originalName: d.name || d.docId,
+          mime: d.mime,
+          sizeBytes: d.sizeBytes,
+          fileHash: d.fileHash,
+          fileUpdatedAt: d.fileUpdatedAt,
+          createdAt: d.createdAt,
+          ingestionMode: 'inline',
+      }));
+
+      // 2) MERGE без дублей
+      const merged = (() => {
+          const next = [...attachments];
+          for (const inc of incomingAttachments) {
+            if (next.some((a) => a.attachmentId === inc.attachmentId)) continue;
+            next.push(inc);
+          }
+          return next;
+      })();
+      
+      // 3) Update caches
+      const existingExcerpts = (data.attachmentExcerpts as Record<string, string>) || {};
+      const existingSummaries = (data.attachmentSummaries as Record<string, string>) || {};
+      const existingImageDescriptions = (data.attachmentImageDescriptions as Record<string, string>) || {};
+      
+      const nextExcerpts = { ...existingExcerpts };
+      const nextSummaries = { ...existingSummaries };
+      const nextImages = { ...existingImageDescriptions };
+      
+      for (const d of docs) {
+          const docId = d.docId;
+          const analysis = d.analysis;
+          if (d.kind === 'text') {
+            if (analysis?.excerpt) nextExcerpts[docId] = analysis.excerpt;
+            if (analysis?.summary) nextSummaries[docId] = analysis.summary;
+            delete nextImages[docId];
+          } else {
+            delete nextExcerpts[docId];
+            delete nextSummaries[docId];
+            if (analysis?.image?.description) nextImages[docId] = analysis.image.description;
+          }
+      }
+      
+      updateNodeData(id, {
+          attachments: merged.length > 0 ? merged : undefined,
+          attachmentExcerpts: Object.keys(nextExcerpts).length > 0 ? nextExcerpts : undefined,
+          attachmentSummaries: Object.keys(nextSummaries).length > 0 ? nextSummaries : undefined,
+          attachmentImageDescriptions: Object.keys(nextImages).length > 0 ? nextImages : undefined,
+          updatedAt: Date.now(),
+      });
+  }, [attachments, data, id, updateNodeData]);
+
+  const handleApplyConflicts = useCallback(async (actions: ConflictAction[]) => {
+      // Закрываем модалку сразу, чтобы:
+      // - пользователь не мог случайно повторно нажать "Применить"
+      // - не было ощущения, что UI "завис"
+      //
+      // Сам процесс загрузки/замены мы показываем через общий isUploadingAttachments.
+      setConflictModalOpen(false);
+      setIsUploadingAttachments(true);
+      
+      try {
+          // 1) Replace: заменяем существующие документы (docId не меняется)
+          for (const r of actions.filter(a => a.strategy === 'replace')) {
+              const docId = String(r.existingDocId || '').trim();
+              if (!docId) continue;
+              const res = await replaceInLibrary(docId, r.file);
+              if (res.success && res.doc) {
+                  linkDocsToNode([res.doc]);
+              }
+          }
+          
+          // 2) Upload-as-new: переименовываем File и загружаем как новый документ (новый docId)
+          const uploadAsNewFiles = actions
+            .filter(a => a.strategy === 'uploadAsNew')
+            .map((r) => new File([r.file], (r.newName || r.file.name).trim() || r.file.name, { type: r.file.type }));
+
+          // 3) Добавляем safe файлы (без конфликтов) — одним батчем
+          const toUpload = [...safeFiles, ...uploadAsNewFiles];
+          
+          if (toUpload.length > 0) {
+              const res = await uploadToLibrary(toUpload, { folderId: null });
+              if (res.success) {
+                  linkDocsToNode(res.docs);
+              }
+          }
+      } catch (err) {
+          console.error('Conflict resolution error:', err);
+          setAttachmentError('Ошибка при разрешении конфликтов.');
+      } finally {
+          // Чистим local state конфликта — иначе следующий upload может "подхватить" старые файлы.
+          setUploadConflicts([]);
+          setSafeFiles([]);
+          setIsUploadingAttachments(false);
+      }
+  }, [replaceInLibrary, safeFiles, uploadToLibrary, linkDocsToNode]);
 
   /**
-   * Загружает файлы через /api/attachments и сохраняет метаданные в node.data.attachments.
-   *
-   * ВАЖНО:
-   * - сервер возвращает массив NodeAttachment (attachmentId, mime, sizeBytes, ...)
-   * - мы добавляем их к текущему списку и сохраняем в store
+   * Загружает файлы в глобальную библиотеку (`/api/library/upload`)
+   * и прикрепляет их к текущей карточке.
+   * С поддержкой проверки конфликтов имен.
    */
   const uploadAttachments = useCallback(
     async (
       files: File[],
-      opts?: {
-        /**
-         * Разрешить замену файлов, которые уже существуют на холсте (по имени).
-         * Если false/undefined — сервер вернёт 409 Conflict при попытке замены.
-         */
+      _opts?: {
         replaceExisting?: boolean;
-        /**
-         * Пропустить preflight (используется, когда пользователь уже подтвердил замену в UI).
-         * Важно: сервер всё равно защищает от silent overwrite.
-         */
         skipPreflight?: boolean;
       }
     ) => {
+      // eslint хочет, чтобы параметр был использован.
+      // Нам важно сохранить совместимость со старым кодом, который передаёт opts,
+      // поэтому просто "помечаем" параметр как использованный.
+      void _opts;
+
       setAttachmentError(null);
+      setReplaceConflicts([]);
+      setPendingUploadFiles([]);
+      setPendingRenameByIndex({});
+      setPendingRenameError(null);
+      setIsReplaceDialogOpen(false);
 
       const validation = validateFilesForUpload(files);
       if (!validation.ok) {
@@ -766,601 +909,109 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         return;
       }
 
-      if (!activeCanvasId) {
-        setAttachmentError('Нет активного холста: невозможно прикрепить файл.');
-        return;
-      }
-
-      // -----------------------------------------------------------------------
-      // HELPERS (внутри uploadAttachments)
-      // -----------------------------------------------------------------------
-      //
-      // Мы объявляем эти функции здесь (а не снаружи), потому что:
-      // - они используют замыкание на текущий `attachments`, `nodes`, `data`, `updateNodeData`;
-      // - так проще гарантировать, что логика "merge/propagate" идентична для:
-      //   1) обычного upload результата,
-      //   2) attach-only результата из preflight.
-
-      // Type guard: проверяем минимально необходимые поля NodeAttachment.
-      //
-      // Важно:
-      // - мы валидируем ответ сервера как unknown, чтобы не падать на неожиданных форматах.
-      const isNodeAttachment = (v: unknown): v is NodeAttachment => {
-        if (!v || typeof v !== 'object') return false;
-        const o = v as Record<string, unknown>;
-        return (
-          typeof o.attachmentId === 'string' &&
-          (o.kind === 'image' || o.kind === 'text') &&
-          typeof o.originalName === 'string' &&
-          typeof o.mime === 'string' &&
-          typeof o.sizeBytes === 'number' &&
-          typeof o.createdAt === 'number' &&
-          (o.ingestionMode === 'inline' || o.ingestionMode === 'chunked')
-        );
-      };
-
-      // Безопасная нормализация объекта вида { [attachmentId]: string }.
-      // Сервер может вернуть мусор/undefined — мы не хотим падать.
-      const safeStringMap = (v: unknown): Record<string, string> => {
-        if (!v || typeof v !== 'object') return {};
-        const obj = v as Record<string, unknown>;
-        const out: Record<string, string> = {};
-        for (const [k, val] of Object.entries(obj)) {
-          if (typeof val === 'string') out[k] = val;
-        }
-        return out;
-      };
-
-      // -----------------------------------------------------------------------
-      // СРАВНЕНИЕ ВЛОЖЕНИЙ: "СЕМАНТИЧЕСКОЕ РАВЕНСТВО" ДЛЯ ОТСЕЧЕНИЯ NO-OP
-      // -----------------------------------------------------------------------
-      //
-      // Проблема (реальный UX-баг):
-      // - При повторной загрузке файла с тем же именем и тем же содержимым сервер вернёт
-      //   метаданные, которые (по сути) НЕ меняют attachments.
-      // - Но если мы всё равно вызовем updateNodeData(...) и/или вручную поставим isStale,
-      //   мы можем получить "ложный stale", который снимется только после drag-пинка.
-      //
-      // Решение:
-      // - Перед тем как патчить attachments, сравниваем их "смысл".
-      // - Если "смысл" не поменялся — не патчим attachments вообще (и, как следствие,
-      //   не обновляем updatedAt и не создаём ложные цепочки stale).
-      //
-      // ВАЖНО:
-      // - Мы сравниваем В ПОРЯДКЕ, потому что порядок вложений участвует в UI и может
-      //   потенциально участвовать в формировании контекста.
-      // - Сигнатура включает поля "версии файла" (fileHash/fileUpdatedAt), т.к. именно они
-      //   позволяют отличить "тот же attachmentId, но другой файл" при upsert по имени.
-      const attachmentSignature = (att: NodeAttachment): string => {
-        // Разделитель берём редко используемый, чтобы не поймать коллизии на обычных строках.
-        const SEP = '\u001F';
-        return [
-          att.attachmentId,
-          att.kind,
-          att.originalName,
-          att.mime,
-          String(att.sizeBytes ?? ''),
-          String(att.createdAt ?? ''),
-          att.ingestionMode,
-          // "Версия" файла:
-          String(att.fileHash ?? ''),
-          String(att.fileUpdatedAt ?? ''),
-        ].join(SEP);
-      };
-
-      const areAttachmentsSemanticallyEqual = (
-        prev: NodeAttachment[] | undefined | null,
-        next: NodeAttachment[] | undefined | null
-      ): boolean => {
-        const a = Array.isArray(prev) ? prev : EMPTY_ATTACHMENTS;
-        const b = Array.isArray(next) ? next : EMPTY_ATTACHMENTS;
-        if (a.length !== b.length) return false;
-        for (let i = 0; i < a.length; i++) {
-          if (attachmentSignature(a[i]) !== attachmentSignature(b[i])) return false;
-        }
-        return true;
-      };
-
-      /**
-       * Единая точка применения входящих вложений + analysis в состояние холста.
-       *
-       * Зачем это нужно:
-       * - У нас теперь ДВА способа "получить вложение":
-       *   1) upload → сервер вернул attachments[]
-       *   2) preflight attach-only → сервер вернул attachable[] (это уже существующие файлы)
-       *
-       * И в обоих случаях мы должны одинаково:
-       * - сделать merge без дублей по attachmentId
-       * - обновить текущую ноду (attachments + updatedAt + stale)
-       * - best-effort обновить метаданные во всех других нодах-ссылках
-       * - сохранить кеш анализа (excerpt/summary/описания) и тоже best-effort пропагировать
-       */
-      const applyIncomingAttachmentsAndAnalysis = (
-        incomingAttachments: NodeAttachment[],
-        analysisPayload: unknown
-      ) => {
-        if (!incomingAttachments || incomingAttachments.length === 0) return;
-
-        // ---------------------------------------------------------------------
-        // MERGE БЕЗ ДУБЛЕЙ (по attachmentId)
-        // ---------------------------------------------------------------------
-        const merged = (() => {
-          const next = [...attachments];
-          for (const incoming of incomingAttachments) {
-            const idx = next.findIndex((a) => a.attachmentId === incoming.attachmentId);
-            if (idx !== -1) {
-              // Обновляем метаданные (mime/size/fileHash/fileUpdatedAt и т.д.)
-              next[idx] = { ...next[idx], ...incoming };
-            } else {
-              next.push(incoming);
-            }
-          }
-          return next;
-        })();
-
-        // ---------------------------------------------------------------------
-        // ОБНОВЛЯЕМ ATTACHMENTS ТОЛЬКО ЕСЛИ ОНИ РЕАЛЬНО ИЗМЕНИЛИСЬ
-        // ---------------------------------------------------------------------
-        //
-        // Почему нельзя "просто всегда updateNodeData":
-        // - `updateNodeData` ВСЕГДА обновляет `updatedAt`.
-        // - А если ещё и вручную поставить `isStale: true`, то мы создадим "ложный stale"
-        //   при сценарии "перезалил тот же файл" (контент не менялся).
-        //
-        // Правильная логика:
-        // - Если attachments изменились (по смыслу) — патчим их.
-        // - Флаг stale мы ЗДЕСЬ НЕ выставляем вручную:
-        //   это делает централизованная stale-логика в `useCanvasStore.updateNodeData`
-        //   (она умеет каскадить stale и делать reconcile по хэшам).
-        const attachmentsChanged = !areAttachmentsSemanticallyEqual(attachments, merged);
-        if (attachmentsChanged) {
-          updateNodeData(id, { attachments: merged });
-        }
-
-        // ---------------------------------------------------------------------
-        // ГЛОБАЛЬНЫЕ ФАЙЛЫ: ПРОПАГАЦИЯ МЕТАДАННЫХ ПО ВСЕМ ССЫЛКАМ (best-effort)
-        // ---------------------------------------------------------------------
-        const incomingById = new Map<string, NodeAttachment>();
-        incomingAttachments.forEach((a) => incomingById.set(a.attachmentId, a));
-
-        nodes.forEach((node) => {
-          // Текущую карточку мы уже обновили выше
-          if (node.id === id) return;
-
-          const nodeAtts = Array.isArray(node.data.attachments)
-            ? (node.data.attachments as NodeAttachment[])
-            : [];
-          if (nodeAtts.length === 0) return;
-
-          let changed = false;
-          const nextAtts = nodeAtts.map((a) => {
-            const updated = incomingById.get(a.attachmentId);
-            if (!updated) return a;
-            // Важно: не считаем это изменением, если фактически поля не поменялись.
-            // Иначе мы будем:
-            // - "шуметь" updateNodeData по всему холсту,
-            // - лишний раз менять updatedAt,
-            // - и провоцировать вторичные эффекты (например, stale по снимкам/виджетам).
-            const mergedAttachment = { ...a, ...updated };
-            if (attachmentSignature(mergedAttachment) !== attachmentSignature(a)) {
-              changed = true;
-            }
-            return mergedAttachment;
-          });
-
-          if (changed) {
-            updateNodeData(node.id, { attachments: nextAtts });
-          }
-        });
-
-        // ---------------------------------------------------------------------
-        // АВТОМАТИЧЕСКОЕ СНЯТИЕ STALE СРАЗУ ПОСЛЕ APPLY (БЕЗ DRAG-ПИНКА)
-        // ---------------------------------------------------------------------
-        //
-        // Требование (из задачи):
-        // - При загрузке файлов, которые "не изменились", stale должен сниматься автоматически сразу.
-        //
-        // Как это работает:
-        // - `lastContextHash` сохраняется после генерации ответа (эталон контекста).
-        // - Если текущий контекст (с учётом вложений и их fileHash) равен эталону —
-        //   значит мы вернулись к "актуальному" состоянию и stale нужно снять.
-        //
-        // ВАЖНО:
-        // - Мы запускаем reconcile ТОЛЬКО если хэш владельца совпал с эталоном.
-        //   Это предотвращает преждевременное снятие stale у потомков в сценариях,
-        //   когда контекст владельца реально изменился, но ответ ещё не регенерирован.
-        const baselineHash =
-          typeof data.lastContextHash === 'string' && data.lastContextHash.trim()
-            ? data.lastContextHash.trim()
-            : null;
-        if (baselineHash) {
-          const currentHash = getContextHash(id);
-          if (currentHash && currentHash === baselineHash) {
-            // checkAndClearStale рекурсивно пройдёт по поддереву (включая потомков)
-            // и снимет stale там, где контекст реально вернулся к эталонному.
-            checkAndClearStale(id);
-          }
-        }
-
-        // ---------------------------------------------------------------------
-        // МЕТАДАННЫЕ "АНАЛИЗА ФАЙЛОВ" (excerpt/summary/описания изображений)
-        // ---------------------------------------------------------------------
-        const existingExcerpts =
-          data.attachmentExcerpts && typeof data.attachmentExcerpts === 'object'
-            ? (data.attachmentExcerpts as Record<string, string>)
-            : {};
-        const existingSummaries =
-          data.attachmentSummaries && typeof data.attachmentSummaries === 'object'
-            ? (data.attachmentSummaries as Record<string, string>)
-            : {};
-        const existingImageDescriptions =
-          data.attachmentImageDescriptions && typeof data.attachmentImageDescriptions === 'object'
-            ? (data.attachmentImageDescriptions as Record<string, string>)
-            : {};
-
-        const nextExcerpts: Record<string, string> = { ...existingExcerpts };
-        const nextSummaries: Record<string, string> = { ...existingSummaries };
-        const nextImageDescriptions: Record<string, string> = { ...existingImageDescriptions };
-
-        const analysisObj =
-          analysisPayload && typeof analysisPayload === 'object'
-            ? (analysisPayload as Record<string, unknown>)
-            : null;
-        const serverExcerpts = analysisObj ? safeStringMap(analysisObj.attachmentExcerpts) : {};
-        const serverSummaries = analysisObj ? safeStringMap(analysisObj.attachmentSummaries) : {};
-        const serverImageDescriptions = analysisObj ? safeStringMap(analysisObj.attachmentImageDescriptions) : {};
-
-        // Мержим в кеш текущей карточки.
-        Object.assign(nextExcerpts, serverExcerpts);
-        Object.assign(nextSummaries, serverSummaries);
-        Object.assign(nextImageDescriptions, serverImageDescriptions);
-
-        // Сохраняем excerpts сразу (чтобы модалка контекста могла их показать мгновенно).
-        if (Object.keys(nextExcerpts).length > 0) {
-          updateNodeData(id, { attachmentExcerpts: nextExcerpts });
-
-          // Пропагируем excerpts по всем карточкам-ссылкам (best-effort).
-          const excerptKeys = Object.keys(nextExcerpts);
-          nodes.forEach((n) => {
-            if (n.id === id) return;
-            const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as NodeAttachment[]) : [];
-            if (atts.length === 0) return;
-            const hasAny = atts.some((a) => excerptKeys.includes(a.attachmentId));
-            if (!hasAny) return;
-
-            const existing =
-              n.data.attachmentExcerpts && typeof n.data.attachmentExcerpts === 'object'
-                ? (n.data.attachmentExcerpts as Record<string, string>)
-                : {};
-            const next = { ...existing };
-            excerptKeys.forEach((k) => {
-              if (atts.some((a) => a.attachmentId === k)) {
-                next[k] = nextExcerpts[k];
-              }
-            });
-            updateNodeData(n.id, { attachmentExcerpts: next });
-          });
-        }
-
-        // Описания изображений сохраняем как кеш (caption-only или legacy combined).
-        if (Object.keys(nextImageDescriptions).length > 0) {
-          updateNodeData(id, { attachmentImageDescriptions: nextImageDescriptions });
-
-          const imgKeys = Object.keys(nextImageDescriptions);
-          nodes.forEach((n) => {
-            if (n.id === id) return;
-            const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as NodeAttachment[]) : [];
-            if (atts.length === 0) return;
-            const hasAny = atts.some((a) => imgKeys.includes(a.attachmentId));
-            if (!hasAny) return;
-
-            const existing =
-              n.data.attachmentImageDescriptions && typeof n.data.attachmentImageDescriptions === 'object'
-                ? (n.data.attachmentImageDescriptions as Record<string, string>)
-                : {};
-            const next = { ...existing };
-            imgKeys.forEach((k) => {
-              if (atts.some((a) => a.attachmentId === k)) {
-                next[k] = nextImageDescriptions[k];
-              }
-            });
-            updateNodeData(n.id, { attachmentImageDescriptions: next });
-          });
-        }
-
-        // Суммаризации текстовых вложений (если сервер их посчитал) сохраняем как кеш.
-        if (Object.keys(nextSummaries).length > 0) {
-          updateNodeData(id, { attachmentSummaries: nextSummaries });
-
-          const keys = Object.keys(nextSummaries);
-          nodes.forEach((n) => {
-            if (n.id === id) return;
-            const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as NodeAttachment[]) : [];
-            if (atts.length === 0) return;
-            const hasAny = atts.some((a) => keys.includes(a.attachmentId));
-            if (!hasAny) return;
-
-            const existing =
-              n.data.attachmentSummaries && typeof n.data.attachmentSummaries === 'object'
-                ? (n.data.attachmentSummaries as Record<string, string>)
-                : {};
-            const next = { ...existing };
-            keys.forEach((k) => {
-              if (atts.some((a) => a.attachmentId === k)) {
-                next[k] = nextSummaries[k];
-              }
-            });
-            updateNodeData(n.id, { attachmentSummaries: next });
-          });
-        }
-      };
-
-      // -----------------------------------------------------------------------
-      // PRE-FLIGHT (hash-aware): attach-only для идентичных файлов + конфликты только при отличии контента
-      // -----------------------------------------------------------------------
-      //
-      // Важно:
-      // - Мы сначала пытаемся посчитать SHA-256 для каждого файла.
-      // - Если получилось → отправляем {files:[{name,sha256}]} в /api/attachments/preflight.
-      //   Сервер вернёт:
-      //   - attachable[] (файлы уже есть и идентичны) → мы просто прикрепляем ссылки (без upload)
-      //   - conflicts[]  (имя есть, но контент другой) → показываем диалог (заменить / переименовать)
-      // - Если SHA-256 посчитать не удалось (редкий кейс) → пропускаем preflight целиком.
-      //   Серверный upload сам решит: 409 будет только при реальном отличии fileHash.
-
-      // `filesToUpload` — это "остаток" файлов, которые реально нужно отправить на /api/attachments.
-      // После attach-only часть файлов может исчезнуть из этого списка.
-      let filesToUpload = files;
-
-      if (!opts?.skipPreflight) {
-        try {
-          // 1) Считаем SHA-256 для каждого файла (параллельно).
-          const fileHashes = await Promise.all(
-            files.map(async (f) => {
-              const sha256 = await computeSha256Hex(f);
-              return { name: f.name, sha256 };
-            })
-          );
-
-          const canUseHashAwarePreflight = fileHashes.every((x) => typeof x.sha256 === 'string' && x.sha256.length === 64);
-          if (canUseHashAwarePreflight) {
-            const resp = await fetch('/api/attachments/preflight', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                canvasId: activeCanvasId,
-                files: fileHashes.map((x) => ({ name: x.name, sha256: String(x.sha256) })),
-              }),
-            });
-
-            const payload = (await resp.json().catch(() => ({}))) as {
-              conflicts?: unknown;
-              attachable?: unknown;
-              analysis?: unknown;
-            };
-
-            // 2) attachable[]: это уже существующие (идентичные) файлы → прикрепляем ссылки и НЕ загружаем байты.
-            const attachable = Array.isArray(payload?.attachable)
-              ? payload.attachable.filter(isNodeAttachment)
-              : [];
-            if (attachable.length > 0) {
-              applyIncomingAttachmentsAndAnalysis(attachable, payload.analysis);
-
-              // Убираем attachable файлы из списка на реальный upload.
-              //
-              // ВАЖНО:
-              // - Нельзя фильтровать только по `nameKey`, потому что пользователь может выбрать
-              //   ДВА разных файла с одним и тем же именем.
-              // - Поэтому мы фильтруем по паре (nameKey + sha256):
-              //   только тот файл, который реально совпал по контенту, становится attach-only.
-              const attachableKeySet = new Set(
-                attachable.map((a) => `${normalizeNameKey(a.originalName)}:${String(a.fileHash || '')}`)
-              );
-              filesToUpload = filesToUpload.filter((f, idx) => {
-                const sha = fileHashes[idx]?.sha256;
-                const shaHex = typeof sha === 'string' ? sha : '';
-                const key = `${normalizeNameKey(f.name)}:${shaHex}`;
-                return !attachableKeySet.has(key);
-              });
-
-              // Если ВСЕ файлы оказались attach-only — заканчиваем.
-              if (filesToUpload.length === 0) {
-                return;
-              }
-            }
-
-            // 3) conflicts[]: показываем диалог только для реальных конфликтов (контент отличается).
-            const conflicts = Array.isArray(payload?.conflicts)
-              ? payload.conflicts
-                  .map((c): { originalName: string; attachmentId: string } | null => {
-                    if (!c || typeof c !== 'object') return null;
-                    const o = c as Record<string, unknown>;
-                    return typeof o.originalName === 'string' && typeof o.attachmentId === 'string'
-                      ? { originalName: o.originalName, attachmentId: o.attachmentId }
-                      : null;
-                  })
-                  .filter((c): c is { originalName: string; attachmentId: string } => c !== null)
-              : [];
-
-            if (conflicts.length > 0) {
-              // Открываем диалог только если среди "оставшихся" файлов действительно есть конфликтующие.
-              const conflictKeys = new Set(conflicts.map((c) => normalizeNameKey(c.originalName)));
-              const hasConflictingToUpload = filesToUpload.some((f) => conflictKeys.has(normalizeNameKey(f.name)));
-              if (hasConflictingToUpload) {
-                setPendingUploadFiles(filesToUpload);
-                setReplaceConflicts(conflicts);
-                // Инициализируем поля "новое имя" для конфликтующих файлов.
-                setPendingRenameByIndex(buildDefaultRenameByIndex(filesToUpload, conflicts));
-                setPendingRenameError(null);
-                setIsReplaceDialogOpen(true);
-                return;
-              }
-            }
-          }
-        } catch (err) {
-          // Если preflight/хэширование упало — не блокируем загрузку полностью.
-          // Серверный upload всё равно защитит от silent overwrite:
-          // - 409 будет только при реальном отличии fileHash (см. /api/attachments).
-          console.warn('[QuestionSection] Attachments preflight failed:', err);
-        }
-      }
-
       setIsUploadingAttachments(true);
       try {
-        const form = new FormData();
-        form.append('canvasId', activeCanvasId);
-        form.append('nodeId', id);
-
-        // Если пользователь подтвердил замену — явно сообщаем серверу.
-        if (opts?.replaceExisting) {
-          form.append('replaceExisting', 'true');
+        const { conflicts, safe } = await checkUploadConflicts(files, null);
+        
+        if (conflicts.length > 0) {
+            setUploadConflicts(conflicts);
+            setSafeFiles(safe);
+            setConflictModalOpen(true);
+            return;
         }
 
-        // ВАЖНОЕ ИЗМЕНЕНИЕ:
-        // - Раньше upload сразу делал LLM-обработку (summary/описание изображения) и для этого
-        //   мы передавали сюда apiKey/model/corporateMode/useSummarization.
-        // - Теперь upload НЕ делает LLM-вызовы (чтобы не тормозить UX).
-        // - LLM-метаданные вычисляются ЛЕНИВО при первой генерации ответа карточки
-        //   (см. /api/attachments/analyze и useNodeGeneration).
-        //
-        // Поэтому мы намеренно НЕ отправляем сюда настройки LLM.
-
-        // ВАЖНО:
-        // - name “files” должен совпасть с сервером (form.getAll('files'))
-        // - передаём оригинальное имя, чтобы оно было видно пользователю
-        for (const f of filesToUpload) {
-          form.append('files', f, f.name);
-        }
-
-        const res = await fetch('/api/attachments', {
-          method: 'POST',
-          body: form,
-        });
-
-        // Ответ сервера мы трактуем как “unknown” и дальше аккуратно валидируем.
-        // Это повышает устойчивость к непредвиденным форматам/ошибкам.
-        type UploadAttachmentsResponse = {
-          attachments?: unknown;
-          analysis?: unknown;
-          conflicts?: unknown;
-          error?: unknown;
-          details?: unknown;
-        };
-        const payload: UploadAttachmentsResponse = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          // Серверная защита от silent overwrite: если забыли replaceExisting — будет 409 + conflicts[].
-          if (res.status === 409 && Array.isArray(payload?.conflicts)) {
-            const conflicts = payload.conflicts
-              .map(
-                (c): { originalName: string; attachmentId: string } | null => {
-                if (!c || typeof c !== 'object') return null;
-                const o = c as Record<string, unknown>;
-                return typeof o.originalName === 'string' && typeof o.attachmentId === 'string'
-                  ? { originalName: o.originalName, attachmentId: o.attachmentId }
-                  : null;
-              }
-              )
-              .filter(
-                (c): c is { originalName: string; attachmentId: string } =>
-                  c !== null
-              );
-
-            if (conflicts.length > 0) {
-              setPendingUploadFiles(filesToUpload);
-              setReplaceConflicts(conflicts);
-              // Инициализируем поля "новое имя" для конфликтующих файлов.
-              setPendingRenameByIndex(buildDefaultRenameByIndex(filesToUpload, conflicts));
-              setPendingRenameError(null);
-              setIsReplaceDialogOpen(true);
-              return;
-            }
-          }
-
-          const msg =
-            (typeof payload?.error === 'string' && payload.error) ||
-            (typeof payload?.details === 'string' && payload.details) ||
-            `HTTP ${res.status}`;
-          setAttachmentError(typeof msg === 'string' ? msg : 'Ошибка загрузки файлов.');
-          return;
-        }
-
-        const newAttachments = Array.isArray(payload.attachments)
-          ? payload.attachments.filter(isNodeAttachment)
-          : [];
-
-        if (newAttachments.length === 0) {
-          setAttachmentError('Сервер не вернул метаданные вложений.');
-          return;
-        }
-
-        // Применяем результат upload тем же путём, что и attach-only.
-        applyIncomingAttachmentsAndAnalysis(newAttachments, payload.analysis);
-
-        // Важно:
-        // - updateNodeData сам помечает stale + каскадит потомков, когда меняется контекст.
-        // - поэтому здесь не нужно дополнительно вызывать markChildrenStale().
+        const res = await uploadToLibrary(files, { folderId: null });
+        if (!res.success) throw new Error('Upload failed');
+        
+        linkDocsToNode(res.docs);
       } catch (err) {
-        console.error('[QuestionSection] Upload attachments error:', err);
-        setAttachmentError(err instanceof Error ? err.message : 'Не удалось загрузить файлы.');
+        console.error('[QuestionSection] Upload to library failed:', err);
+        setAttachmentError(err instanceof Error ? err.message : 'Не удалось загрузить файлы в библиотеку.');
       } finally {
         setIsUploadingAttachments(false);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      activeCanvasId,
-      id,
-      attachments,
-      updateNodeData,
-      // stale/hash reconcile helpers from store (нужны для авто-снятия stale без drag)
-      getContextHash,
-      checkAndClearStale,
-      apiKey,
-      apiBaseUrl,
-      model,
-      corporateMode,
-      nodes,
-    ]
+    // validateFilesForUpload — это локальная функция, и eslint требует держать её в deps.
+    // Это безопасно: функция детерминирована и использует только локальные константы.
+    [checkUploadConflicts, uploadToLibrary, linkDocsToNode, validateFilesForUpload]
   );
 
   /**
-   * Удаляет вложение:
-   * - сначала удаляем файл на диске через DELETE /api/attachments/<canvasId>/<attachmentId>
-   * - затем удаляем метаданные из node.data.attachments
+   * Прикрепляет "ссылку на библиотечный документ" (docId) к текущей карточке.
+   *
+   * Что происходит:
+   * - мы создаём NodeAttachment, где attachmentId == docId,
+   * - добавляем его в node.data.attachments (без дублей),
+   * - updateNodeData сам решит, надо ли помечать stale (если у карточки уже есть response).
+   *
+   * Важно:
+   * - Здесь мы НЕ обращаемся к серверу.
+   * - Мы используем snapshot метаданных из drag payload (mime/size/hash/updatedAt).
+   * - Если каких-то полей нет — ставим best-effort значения, чтобы не ломать типы/UX.
+   */
+  const attachLibraryDoc = useCallback(
+    (payload: LibraryDocDragPayload) => {
+      setAttachmentError(null);
+
+      const docId = String(payload?.docId || '').trim();
+      if (!docId || !isLibraryDocIdLike(docId)) {
+        setAttachmentError('Некорректный docId: невозможно прикрепить документ.');
+        return;
+      }
+
+      // kind: предпочитаем payload.kind, но делаем fallback по mime.
+      const mime = String(payload?.mime || '').trim() || 'application/octet-stream';
+      const kind: NodeAttachment['kind'] =
+        payload?.kind === 'image' || mime.startsWith('image/') ? 'image' : 'text';
+
+      const nextAtt: NodeAttachment = {
+        attachmentId: docId,
+        kind,
+        originalName: String(payload?.name || docId).trim() || docId,
+        mime,
+        // sizeBytes обязателен по типу NodeAttachment, поэтому если неизвестно — ставим 0.
+        sizeBytes: typeof payload?.sizeBytes === 'number' && Number.isFinite(payload.sizeBytes) ? payload.sizeBytes : 0,
+        // Версия файла (для stale):
+        fileHash: typeof payload?.fileHash === 'string' ? payload.fileHash : undefined,
+        fileUpdatedAt: typeof payload?.fileUpdatedAt === 'number' ? payload.fileUpdatedAt : undefined,
+        createdAt: Date.now(),
+        ingestionMode: 'inline',
+      };
+
+      // MERGE БЕЗ ДУБЛЕЙ (по attachmentId/docId)
+      // - если документ уже прикреплён — ничего не делаем
+      if (attachments.some((a) => a.attachmentId === nextAtt.attachmentId)) return;
+
+      const merged = [...attachments, nextAtt];
+
+      updateNodeData(id, {
+        attachments: merged,
+        updatedAt: Date.now(),
+        // NOTE: isStale выставлять вручную не нужно — updateNodeData сделает это,
+        // если у карточки уже есть response и поменялся primary контекст (attachments[]).
+      });
+    },
+    [attachments, id, updateNodeData]
+  );
+
+  /**
+   * Удаляет вложение ИЗ КАРТОЧКИ (удаляет ссылку).
+   *
+   * ВАЖНО (новая архитектура библиотеки):
+   * - Вложения — это документы глобальной библиотеки (docId).
+   * - Карточка хранит только ссылку (attachmentId=docId) и метаданные.
+   * - Поэтому "удалить вложение" здесь означает:
+   *   - убрать ссылку из `node.data.attachments`,
+   *   - почистить связанные кеши (excerpt/summary/описание) в `node.data.*`.
+   *
+   * А вот физическое удаление файла документа (trash/gc) выполняется ТОЛЬКО в FileManager,
+   * потому что документ может использоваться в других местах (другие карточки/холсты).
    */
   const removeAttachment = useCallback(
     async (attachmentId: string) => {
       setAttachmentError(null);
 
-      if (!activeCanvasId) {
-        setAttachmentError('Нет активного холста: невозможно удалить вложение.');
-        return;
-      }
-
       setDeletingAttachmentId(attachmentId);
-      // ---------------------------------------------------------------------
-      // ВАЖНО: "файловый менеджер холста" (без дублей)
-      // ---------------------------------------------------------------------
-      //
-      // Удаление вложения из карточки = удаление ССЫЛКИ, а не всегда удаление файла.
-      // Файл на диске можно удалять только если на него больше нет ссылок в других карточках.
-      const hasOtherRefs = nodes.some((n) => {
-        if (n.id === id) return false;
-        const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as NodeAttachment[]) : [];
-        return atts.some((a) => a.attachmentId === attachmentId);
-      });
-
-      if (!hasOtherRefs) {
-        try {
-          await fetch(`/api/attachments/${activeCanvasId}/${attachmentId}`, {
-            method: 'DELETE',
-          });
-        } catch (err) {
-          // Даже если delete на сервере не удался — мы всё равно можем убрать метаданные из ноды,
-          // но тогда файл может остаться “сиротой” на диске. В MVP это приемлемо.
-          console.warn('[QuestionSection] DELETE attachment failed:', err);
-        }
-      }
 
       const next = attachments.filter((a) => a.attachmentId !== attachmentId);
 
@@ -1419,9 +1070,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       setDeletingAttachmentId(null);
     },
     [
-      activeCanvasId,
       attachments,
-      nodes,
       data.response,
       data.excludedAttachmentIds,
       data.attachmentExcerpts,
@@ -1447,14 +1096,17 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
 
       // Текст — загружаем содержимое
       if (att.kind === 'text') {
-        if (!activeCanvasId) {
-          setPreviewText('Нет активного холста: невозможно загрузить текст.');
-          return;
-        }
-
         setIsPreviewLoading(true);
         try {
-          const res = await fetch(`/api/attachments/${activeCanvasId}/${att.attachmentId}`);
+          /**
+           * ВАЖНО:
+           * - Мы удалили legacy слой вложений.
+           * - Поэтому текстовое превью всегда читаем из библиотеки:
+           *   GET /api/library/text/[docId]
+           */
+          const url = `/api/library/text/${att.attachmentId}`;
+
+          const res = await fetch(url);
           if (!res.ok) {
             setPreviewText(`Не удалось загрузить файл (HTTP ${res.status}).`);
             return;
@@ -1468,7 +1120,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         }
       }
     },
-    [activeCanvasId]
+    []
   );
 
   // При монтировании проверяем, есть ли сохраненные результаты и включаем кнопку
@@ -1488,6 +1140,32 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   // 4. Помечает потомков как stale (если у карточки есть ответ)
   const executeNeuroSearch = useCallback(async () => {
     if (!localPrompt.trim() || !apiKey) return;
+
+    // =========================================================================
+    // ВАЖНО (семантика stale для NeuroSearch vs stale для карточки):
+    //
+    // `isNeuroSearchStale` — это stale ИМЕННО кнопки мозга:
+    // - означает: "результаты NeuroSearch устарели и их нужно пересчитать"
+    // - причины:
+    //   1) одна из найденных карточек обновилась (updatedAt > snapshot),
+    //   2) одна из найденных карточек была удалена (nodeId отсутствует в nodes),
+    //   3) по snapshot нет записи (битые/старые данные).
+    //
+    // Ключевое правило UX/продукта:
+    // - Пока пользователь НЕ нажал на оранжевый stale‑мозг, мы НЕ должны красить
+    //   карточку‑владельца `data.isStale` (иначе получается “самопроизвольное” stale).
+    // - Но когда пользователь ОСОЗНАННО нажимает stale‑мозг и мы реально обновляем
+    //   нейроконтекст — карточка должна стать stale, потому что контекст,
+    //   который использовался при генерации ответа, изменился.
+    //
+    // Важный кейс (то самое “большое недопущение”):
+    // - список `neuroSearchNodeIds` может НЕ измениться (те же ID),
+    // - но контент этих карточек почти всегда изменился (response/summary и т.д.),
+    // - значит LLM‑контекст владельца изменился → ответ владельца потенциально устарел.
+    //
+    // Поэтому мы запоминаем значение `isNeuroSearchStale` ДО запуска поиска.
+    // =========================================================================
+    const wasNeuroSearchStaleBeforeRun = isNeuroSearchStale;
 
     setIsNeuroSearching(id, true);
     try {
@@ -1692,9 +1370,28 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         
         return true;
       });
+
+      // =========================================================================
+      // ВАЖНО (устойчивость к "призракам" после удаления ноды):
+      //
+      // В момент удаления карточки мы:
+      // - сразу убираем её из `nodes` на холсте,
+      // - а чистка поисковых индексов (embeddings/hybrid) идёт асинхронно.
+      //
+      // Из-за этого возможен короткий период, когда `searchSimilar(...)` ещё возвращает
+      // `nodeId` удалённой карточки.
+      //
+      // После наших правок `isNeuroSearchStale` честно считает такие результаты stale
+      // (источника в `nodes` уже нет) — это правильно.
+      //
+      // Но чтобы повторный клик по stale-кнопке действительно "лечил" состояние и снимал stale,
+      // мы обязаны выбросить из результата все `nodeId`, которых нет на текущем холсте.
+      // =========================================================================
+      const existingNodeIds = new Set(nodes.map(n => n.id));
+      const existingOnlyResults = filteredResults.filter(r => existingNodeIds.has(r.nodeId));
       
       // Ограничиваем количество до 5 лучших после фильтрации
-      const finalResults = filteredResults.slice(0, 5);
+      const finalResults = existingOnlyResults.slice(0, 5);
       
       // === СОЗДАЁМ СНИМОК СОСТОЯНИЯ ПОДКЛЮЧЁННЫХ КАРТОЧЕК ===
       // Для каждой найденной карточки сохраняем её текущий updatedAt
@@ -1743,13 +1440,29 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       const neuroSearchNodeIdsToPersist =
         nextNeuroSearchNodeIds.length > 0 ? nextNeuroSearchNodeIds : undefined;
 
+      // =========================================================================
+      // ВАЖНО (когда делать владельца stale):
+      //
+      // 1) Если изменился список `neuroSearchNodeIds` → primary‑контекст изменился → stale.
+      // 2) Если список ID не изменился, но пользователь обновил stale‑NeuroSearch:
+      //    - это означает, что “внутренний” контекст найденных карточек изменился
+      //      (updatedAt/удаление) относительно snapshot,
+      //    - значит LLM‑контекст владельца тоже изменился,
+      //    - поэтому ответ владельца потенциально устарел → владелец stale.
+      //
+      // Ограничение:
+      // - stale имеет смысл только если у карточки уже есть response (иначе “перегенерировать” нечего).
+      // =========================================================================
+      const shouldMarkOwnerStale =
+        Boolean(data.response) && (neuroSearchContextChanged || wasNeuroSearchStaleBeforeRun);
+
       updateNodeData(id, {
         neuroSearchNodeIds: neuroSearchNodeIdsToPersist,
         // updatedAt внутри updateNodeData выставляется автоматически,
         // но оставляем явный timestamp, т.к. этот код уже рассчитывает
         // на "обновление" карточки при изменении настроек контекста.
         updatedAt: Date.now(),
-        ...(data.response && neuroSearchContextChanged ? { isStale: true } : {}),
+        ...(shouldMarkOwnerStale ? { isStale: true } : {}),
       });
       
       // ВАЖНО (stale-логика NeuroSearch):
@@ -1793,6 +1506,9 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     // ВАЖНО: используется для определения, изменился ли контекст NeuroSearch.
     // Если список ID меняется, callback должен видеть актуальное значение.
     data.neuroSearchNodeIds,
+    // ВАЖНО: нужно для правильной семантики stale при "обновлении stale‑мозга".
+    // Если stale‑состояние мозга изменилось, executeNeuroSearch должен видеть актуальное значение.
+    isNeuroSearchStale,
     setIsNeuroSearching, 
     setNeuroSearchResults,
     updateNodeData,
@@ -1811,7 +1527,16 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
     // === ОБРАБОТКА STALE СОСТОЯНИЯ ===
     // Если кнопка уже включена И результаты устарели - перезапускаем поиск
     // Это позволяет обновить контекст при повторном клике на оранжевую кнопку
-    if (isNeuroSearchEnabled && isNeuroSearchStale) {
+    //
+    // ВАЖНО (устойчивость к ресету локального state):
+    // - `isNeuroSearchEnabled` — локальный state компонента, он может быть false
+    //   краткий момент после remount (до эффекта, который включает кнопку при наличии результатов).
+    // - Но сама кнопка в UI остаётся активной, если `neuroSearchResults.length > 0`.
+    //
+    // Поэтому условие "перезапустить stale поиск" должно опираться не только на локальный state,
+    // но и на факт наличия результатов в store.
+    const hasStoredResults = neuroSearchResults.length > 0;
+    if ((isNeuroSearchEnabled || hasStoredResults) && isNeuroSearchStale) {
       console.log('[NeuroSearch] Перезапуск поиска (stale)');
       await executeNeuroSearch();
       return;
@@ -1880,6 +1605,25 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       ref={questionSectionRef}
       className="neuro-question-section relative p-4"
     >
+      {/* =====================================================================
+          UPLOAD CONFLICTS MODAL (единый UX библиотеки)
+
+          Важно:
+          - Модалка живёт в Portal (Dialog), поэтому её можно рендерить прямо здесь.
+          - Она используется только когда preflight обнаружил конфликты имён в root библиотеке.
+          - По завершению (apply/close) мы чистим локальный state, чтобы не было "залипания".
+         ===================================================================== */}
+      <UploadConflictModal
+        isOpen={conflictModalOpen}
+        onClose={() => {
+          setConflictModalOpen(false);
+          setUploadConflicts([]);
+          setSafeFiles([]);
+        }}
+        conflicts={uploadConflicts}
+        onApply={handleApplyConflicts}
+      />
+
       {/* --- HANDLES --- */}
       <Handle
         type="target"
@@ -2140,10 +1884,17 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
           setIsDragOverAttachments(false);
 
           const dt = e.dataTransfer;
-          const dropped = Array.from(dt?.files || []);
-          if (dropped.length > 0) {
-            uploadAttachments(dropped);
+          // 1) Сначала пробуем "библиотечный" drag payload (docId).
+          //    Это важно, потому что при таком DnD dt.files обычно пустой.
+          const libPayload = tryReadLibraryDocDragPayload(dt);
+          if (libPayload) {
+            attachLibraryDoc(libPayload);
+            return;
           }
+
+          // 2) Fallback: обычный drag&drop реальных файлов (legacy upload).
+          const dropped = Array.from(dt?.files || []);
+          if (dropped.length > 0) uploadAttachments(dropped);
         }}
       >
         {/* Кнопка NeuroSearch */}
@@ -2332,6 +2083,9 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
               {attachments.map((att) => {
                 const isDeleting = deletingAttachmentId === att.attachmentId;
                 const isImage = att.kind === 'image';
+                // ВАЖНО:
+                // - После удаления legacy слоя вложений превью/контент берём только из библиотеки:
+                //   /api/library/*
                 // Флаг "это вложение выключено из контекста".
                 // Важно: оно всё равно показывается в миниатюрах, но мы добавляем визуальный маркер.
                 const isExcludedFromContext = excludedAttachmentIds.includes(att.attachmentId);
@@ -2383,22 +2137,30 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
                   >
                     {isImage ? (
                       <>
-                        {activeCanvasId ? (
-                          <Image
-                            // Миниатюра изображения вложения.
-                            // fill + object-cover: заполняем 36x36, обрезая по краям как превью в чатах.
-                            src={`/api/attachments/${activeCanvasId}/${att.attachmentId}`}
-                            alt={att.originalName || att.attachmentId}
-                            fill
-                            sizes="36px"
-                            className="object-cover"
-                            draggable={false}
-                            // См. комментарий у импорта: не прогоняем через оптимизатор.
-                            unoptimized
-                          />
-                        ) : (
-                          <div className="text-[10px] text-muted-foreground">no canvas</div>
-                        )}
+                        <Image
+                          // Миниатюра изображения вложения.
+                          // fill + object-cover: заполняем 36x36, обрезая по краям как превью в чатах.
+                          //
+                          // ВАЖНО:
+                          // - Вложения теперь всегда являются документами библиотеки (docId),
+                          //   поэтому URL выдачи изображения всегда один:
+                          //   GET /api/library/file/[docId]
+                          // Cache-busting (Todo E):
+                          // - replace не меняет docId, но меняет контент,
+                          // - поэтому добавляем ?v=fileHash|fileUpdatedAt, чтобы не показывать старую версию из кеша.
+                          src={`/api/library/file/${att.attachmentId}${
+                            att.fileHash || att.fileUpdatedAt
+                              ? `?v=${encodeURIComponent(String(att.fileHash || att.fileUpdatedAt))}`
+                              : ''
+                          }`}
+                          alt={att.originalName || att.attachmentId}
+                          fill
+                          sizes="36px"
+                          className="object-cover"
+                          draggable={false}
+                          // См. комментарий у импорта: не прогоняем через оптимизатор.
+                          unoptimized
+                        />
                       </>
                     ) : (
                       <>
@@ -2819,24 +2581,28 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
             <div className="flex-1 overflow-auto pr-2 mt-3">
               {previewAttachment.kind === 'image' ? (
                 <div className="rounded-md border border-border overflow-hidden bg-muted/10">
-                  {activeCanvasId ? (
-                    <Image
-                      // Полноразмерное превью: растягиваем по ширине контейнера,
-                      // высоту отдаём браузеру (h-auto) с сохранением пропорций.
-                      src={`/api/attachments/${activeCanvasId}/${previewAttachment.attachmentId}`}
-                      alt={previewAttachment.originalName || previewAttachment.attachmentId}
-                      width={1600}
-                      height={900}
-                      sizes="(max-width: 1100px) 95vw, 1100px"
-                      className="w-full h-auto"
-                      // См. комментарий у импорта: не прогоняем через оптимизатор.
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="p-4 text-sm text-muted-foreground">
-                      Нет активного холста: невозможно загрузить изображение.
-                    </div>
-                  )}
+                  <Image
+                    // Полноразмерное превью: растягиваем по ширине контейнера,
+                    // высоту отдаём браузеру (h-auto) с сохранением пропорций.
+                    //
+                    // ВАЖНО:
+                    // - Вложения теперь всегда документы библиотеки (docId),
+                    //   поэтому изображение читаем из:
+                    //   GET /api/library/file/[docId]
+                    // Cache-busting (Todo E): см. комментарий выше.
+                    src={`/api/library/file/${previewAttachment.attachmentId}${
+                      previewAttachment.fileHash || previewAttachment.fileUpdatedAt
+                        ? `?v=${encodeURIComponent(String(previewAttachment.fileHash || previewAttachment.fileUpdatedAt))}`
+                        : ''
+                    }`}
+                    alt={previewAttachment.originalName || previewAttachment.attachmentId}
+                    width={1600}
+                    height={900}
+                    sizes="(max-width: 1100px) 95vw, 1100px"
+                    className="w-full h-auto"
+                    // См. комментарий у импорта: не прогоняем через оптимизатор.
+                    unoptimized
+                  />
                 </div>
               ) : (
                 <div className="rounded-md border border-border bg-muted/10 p-3">

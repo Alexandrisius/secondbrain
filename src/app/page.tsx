@@ -11,6 +11,7 @@
 
 import dynamic from 'next/dynamic';
 import { Sidebar } from '@/components/sidebar';
+import { FileManagerSidebar } from '@/components/file-manager';
 import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 
 // =============================================================================
@@ -192,6 +193,9 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+      
+      {/* Правый файловый менеджер */}
+      <FileManagerSidebar />
     </main>
   );
 }

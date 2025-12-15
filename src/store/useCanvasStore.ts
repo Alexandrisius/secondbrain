@@ -1229,9 +1229,37 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           const hasAttachmentsPatch = Object.prototype.hasOwnProperty.call(data, 'attachments');
           const oldAttachments = Array.isArray(oldNode?.data.attachments) ? oldNode!.data.attachments : [];
           const newAttachments = Array.isArray(data.attachments) ? (data.attachments as unknown[]) : [];
-          const attachmentsChanged = hasAttachmentsPatch &&
-            JSON.stringify(oldAttachments) !== JSON.stringify(newAttachments) &&
-            !(oldAttachments.length === 0 && newAttachments.length === 0);
+          /**
+           * ВАЖНО (rename vs stale):
+           * - `NodeAttachment.originalName` — это display name (подпись) для UI,
+           *   а НЕ часть "primary контекста" LLM.
+           * - При rename документа в библиотеке мы хотим обновить подписи во всех карточках,
+           *   но НЕ делать карточки stale (ответ не становится неактуальным).
+           *
+           * Поэтому при сравнении attachments[] для "контекстных" изменений мы
+           * ИГНОРИРУЕМ поле `originalName`.
+           *
+           * Что это даёт:
+           * - rename (меняется только originalName) → attachmentsChanged = false → нет stale
+           * - replace (меняются hash/updatedAt/mime/size/kind) → attachmentsChanged = true → stale как и нужно
+           * - добавление/удаление вложений → attachmentsChanged = true → stale как и нужно
+           */
+          const stripDisplayOnlyFields = (arr: unknown[]): unknown[] =>
+            arr.map((x) => {
+              if (!x || typeof x !== 'object') return x;
+              const o = x as Record<string, unknown>;
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { originalName: _originalName, ...rest } = o;
+              return rest;
+            });
+
+          const oldAttachmentsForCompare = stripDisplayOnlyFields(oldAttachments as unknown[]);
+          const newAttachmentsForCompare = stripDisplayOnlyFields(newAttachments);
+
+          const attachmentsChanged =
+            hasAttachmentsPatch &&
+            JSON.stringify(oldAttachmentsForCompare) !== JSON.stringify(newAttachmentsForCompare) &&
+            !(oldAttachmentsForCompare.length === 0 && newAttachmentsForCompare.length === 0);
 
           const hasExcerptsPatch = Object.prototype.hasOwnProperty.call(data, 'attachmentExcerpts');
           const oldExcerpts = (oldNode?.data.attachmentExcerpts && typeof oldNode.data.attachmentExcerpts === 'object')
@@ -1341,7 +1369,7 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           // потому что LLM недетерминированная и каждый новый ответ уникален
           // =======================================================================
           if (responseChanged) {
-            const { markChildrenStale, nodes: currentNodes } = get();
+            const { markChildrenStale } = get();
             markChildrenStale(nodeId);
 
             console.log(
@@ -1350,42 +1378,25 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
               '- все потомки помечены как stale'
             );
 
-            // =================================================================
-            // УСТАРЕВАНИЕ "ВИРТУАЛЬНЫХ ДЕТЕЙ" (NeuroSearch)
-            // 
-            // Если эта нода является виртуальным родителем через NeuroSearch
-            // для других нод - помечаем их тоже как stale.
-            // 
-            // Виртуальные дети - это ноды, у которых в neuroSearchNodeIds
-            // есть ID текущей ноды (они используют её через нейропоиск).
-            // =================================================================
-            currentNodes.forEach((node) => {
-              // Проверяем, есть ли эта нода в neuroSearchNodeIds
-              if (node.data.neuroSearchNodeIds && 
-                  node.data.neuroSearchNodeIds.includes(nodeId) &&
-                  node.data.response) {
-                // Помечаем как stale
-                set((state) => {
-                  const nodeIndex = state.nodes.findIndex((n) => n.id === node.id);
-                  if (nodeIndex !== -1 && !state.nodes[nodeIndex].data.isStale) {
-                    state.nodes[nodeIndex].data = {
-                      ...state.nodes[nodeIndex].data,
-                      isStale: true,
-                      updatedAt: Date.now(),
-                    };
-                  }
-                });
-
-                // Также помечаем реальных потомков виртуального ребёнка
-                markChildrenStale(node.id);
-
-                console.log(
-                  '[updateNodeData] Виртуальный ребёнок (NeuroSearch):',
-                  node.id,
-                  '- помечен как stale вместе с потомками'
-                );
-              }
-            });
+            // =====================================================================
+            // ВАЖНО (NeuroSearch и семантика stale):
+            //
+            // Раньше мы делали "жёсткую" инвалидацию: если какая-то карточка изменила response,
+            // то все карточки, которые ссылались на неё через `neuroSearchNodeIds`, становились stale.
+            //
+            // По новой продуктовой логике это НЕПРАВИЛЬНО:
+            // - NeuroSearch — виртуальный (низкоприоритетный) контекст.
+            // - Когда “нейро‑родитель” обновился, мы НЕ должны сразу красить владельца stale,
+            //   потому что пользователь ещё не подтвердил обновление нейроконтекста.
+            // - Вместо этого stale должна стать ТОЛЬКО кнопка NeuroSearch (иконка мозга),
+            //   что вычисляется в UI через snapshot updatedAt (`isNeuroSearchStale`).
+            //
+            // Карточка‑владелец станет stale только после повторного клика по оранжевому мозгу,
+            // когда `executeNeuroSearch()` реально пересчитает результаты и (возможно) изменит
+            // `neuroSearchNodeIds` через `updateNodeData(...)`.
+            //
+            // Поэтому здесь мы намеренно НЕ каскадим stale на "виртуальных детей".
+            // =====================================================================
           }
 
           // =======================================================================
@@ -1598,66 +1609,81 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
          * @param nodeId - ID ноды для удаления
          */
         removeNode: (nodeId) => {
-          // =========================================================================
-          // ВЛОЖЕНИЯ: собираем список ДО удаления из state
-          // =========================================================================
-          //
-          // Почему это делаем заранее:
-          // - внутри set(...) мы удаляем ноду из state.nodes
-          // - после этого у нас уже нет доступа к её attachments
-          //
-          // Graceful degradation:
-          // - если currentCanvasId неизвестен, мы не можем построить URL удаления файлов
-          // - в таком случае просто пропускаем cleanup (файлы останутся на диске)
-          const { nodes: nodesBefore, currentCanvasId } = get();
-          const nodeBefore = nodesBefore.find((n) => n.id === nodeId);
-          const attachmentsToDelete = Array.isArray(nodeBefore?.data?.attachments)
-            ? (nodeBefore!.data.attachments as Array<{ attachmentId: string }>)
-            : [];
-          // ВАЖНО (глобальные вложения на холст):
-          // - Теперь вложения — это "файлы холста", а карточки хранят ссылки.
-          // - Поэтому удалять файл с диска можно только если на него больше нет ссылок.
-          //
-          // Здесь мы вычисляем список attachmentId, которые действительно можно удалить
-          // (т.е. они прикреплены только к удаляемой ноде).
-          const attachmentIdsSafeToDelete = attachmentsToDelete
-            .map((att) => String(att?.attachmentId || '').trim())
-            .filter(Boolean)
-            .filter((attachmentId) => {
-              // Если хотя бы одна другая нода (не nodeId) ссылается на этот attachmentId — не удаляем файл.
-              return !nodesBefore.some((n) => {
-                if (n.id === nodeId) return false;
-                const atts = Array.isArray(n.data.attachments) ? (n.data.attachments as Array<{ attachmentId: string }>) : [];
-                return atts.some((a) => String(a?.attachmentId || '').trim() === attachmentId);
-              });
-            });
+          /**
+           * ВАЖНОЕ ИЗМЕНЕНИЕ ПО АРХИТЕКТУРЕ ВЛОЖЕНИЙ:
+           *
+           * Раньше у нас существовал legacy слой вложений, привязанный к canvasId (отдельное дисковое хранилище),
+           * и при удалении ноды мы делали best-effort "удаление файлов", если на них
+           * больше не было ссылок.
+           *
+           * Теперь вложения — это документы глобальной библиотеки (`data/library/**`),
+           * а карточки хранят только ссылки (docId).
+           *
+           * Следствие:
+           * - удаление ноды/ссылки НЕ должно автоматически удалять файл документа,
+           *   потому что документ может использоваться на других холстах и/или жить
+           *   как самостоятельный ресурс в файловом менеджере.
+           * - операции удаления документа (trash/restore/gc) происходят только через FileManager.
+           *
+           * Поэтому тут мы намеренно НЕ делаем никакого FS-cleanup по вложениям.
+           */
 
           set((state) => {
             // =================================================================
             // ОЧИСТКА ССЫЛОК В ДРУГИХ НОДАХ
-            // Проходим по всем нодам и удаляем упоминания удаляемой ноды
-            // из excludedContextNodeIds и neuroSearchNodeIds
+            //
+            // ВАЖНО (продуктовая семантика stale + баг из NeuroSearch):
+            //
+            // При удалении ноды важно НЕ перепутать два разных смысла "устаревания":
+            //
+            // 1) `data.isStale` у карточки:
+            //    - означает: "ответ карточки потенциально неактуален, нужно Regenerate".
+            //    - выставляется только когда меняется РЕАЛЬНЫЙ primary контекст этой карточки
+            //      (prompt, attachments, excluded*, neuroSearchNodeIds и т.д.) и у неё уже есть response.
+            //
+            // 2) stale у кнопки NeuroSearch (иконка мозга):
+            //    - означает: "результаты NeuroSearch нужно пересчитать".
+            //    - это НЕ обязательно должно делать карточку stale сразу.
+            //
+            // Баг, который чиним:
+            // - NeuroSearch нашёл виртуального предка
+            // - пользователь удалил найденную карточку
+            // - этот код раньше автоматически чистил `neuroSearchNodeIds` и помечал владельца stale,
+            //   хотя "нейро-контекст" по продуктовой логике должен оставаться до повторного запуска поиска,
+            //   а stale сначала должна показывать только кнопка мозга.
+            //
+            // Поэтому здесь мы делаем только безопасный housekeeping:
+            // - чистим битые ссылки в excludedContextNodeIds (чтобы не сохранять мусор в JSON),
+            // - но НЕ помечаем карточки stale из-за этого,
+            // - и намеренно НЕ трогаем `neuroSearchNodeIds` (см. ниже).
             // =================================================================
             state.nodes.forEach((node, index) => {
-              let changed = false;
-
-              // 1. Очищаем excludedContextNodeIds
+              // 1) Housekeeping: удаляем ссылку на удалённую ноду из excludedContextNodeIds.
+              //
+              // Почему НЕ делаем isStale:
+              // - если нода удалена, она физически не может участвовать в контексте,
+              //   значит "контекст" по факту не меняется из-за того, что мы подчистили ID.
+              // - если бы мы выставляли stale/updatedAt тут, мы бы получали ложные оранжевые подсветки
+              //   на карточках, которые пользователь вообще не трогал.
               if (node.data.excludedContextNodeIds?.includes(nodeId)) {
                 state.nodes[index].data.excludedContextNodeIds = node.data.excludedContextNodeIds.filter(id => id !== nodeId);
-                changed = true;
               }
 
-              // 2. Очищаем neuroSearchNodeIds
-              if (node.data.neuroSearchNodeIds?.includes(nodeId)) {
-                state.nodes[index].data.neuroSearchNodeIds = node.data.neuroSearchNodeIds.filter(id => id !== nodeId);
-                changed = true;
-              }
-              
-              // Если ссылки изменились и у ноды есть ответ - помечаем как stale
-              if (changed && node.data.response) {
-                state.nodes[index].data.isStale = true;
-                state.nodes[index].data.updatedAt = Date.now();
-              }
+              // 2) ВАЖНО (NeuroSearch): намеренно НЕ чистим `neuroSearchNodeIds`.
+              //
+              // Почему:
+              // - `neuroSearchNodeIds` — это "снимок" виртуального контекста, полученного в последнем поиске.
+              // - Если мы удалим оттуда nodeId автоматически, то:
+              //   a) изменится primary контекст владельца БЕЗ явного действия пользователя,
+              //   b) мы преждевременно пометим карточку stale,
+              //   c) и потеряем возможность показать пользователю ровно тот нейроконтекст,
+              //      который был найден до удаления (до повторного клика по мозгу).
+              //
+              // Правильный UX:
+              // - удаление найденной карточки должно сделать stale ТОЛЬКО кнопку NeuroSearch,
+              //   чтобы пользователь перезапустил поиск,
+              // - а карточка-владелец станет stale уже ПОСЛЕ повторного поиска,
+              //   когда `neuroSearchNodeIds` действительно изменятся в `updateNodeData(...)`.
             });
 
             // Находим все дочерние ноды (те, у которых эта нода - source)
@@ -1706,27 +1732,6 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
           }
 
           // =========================================================================
-          // ОЧИСТКА ВЛОЖЕНИЙ (файлов на диске)
-          // =========================================================================
-          //
-          // ВАЖНО:
-          // - Это “best-effort” удаление: даже если запросы упали, нода уже удалена.
-          // - Мы используем API endpoint удаления файла:
-          //   DELETE /api/attachments/<canvasId>/<attachmentId>
-          //
-          // Почему не удаляем напрямую через fs:
-          // - это клиентский код (браузер/renderer), у него нет доступа к fs
-          // - серверная сторона уже содержит всю защиту (валидация ID, path traversal)
-          if (currentCanvasId && attachmentIdsSafeToDelete.length > 0) {
-            attachmentIdsSafeToDelete.forEach((attachmentId) => {
-              fetch(`/api/attachments/${currentCanvasId}/${attachmentId}`, { method: 'DELETE' }).catch((error) => {
-                console.warn('[removeNode] Не удалось удалить файл вложения:', { nodeId, attachmentId, error });
-              });
-            });
-          } else if (!currentCanvasId && attachmentIdsSafeToDelete.length > 0) {
-            console.warn('[removeNode] Нельзя удалить вложения: currentCanvasId = null', { nodeId });
-          }
-
           // 1. Удаляем эмбеддинг из IndexedDB (асинхронно, fire-and-forget)
           // Это необходимо для корректной работы семантического поиска
           deleteEmbedding(nodeId).catch((error) => {
@@ -1814,66 +1819,16 @@ export const useCanvasStore = create<CanvasStoreWithPersistence>()(
               }
             }
 
-            // =========================================================================
-            // ВЛОЖЕНИЯ: best-effort удаление файлов на диске
-            // =========================================================================
-            //
-            // Почему это нужно:
-            // - React Flow может удалять ноды напрямую (Delete / multi-delete),
-            //   минуя наш removeNode().
-            // - Тогда attachments файлы останутся “сиротами”.
-            //
-            // Как удаляем:
-            // - через API endpoint:
-            //   DELETE /api/attachments/<canvasId>/<attachmentId>
-            //
-            // Graceful degradation:
-            // - если currentCanvasId неизвестен — не можем построить URL и пропускаем cleanup
-            if (removedNodeIds.length > 0) {
-              const { nodes, currentCanvasId } = get();
-              if (!currentCanvasId) {
-                // Не валим UX; просто предупреждаем.
-                console.warn('[onNodesChange] currentCanvasId = null, пропускаем удаление вложений для удалённых нод');
-              } else {
-                // ВАЖНО (глобальные вложения):
-                // - Удаление ноды удаляет только "ссылки" на файлы.
-                // - Файл на диске удаляем только если после удаления нод-ссылок
-                //   больше нет ни одной карточки, которая ссылается на этот attachmentId.
-                const removedSet = new Set(removedNodeIds);
-                const safeToDelete = new Set<string>();
-
-                for (const removedNodeId of removedNodeIds) {
-                  const node = nodes.find((n) => n.id === removedNodeId);
-                  const attachments = Array.isArray(node?.data?.attachments)
-                    ? (node!.data.attachments as Array<{ attachmentId: string }>)
-                    : [];
-
-                  attachments.forEach((att) => {
-                    const attachmentId = String(att?.attachmentId || '').trim();
-                    if (!attachmentId) return;
-
-                    // Есть ли ссылки на этот файл в НЕудаляемых нодах?
-                    const stillReferenced = nodes.some((n) => {
-                      if (removedSet.has(n.id)) return false;
-                      const atts = Array.isArray(n.data.attachments)
-                        ? (n.data.attachments as Array<{ attachmentId: string }>)
-                        : [];
-                      return atts.some((a) => String(a?.attachmentId || '').trim() === attachmentId);
-                    });
-
-                    if (!stillReferenced) {
-                      safeToDelete.add(attachmentId);
-                    }
-                  });
-                }
-
-                safeToDelete.forEach((attachmentId) => {
-                  fetch(`/api/attachments/${currentCanvasId}/${attachmentId}`, { method: 'DELETE' }).catch((error) => {
-                    console.warn('[onNodesChange] Не удалось удалить файл вложения:', { attachmentId, error });
-                  });
-                });
-              }
-            }
+            /**
+             * ВАЖНО:
+             * - Раньше здесь была best-effort очистка legacy файлов вложений (через отдельный API удаления),
+             *   потому что React Flow может удалять ноды напрямую, минуя наш removeNode().
+             * - Теперь вложения — документы глобальной библиотеки (`data/library/**`),
+             *   и удаление ноды НЕ означает, что документ нужно удалять.
+             *
+             * Поэтому тут тоже НЕ делаем никакого удаления файлов по списку удаляемых нод.
+             * Очистка документов происходит только в FileManager (trash/gc), с учётом usage-index.
+             */
           }
 
           // Применяем все изменения к нодам

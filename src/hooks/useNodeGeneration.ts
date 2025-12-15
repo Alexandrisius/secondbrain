@@ -9,7 +9,6 @@ import { useSettingsStore, selectApiKey, selectApiBaseUrl, selectModel, selectCo
 import { streamChatCompletion, generateSummary, HttpError } from '@/services/aiService';
 import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode, NodeAttachment } from '@/types/canvas';
-import { useWorkspaceStore } from '@/store/useWorkspaceStore';
 
 interface UseNodeGenerationProps {
   id: string;
@@ -186,209 +185,21 @@ export const useNodeGeneration = ({
 
   // Системная инструкция холста
   const systemPrompt = useCanvasStore((s) => s.systemPrompt);
-
-  // Активный холст (нужен для вложений: data/attachments/<canvasId>/...)
-  const activeCanvasId = useWorkspaceStore((s) => s.activeCanvasId);
-
   /**
-   * ЛЕНИВЫЙ АНАЛИЗ ВЛОЖЕНИЙ (summary / image description) — FIRE-AND-FORGET
+   * ВАЖНОЕ ИЗМЕНЕНИЕ АРХИТЕКТУРЫ (по плану):
    *
-   * Ключевая продуктовая логика:
-   * - upload вложений должен быть быстрым → НЕ считаем LLM-атрибуты при загрузке
-   * - но потомкам нужны "суть документа" и "описание картинки"
-   * - поэтому при первой генерации ответа карточки, где есть attachments, мы:
-   *   1) запускаем `/api/attachments/analyze` в фоне (без await)
-   *   2) когда ответ пришёл — кэшируем результаты в node.data (attachmentSummaries / attachmentImageDescriptions)
-   *   3) пропагируем эти кэши по другим карточкам-ссылкам (best-effort)
+   * Раньше генерация карточки сама запускала “ленивый анализ вложений” через legacy endpoint
+   * анализа вложений (summary для текста и description для изображения).
    *
-   * Важно:
-   * - Это НЕ должно тормозить streaming ответа пользователю
-   * - Поэтому мы никогда не await'им этот запрос в основном потоке генерации
+   * Теперь у нас ЕДИНЫЙ источник истины по вложениям — глобальная библиотека (data/library/**),
+   * и анализ запускается/кэшируется на уровне ДОКУМЕНТА библиотеки (через `/api/library/analyze`),
+   * а не на уровне карточки.
+   *
+   * Поэтому:
+   * - этот хук НЕ триггерит анализ вложений,
+   * - он только отправляет `attachments[]` (docId) в `/api/chat`,
+   * - а UI файлового менеджера отвечает за "обогащение" документа метаданными (summary/vision).
    */
-  const triggerAttachmentsAnalyzeInBackground = useCallback((params: {
-    canvasId: string;
-    attachmentIds: string[];
-    /**
-     * Языковая “подсказка” — текст вопроса пользователя.
-     *
-     * Почему передаём сюда:
-     * - серверу нужно понять, на каком языке генерировать описание изображения,
-     *   чтобы оно соответствовало языку вопроса (требование пользователя).
-     *
-     * Важно:
-     * - это не секрет и не токен,
-     * - но мы всё равно не хотим слать сюда мегабайты текста,
-     *   поэтому ниже ограничиваем длину.
-     */
-    languageHintText?: string;
-  }) => {
-    // Минимальная защита от бессмысленных запросов
-    if (!params.canvasId || params.attachmentIds.length === 0) return;
-    if (!apiKey) return;
-
-    // Fire-and-forget: мы намеренно НЕ ждём результат здесь.
-    void (async () => {
-      try {
-        // Языковая подсказка: берём вопрос пользователя, но ограничиваем длину,
-        // чтобы:
-        // - не раздувать request body,
-        // - не тратить лишние токены на стороне LLM,
-        // - избежать потенциальных проблем со слишком длинными строками.
-        const languageHintText = (params.languageHintText || '').trim();
-        const safeLanguageHintText =
-          languageHintText.length > 2000 ? languageHintText.slice(0, 2000) : languageHintText;
-
-        const res = await fetch('/api/attachments/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            canvasId: params.canvasId,
-            attachmentIds: params.attachmentIds,
-            languageHintText: safeLanguageHintText,
-            apiKey,
-            apiBaseUrl,
-            model,
-            corporateMode,
-            // Важно: по вашему решению summary считаем только если настройка включена.
-            useSummarization,
-          }),
-        });
-
-        if (!res.ok) {
-          // Best-effort: не валим генерацию и не показываем ошибку пользователю.
-          // Это фоновая оптимизация контекста.
-          return;
-        }
-
-        const payload = (await res.json().catch(() => ({}))) as {
-          attachmentSummaries?: unknown;
-          attachmentImageDescriptions?: unknown;
-        };
-
-        const safeStringMap = (v: unknown): Record<string, string> => {
-          if (!v || typeof v !== 'object') return {};
-          const obj = v as Record<string, unknown>;
-          const out: Record<string, string> = {};
-          for (const [k, val] of Object.entries(obj)) {
-            if (typeof val === 'string') out[k] = val;
-          }
-          return out;
-        };
-
-        const newSummaries = safeStringMap(payload.attachmentSummaries);
-        const newImageDescriptions = safeStringMap(payload.attachmentImageDescriptions);
-
-        // Если сервер ничего нового не посчитал — не трогаем store (избегаем лишних ререндеров).
-        if (Object.keys(newSummaries).length === 0 && Object.keys(newImageDescriptions).length === 0) {
-          return;
-        }
-
-        // Достаём актуальные nodes и updateNodeData прямо из store,
-        // чтобы не зависеть от устаревших замыканий (closures).
-        const { nodes, updateNodeData } = useCanvasStore.getState();
-
-        // ---------------------------------------------------------------------
-        // 1) Кэшируем результаты в текущей карточке
-        // ---------------------------------------------------------------------
-        //
-        // Важно:
-        // - берём текущие значения из store (а не из `data` пропса),
-        //   потому что `data` может быть "старым" в момент, когда фон завершился.
-        const currentNode = nodes.find((n) => n.id === id) || null;
-        if (currentNode) {
-          const existingSummaries =
-            currentNode.data.attachmentSummaries && typeof currentNode.data.attachmentSummaries === 'object'
-              ? (currentNode.data.attachmentSummaries as Record<string, string>)
-              : {};
-          const existingImageDescriptions =
-            currentNode.data.attachmentImageDescriptions && typeof currentNode.data.attachmentImageDescriptions === 'object'
-              ? (currentNode.data.attachmentImageDescriptions as Record<string, string>)
-              : {};
-
-          const nextSummaries = { ...existingSummaries, ...newSummaries };
-          const nextImageDescriptions = { ...existingImageDescriptions, ...newImageDescriptions };
-
-          // Патчим только если действительно что-то добавили/изменили.
-          // Это важно для производительности и для корректной stale-логики.
-          const summariesChanged = JSON.stringify(existingSummaries) !== JSON.stringify(nextSummaries);
-          const imagesChanged = JSON.stringify(existingImageDescriptions) !== JSON.stringify(nextImageDescriptions);
-
-          if (summariesChanged || imagesChanged) {
-            updateNodeData(id, {
-              ...(summariesChanged ? { attachmentSummaries: nextSummaries } : {}),
-              ...(imagesChanged ? { attachmentImageDescriptions: nextImageDescriptions } : {}),
-            });
-          }
-        }
-
-        // ---------------------------------------------------------------------
-        // 2) Пропагируем по всем карточкам-ссылкам (best-effort)
-        // ---------------------------------------------------------------------
-        //
-        // Это приближает нас к модели "файловый менеджер холста":
-        // - файл один на холст
-        // - карточек-ссылок много
-        // - метаданные "суть файла" должны быть одинаковыми у всех ссылок
-        const summaryKeys = Object.keys(newSummaries);
-        const imageKeys = Object.keys(newImageDescriptions);
-        if (summaryKeys.length === 0 && imageKeys.length === 0) return;
-
-        nodes.forEach((node) => {
-          if (node.id === id) return;
-          const atts = Array.isArray(node.data.attachments) ? (node.data.attachments as NodeAttachment[]) : [];
-          if (atts.length === 0) return;
-
-          const hasAnySummary = summaryKeys.some((k) => atts.some((a) => a.attachmentId === k));
-          const hasAnyImage = imageKeys.some((k) => atts.some((a) => a.attachmentId === k));
-          if (!hasAnySummary && !hasAnyImage) return;
-
-          const existingSummaries =
-            node.data.attachmentSummaries && typeof node.data.attachmentSummaries === 'object'
-              ? (node.data.attachmentSummaries as Record<string, string>)
-              : {};
-          const existingImageDescriptions =
-            node.data.attachmentImageDescriptions && typeof node.data.attachmentImageDescriptions === 'object'
-              ? (node.data.attachmentImageDescriptions as Record<string, string>)
-              : {};
-
-          let changed = false;
-          const nextSummaries = { ...existingSummaries };
-          const nextImages = { ...existingImageDescriptions };
-
-          if (hasAnySummary) {
-            summaryKeys.forEach((k) => {
-              if (!atts.some((a) => a.attachmentId === k)) return;
-              if (nextSummaries[k] !== newSummaries[k]) {
-                nextSummaries[k] = newSummaries[k];
-                changed = true;
-              }
-            });
-          }
-
-          if (hasAnyImage) {
-            imageKeys.forEach((k) => {
-              if (!atts.some((a) => a.attachmentId === k)) return;
-              if (nextImages[k] !== newImageDescriptions[k]) {
-                nextImages[k] = newImageDescriptions[k];
-                changed = true;
-              }
-            });
-          }
-
-          if (changed) {
-            updateNodeData(node.id, {
-              ...(hasAnySummary ? { attachmentSummaries: nextSummaries } : {}),
-              ...(hasAnyImage ? { attachmentImageDescriptions: nextImages } : {}),
-            });
-          }
-        });
-      } catch (err) {
-        // Best-effort: игнорируем любые ошибки фона.
-        // Если анализ не случился — ничего критичного, просто потомки будут видеть fallback.
-        console.warn('[useNodeGeneration] Attachments analyze failed (background):', err);
-      }
-    })();
-  }, [apiKey, apiBaseUrl, model, corporateMode, useSummarization, id]);
 
   // Local state
   const [streamingText, setStreamingText] = useState('');
@@ -578,10 +389,9 @@ export const useNodeGeneration = ({
         // ---------------------------------------------------------------------
         //
         // ВАЖНО:
-        // - Вложения хранятся на диске и подтягиваются сервером (/api/chat).
-        // - Клиент должен передать:
-        //   - canvasId (чтобы сервер нашёл папку)
-        //   - attachments (метаданные + attachmentId)
+        // - Вложения — это ССЫЛКИ на документы библиотеки (docId).
+        // - Клиент передаёт только `attachments[]` (метаданные + attachmentId=docId),
+        //   а сервер (/api/chat) читает файлы строго из data/library/**.
         //
         // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО (файловый менеджер холста):
         // - ПОЛНЫЙ контент вложений (текст целиком / image parts) должен попадать в LLM
@@ -631,34 +441,12 @@ export const useNodeGeneration = ({
           return true;
         });
 
-        const canSendAttachments = Boolean(activeCanvasId) && dedupedAttachments.length > 0;
-        if (dedupedAttachments.length > 0 && !activeCanvasId) {
-          console.warn('[useNodeGeneration] Attachments exist but activeCanvasId is null; sending request without attachments.');
-        }
-
-        // ---------------------------------------------------------------------
-        // ЛЕНИВЫЙ АНАЛИЗ ВЛОЖЕНИЙ (BACKGROUND)
-        // ---------------------------------------------------------------------
-        //
-        // Важно:
-        // - Этот запрос НЕ должен блокировать LLM streaming.
-        // - Поэтому он запускается "в фоне" (fire-and-forget).
-        // - Сервер сам решит, нужно ли что-то считать (если уже посчитано и актуально — вернёт пусто).
-        if (canSendAttachments) {
-          triggerAttachmentsAnalyzeInBackground({
-            canvasId: activeCanvasId || '',
-            attachmentIds: dedupedAttachments.map((a) => a.attachmentId),
-            // Ключевое требование: описание картинки должно быть на языке вопроса.
-            // Поэтому передаём текст вопроса как “language hint”.
-            languageHintText: localPrompt,
-          });
-        }
+        const canSendAttachments = dedupedAttachments.length > 0;
 
         const response = await streamChatCompletion({
           messages: [{ role: 'user', content: localPrompt }],
           context: parentContext,
           systemPrompt: systemPrompt || undefined, // Передаём системную инструкцию холста
-          canvasId: canSendAttachments ? activeCanvasId || undefined : undefined,
           attachments: canSendAttachments ? (dedupedAttachments as NodeAttachment[]) : undefined,
           apiKey,
           apiBaseUrl,
@@ -909,8 +697,6 @@ export const useNodeGeneration = ({
     //   но внутри handleGenerate они НЕ используются напрямую.
     // - Если эти значения влияют на контекст, то это уже отражено через `buildParentContext`
     //   (его ссылка меняется при изменении зависимостей внутри самого buildParentContext).
-    activeCanvasId,
-    triggerAttachmentsAnalyzeInBackground,
   ]);
 
   /**

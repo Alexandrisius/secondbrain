@@ -160,11 +160,24 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
   /**
    * Формирование строкового контекста для LLM
    * 
-   * Структура контекста:
-   * 1. NeuroSearch (виртуальные родители) - полный response
-   * 2. Прямые родители - полный response или цитата
-   * 3. Дальние предки - суммаризация
-   * 4. NeuroSearch предков - суммаризация (виртуальные дедушки)
+   * Структура контекста (приоритетная, “честная” для LLM):
+   * 
+   * 1) ВАЖНО: РОДОСЛОВНАЯ
+   *    - прямые родители → предки
+   *    - цитаты/summary/full — как и раньше
+   * 
+   * 2) ДОПОЛНИТЕЛЬНО: ВЛОЖЕНИЯ ПРЕДКОВ (ТОЛЬКО СУТЬ)
+   *    - текст: summary/excerpt
+   *    - изображение: caption-only description
+   *    - НИКОГДА не подмешиваем полный файл предка (иначе контекст раздуется)
+   * 
+   * 3) НИЗКИЙ ПРИОРИТЕТ: NEUROSEARCH (ВИРТУАЛЬНЫЙ КОНТЕКСТ)
+   *    - может быть шумом и не должен “перебивать” родословную
+   *    - поэтому идёт последним и помечается как low-priority
+   * 
+   * Почему так:
+   * - пользователь явно попросил, чтобы LLM не воспринимала “виртуальных детей” (NeuroSearch)
+   *   как “первую и самую важную” информацию.
    */
   const buildParentContext = useCallback((): string | undefined => {
     // Проверяем наличие контекста: родители ИЛИ нейропоиск
@@ -175,7 +188,27 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
     const excludedAttachmentIds = Array.isArray(data.excludedAttachmentIds)
       ? (data.excludedAttachmentIds as string[])
       : [];
-    const contextParts: string[] = [];
+
+    // ----------------------------------------------------------------------------
+    // ПРАКТИЧЕСКИЕ ЛИМИТЫ (защита от “очень большого холста”)
+    // ----------------------------------------------------------------------------
+    //
+    // Важно:
+    // - это НЕ “безопасность”, а UX/производительность/контроль токенов;
+    // - лимиты мягкие: мы не ломаем логику, а аккуратно срезаем хвост и
+    //   оставляем метку, что контекст обрезан.
+    //
+    // Если понадобятся настройки — их можно вынести в Settings позже,
+    // но в MVP достаточно констант (простота и предсказуемость).
+    const MAX_ANCESTORS = 50; // дальние предки (grandparents) в строковом контексте
+    const MAX_ATTACHMENTS_PER_OWNER = 10; // вложения на одного владельца (родитель/предок)
+    const MAX_NEUROSEARCH_RESULTS = 10; // результаты NeuroSearch для текущей карточки
+    const MAX_NEUROSEARCH_TEXT_CHARS = 2000; // “разумный” максимум текста на один виртуальный блок
+
+    // Три секции в порядке важности.
+    const lineageBlocks: string[] = [];
+    const attachmentBlocks: string[] = [];
+    const neuroSearchBlocks: string[] = [];
 
     // Безопасный "string map" (Record<string,string>) из unknown.
     // Используем для attachmentSummaries/attachmentExcerpts.
@@ -310,37 +343,7 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
     };
 
     // =========================================================================
-    // ЧАСТЬ 0: NEUROSEARCH КОНТЕКСТ (ВИРТУАЛЬНЫЕ РОДИТЕЛИ)
-    // 
-    // Результаты нейропоиска добавляются как "виртуальные родители"
-    // с полным response (как у реальных родителей)
-    // =========================================================================
-    if (hasNeuroSearch) {
-      neuroSearchResults.forEach((result, index) => {
-        // Пропускаем исключённые
-        if (excludedIds.includes(result.nodeId)) return;
-
-        const parts: string[] = [];
-        
-        // Заголовок с процентом схожести
-        parts.push(`=== КОНТЕКСТ ИЗ НЕЙРОПОИСКА №${index + 1} (${result.similarityPercent}% совпадение) ===`);
-        
-        // Вопрос
-        if (result.prompt) {
-          parts.push(`Вопрос: ${result.prompt}`);
-        }
-        
-        // Полный ответ (responsePreview теперь содержит полный текст)
-        if (result.responsePreview) {
-          parts.push(`Ответ: ${result.responsePreview}`);
-        }
-
-        contextParts.push(parts.join('\n'));
-      });
-    }
-
-    // =========================================================================
-    // ЧАСТЬ 1: ПРЯМЫЕ РОДИТЕЛИ
+    // ЧАСТЬ 1: РОДОСЛОВНАЯ (ВЫСОКИЙ ПРИОРИТЕТ)
     // =========================================================================
     directParents.forEach((parent, index) => {
         if (!parent || excludedIds.includes(parent.id)) return;
@@ -378,95 +381,20 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
             const responseLabel = isNote ? 'Note Content' : 'Ответ';
             parentParts.push(`${responseLabel}: ${parent.data.response}`);
         }
-
-        // ---------------------------------------------------------------------
-        // ВЛОЖЕНИЯ ПРЯМОГО РОДИТЕЛЯ (как "контекст предка" уровня 1)
-        // ---------------------------------------------------------------------
-        //
-        // КЛЮЧЕВОЕ ПРОДУКТОВОЕ ПРАВИЛО:
-        // - ПОЛНЫЙ контент вложений получает только карточка-владелец (где файл прикреплён напрямую).
-        // - Потомки (включая прямого ребёнка) получают ТОЛЬКО суммаризацию/суть:
-        //   - text: summary/excerpt
-        //   - image: описание изображения (caption-only)
-        //
-        // Поэтому здесь мы НЕ подмешиваем файлы через /api/chat attachments,
-        // а добавляем в строковый контекст короткие выдержки.
-        const parentAttsRaw = Array.isArray(parent.data.attachments) ? parent.data.attachments : [];
-        const parentAtts = parentAttsRaw.filter(isAttachmentLike);
-        const visibleParentAtts = parentAtts.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
-        if (visibleParentAtts.length > 0) {
-          parentParts.push(`[Вложения родителя]:`);
-          visibleParentAtts.slice(0, 10).forEach((a) => {
-            const name =
-              (typeof a.originalName === 'string' && a.originalName.trim())
-                ? a.originalName.trim()
-                : a.attachmentId;
-            const snippet = getAttachmentContextSnippet(parent, a);
-            if (snippet) {
-              parentParts.push(`- ${name}: ${snippet}`);
-            } else {
-              // Мы пишем максимально нейтрально и без "OCR" в тексте,
-              // потому что по требованию продукта OCR НЕ должен попадать потомкам.
-              const attKind = typeof a.kind === 'string' ? a.kind : '';
-              const missingWhat =
-                attKind === 'image'
-                  ? 'описания изображения'
-                  : attKind === 'text'
-                    ? 'выжимки/суммаризации текста'
-                    : 'текстовой сути';
-              parentParts.push(`- ${name}: (нет сохранённой ${missingWhat}; откройте превью в карточке-источнике)`);
-            }
-          });
-        }
-
-        // =====================================================================
-        // ЧАСТЬ 1.5: NEUROSEARCH КОНТЕКСТ ИЗ РОДИТЕЛЯ (КАК ВИРТУАЛЬНЫЕ ДЕДУШКИ)
-        // 
-        // Если у родителя есть neuroSearchNodeIds - добавляем их как суммаризацию
-        // Это позволяет потомкам понимать, откуда у родителя могла появиться информация
-        // =====================================================================
-        if (parent.data.neuroSearchNodeIds && parent.data.neuroSearchNodeIds.length > 0) {
-          parent.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
-            // Пропускаем исключённые
-            if (excludedIds.includes(nsNodeId)) return;
-            
-            // Находим карточку в nodes
-            const nsNode = nodes.find(n => n.id === nsNodeId);
-            if (!nsNode) return;
-            
-            const nsParts: string[] = [];
-            nsParts.push(`  [Виртуальный контекст родителя - NeuroSearch №${nsIndex + 1}]`);
-            
-            if (nsNode.data.prompt) {
-              nsParts.push(`  Вопрос: ${nsNode.data.prompt}`);
-            }
-            
-            // Для виртуальных дедушек используем суммаризацию
-            if (useSummarization && nsNode.data.summary) {
-              nsParts.push(`  Суть: ${nsNode.data.summary}`);
-            } else if (nsNode.data.response) {
-              // Fallback - краткий ответ
-              const shortResponse = nsNode.data.response.length > 300 
-                ? nsNode.data.response.slice(0, 300) + '...'
-                : nsNode.data.response;
-              nsParts.push(`  Суть: ${shortResponse}`);
-            }
-            
-            parentParts.push(nsParts.join('\n'));
-          });
-        }
-
-        contextParts.push(parentParts.join('\n'));
+        lineageBlocks.push(parentParts.join('\n'));
     });
 
     // =========================================================================
-    // ЧАСТЬ 2: ДАЛЬНИЕ ПРЕДКИ (GRANDPARENTS)
+    // ЧАСТЬ 2: ДАЛЬНИЕ ПРЕДКИ (РОДОСЛОВНАЯ, продолжение)
     // =========================================================================
     const grandparents = ancestorChain.filter(
         (node) => !directParents.some((p) => p.id === node.id) && !excludedIds.includes(node.id)
     );
 
-    grandparents.forEach((ancestor, index) => {
+    const limitedGrandparents = grandparents.slice(0, MAX_ANCESTORS);
+    const wasGrandparentsTruncated = grandparents.length > limitedGrandparents.length;
+
+    limitedGrandparents.forEach((ancestor, index) => {
         if (!ancestor) return;
 
         const ancestorParts: string[] = [];
@@ -497,83 +425,311 @@ export const useNodeContext = ({ nodeId, data, neuroSearchResults = [] }: UseNod
             // Fallback summary
             ancestorParts.push(`Суть ответа: ${ancestor.data.response.slice(0, 300)}...`);
         }
-
-        // ---------------------------------------------------------------------
-        // ВЛОЖЕНИЯ ДАЛЬНЕГО ПРЕДКА (2+ поколения): только summary/excerpt
-        // ---------------------------------------------------------------------
-        //
-        // Требование:
-        // - "вложения ведут себя как предки"
-        // - для дальних потомков мы НЕ передаём полный документ, только суть
-        //
-        // Здесь мы используем:
-        // - attachmentSummaries[attachmentId] (если есть)
-        // - иначе attachmentExcerpts[attachmentId] (fallback)
-        //
-        // Важно:
-        // - Это работает только если мы ранее сохранили excerpts/summaries на ноде-владельце
-        //   (см. QuestionSection.uploadAttachments).
-        const ancestorAttsRaw = Array.isArray(ancestor.data.attachments) ? ancestor.data.attachments : [];
-        const ancestorAtts = ancestorAttsRaw.filter(isAttachmentLike);
-        const visibleAtts = ancestorAtts.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
-
-        if (visibleAtts.length > 0) {
-          ancestorParts.push(`[Вложения предка]:`);
-          visibleAtts.slice(0, 10).forEach((a) => {
-            const name =
-              (typeof a.originalName === 'string' && a.originalName.trim())
-                ? a.originalName.trim()
-                : a.attachmentId;
-            const snippet = getAttachmentContextSnippet(ancestor, a);
-            if (snippet) {
-              ancestorParts.push(`- ${name}: ${snippet}`);
-            } else {
-              // Аналогично блоку выше: не упоминаем OCR, чтобы не закреплять его как "норму"
-              // в контексте потомков. OCR может существовать в данных владельца, но не в наследовании.
-              const attKind = typeof a.kind === 'string' ? a.kind : '';
-              const missingWhat =
-                attKind === 'image'
-                  ? 'описания изображения'
-                  : attKind === 'text'
-                    ? 'выжимки/суммаризации текста'
-                    : 'текстовой сути';
-              ancestorParts.push(`- ${name}: (нет сохранённой ${missingWhat}; откройте превью в карточке-источнике)`);
-            }
-          });
-        }
-
-        // =====================================================================
-        // NEUROSEARCH КОНТЕКСТ ИЗ ПРЕДКА (КАК ВИРТУАЛЬНЫЕ ПРАДЕДУШКИ)
-        // =====================================================================
-        if (ancestor.data.neuroSearchNodeIds && ancestor.data.neuroSearchNodeIds.length > 0) {
-          ancestor.data.neuroSearchNodeIds.forEach((nsNodeId, nsIndex) => {
-            if (excludedIds.includes(nsNodeId)) return;
-            
-            const nsNode = nodes.find(n => n.id === nsNodeId);
-            if (!nsNode) return;
-            
-            const nsParts: string[] = [];
-            nsParts.push(`  [Виртуальный контекст предка - NeuroSearch №${nsIndex + 1}]`);
-            
-            if (nsNode.data.prompt) {
-              nsParts.push(`  Вопрос: ${nsNode.data.prompt}`);
-            }
-            
-            // Для дальних виртуальных предков - только краткая суть
-            if (nsNode.data.summary) {
-              nsParts.push(`  Суть: ${nsNode.data.summary}`);
-            } else if (nsNode.data.response) {
-              nsParts.push(`  Суть: ${nsNode.data.response.slice(0, 200)}...`);
-            }
-            
-            ancestorParts.push(nsParts.join('\n'));
-          });
-        }
-
-        contextParts.push(ancestorParts.join('\n'));
+        lineageBlocks.push(ancestorParts.join('\n'));
     });
 
-    return contextParts.join('\n\n');
+    // =========================================================================
+    // ЧАСТЬ 3: ВЛОЖЕНИЯ ПРЕДКОВ (ВТОРОСТЕПЕННО)
+    // =========================================================================
+    //
+    // Почему отдельной секцией:
+    // - вложения важны, но часто являются “дополнительной справкой”;
+    // - при огромном количестве вложений они не должны размывать родословную.
+    // =========================================================================
+    // ДЕДУПЛИКАЦИЯ ВЛОЖЕНИЙ ПО docId (attachmentId)
+    // =========================================================================
+    //
+    // Проблема из задачи:
+    // - один и тот же документ (docId) может встречаться у нескольких предков,
+    //   потому что у нас ссылочная модель вложений (через file manager);
+    // - следовательно, summary/excerpt/description по этому docId будет одинаковым;
+    // - если мы не делаем дедуп, то в контекст LLM “утекает” один и тот же текст многократно,
+    //   что:
+    //   - тратит токены,
+    //   - ухудшает сигнал/шум,
+    //   - иногда реально смещает ответ модели из‑за повторов.
+    //
+    // Правило:
+    // - ключ = attachmentId (он же docId).
+    // - приоритет “первого появления” (ближайшего источника):
+    //   directParents → limitedGrandparents.
+    //
+    // Дополнительная эвристика “best snippet wins”:
+    // - если мы впервые встретили docId, но у этого владельца нет snippet'а,
+    //   а позже встретился тот же docId с непустым snippet'ом — мы заменяем snippet.
+    // - при этом порядок (первое появление) НЕ меняем, чтобы сохранять предсказуемость.
+    type UniqueAttachmentEntry = {
+      docId: string;
+      displayName: string;
+      kind: string; // 'text' | 'image' | '' (на случай мусорных данных)
+      snippet: string; // может быть пустым, тогда используем нейтральный fallback
+    };
+
+    const uniqueAttachmentOrder: string[] = [];
+    const uniqueAttachments = new Map<string, UniqueAttachmentEntry>();
+
+    // Флаг: если у каких-то предков много вложений, мы всё равно не хотим читать их бесконечно.
+    // Это сохраняет текущую идею “лимитов” из прошлого кода, но уже в режиме дедупликации.
+    let wasAnyOwnerTruncatedByPerOwnerLimit = false;
+
+    const getDisplayName = (a: AttachmentLike): string => {
+      const name = (typeof a.originalName === 'string' ? a.originalName.trim() : '') || '';
+      return name || a.attachmentId;
+    };
+
+    const upsertUniqueAttachment = (owner: NeuroNode, a: AttachmentLike) => {
+      const docId = a.attachmentId;
+      if (!docId) return;
+      if (excludedAttachmentIds.includes(docId)) return;
+
+      const name = getDisplayName(a);
+      const kind = typeof a.kind === 'string' ? a.kind : '';
+
+      // “Суть” вложения для потомков (summary/excerpt/description).
+      const snippet = getAttachmentContextSnippet(owner, a);
+
+      const existing = uniqueAttachments.get(docId) || null;
+      if (!existing) {
+        uniqueAttachments.set(docId, {
+          docId,
+          displayName: name,
+          kind,
+          snippet,
+        });
+        uniqueAttachmentOrder.push(docId);
+        return;
+      }
+
+      // Если ранее у нас не было “человеческого” имени, а теперь оно появилось — улучшаем.
+      const existingLooksLikeDocId = existing.displayName === existing.docId;
+      const newLooksBetterName = name && name !== docId;
+      if (existingLooksLikeDocId && newLooksBetterName) {
+        existing.displayName = name;
+      }
+
+      // Если раньше не знали kind, а теперь знаем — улучшаем (для fallback-сообщения).
+      if (!existing.kind && kind) {
+        existing.kind = kind;
+      }
+
+      // Best snippet wins: если раньше snippet был пустым, а теперь стал непустым — обновляем.
+      if (!existing.snippet && snippet) {
+        existing.snippet = snippet;
+      }
+    };
+
+    const scanOwner = (owner: NeuroNode) => {
+      const raw = Array.isArray(owner.data.attachments) ? owner.data.attachments : [];
+      const atts = raw.filter(isAttachmentLike);
+      // Фильтруем выключенные docId, чтобы лимит считался по “реально разрешённым” вложениям.
+      const visible = atts.filter((a) => !excludedAttachmentIds.includes(a.attachmentId));
+      if (visible.length === 0) return;
+
+      // Отмечаем, что у этого владельца было больше вложений, чем мы готовы читать в контекст.
+      // Даже при дедупликации это важно: иначе на огромном холсте мы будем “перебирать всё”.
+      if (visible.length > MAX_ATTACHMENTS_PER_OWNER) {
+        wasAnyOwnerTruncatedByPerOwnerLimit = true;
+      }
+
+      for (const a of visible.slice(0, MAX_ATTACHMENTS_PER_OWNER)) {
+        upsertUniqueAttachment(owner, a);
+      }
+    };
+
+    // 3.1 Сканируем вложения прямых родителей (ближайший приоритет)
+    directParents.forEach((parent) => {
+      if (!parent || excludedIds.includes(parent.id)) return;
+      scanOwner(parent);
+    });
+
+    // 3.2 Сканируем вложения дальних предков (в пределах лимита MAX_ANCESTORS)
+    limitedGrandparents.forEach((ancestor) => {
+      if (!ancestor) return;
+      scanOwner(ancestor);
+    });
+
+    // 3.3 Формируем одну (дедуплицированную) секцию вложений для LLM
+    if (uniqueAttachmentOrder.length > 0) {
+      const lines: string[] = [];
+      lines.push('--- Уникальные вложения предков (дедуп по docId) ---');
+
+      for (const docId of uniqueAttachmentOrder) {
+        const entry = uniqueAttachments.get(docId);
+        if (!entry) continue;
+
+        // Если snippet есть — отдаём его как есть (он уже ограничен clampContextText()).
+        if (entry.snippet) {
+          lines.push(`- ${entry.displayName}: ${entry.snippet}`);
+          continue;
+        }
+
+        // Нейтральный fallback (не упоминаем OCR в контексте потомков).
+        const missingWhat =
+          entry.kind === 'image'
+            ? 'описания изображения'
+            : entry.kind === 'text'
+              ? 'выжимки/суммаризации текста'
+              : 'текстовой сути';
+        lines.push(`- ${entry.displayName}: (нет сохранённой ${missingWhat}; откройте превью в карточке-источнике)`);
+      }
+
+      // Если мы резали владельцев по MAX_ATTACHMENTS_PER_OWNER — сообщаем одним маркером, без дублей.
+      if (wasAnyOwnerTruncatedByPerOwnerLimit) {
+        lines.push(`(для некоторых предков показаны только первые ${MAX_ATTACHMENTS_PER_OWNER} вложений; остальное скрыто для экономии контекста)`);
+      }
+
+      attachmentBlocks.push(lines.join('\n'));
+    }
+
+    // Если мы обрезали цепочку предков — возможно, мы также “отрезали” вложения.
+    // Мы стараемся не шуметь лишними сообщениями:
+    // - показываем маркер ТОЛЬКО если в “хвосте” действительно были вложения.
+    if (wasGrandparentsTruncated) {
+      const tail = grandparents.slice(MAX_ANCESTORS);
+      const hasAttachmentsInTail = tail.some((a) => {
+        const raw = Array.isArray(a.data.attachments) ? a.data.attachments : [];
+        for (const v of raw) {
+          if (!isAttachmentLike(v)) continue;
+          if (excludedAttachmentIds.includes(v.attachmentId)) continue;
+          // Дедуп-логика: если этот docId уже попал в уникальный набор, то “хвост”
+          // не добавляет НОВОЙ информации про вложения — значит, маркер можно не показывать.
+          if (uniqueAttachments.has(v.attachmentId)) continue;
+          return true;
+        }
+        return false;
+      });
+
+      if (hasAttachmentsInTail) {
+        attachmentBlocks.push(
+          `(вложения более дальних предков скрыты; всего предков: ${grandparents.length}, лимит: ${MAX_ANCESTORS})`
+        );
+      }
+    }
+
+    // =========================================================================
+    // ЧАСТЬ 4: NEUROSEARCH (НИЗКИЙ ПРИОРИТЕТ)
+    // =========================================================================
+    //
+    // Важно:
+    // - мы намеренно кладём это в конец, чтобы модель не “переоценивала”
+    //   виртуальный контекст относительно родословной.
+    //
+    // Дополнительная защита:
+    // - ограничиваем размер текста и количество блоков.
+    const pushNeuroSearchFromOwner = (owner: NeuroNode, ownerLabel: string) => {
+      const ids = Array.isArray(owner.data.neuroSearchNodeIds) ? owner.data.neuroSearchNodeIds : [];
+      if (ids.length === 0) return;
+
+      const lines: string[] = [];
+      lines.push(`--- ${ownerLabel} ---`);
+
+      ids.forEach((nsNodeId, nsIndex) => {
+        if (excludedIds.includes(nsNodeId)) return;
+        const nsNode = nodes.find((n) => n.id === nsNodeId);
+        if (!nsNode) return;
+
+        const nsLines: string[] = [];
+        nsLines.push(`[NeuroSearch №${nsIndex + 1}]`);
+        if (nsNode.data.prompt) nsLines.push(`Вопрос: ${nsNode.data.prompt}`);
+
+        // Для “унаследованного” виртуального контекста — только суть.
+        if (nsNode.data.summary) {
+          nsLines.push(`Суть: ${clampContextText(nsNode.data.summary, MAX_NEUROSEARCH_TEXT_CHARS)}`);
+        } else if (nsNode.data.response) {
+          const text = useSummarization
+            ? clampContextText(nsNode.data.response, 300)
+            : clampContextText(nsNode.data.response, MAX_NEUROSEARCH_TEXT_CHARS);
+          nsLines.push(`Суть: ${text}`);
+        }
+
+        lines.push(nsLines.join('\n'));
+      });
+
+      neuroSearchBlocks.push(lines.join('\n'));
+    };
+
+    // 4.1 NeuroSearch результаты “для этой карточки”
+    if (hasNeuroSearch) {
+      const limited = neuroSearchResults.slice(0, MAX_NEUROSEARCH_RESULTS);
+      const wasTruncated = neuroSearchResults.length > limited.length;
+
+      const lines: string[] = [];
+      lines.push('--- NeuroSearch: результаты для этой карточки ---');
+
+      limited.forEach((result, index) => {
+        if (excludedIds.includes(result.nodeId)) return;
+
+        const parts: string[] = [];
+        parts.push(`[Результат #${index + 1}] ${result.similarityPercent}% совпадение`);
+        if (result.prompt) parts.push(`Вопрос: ${result.prompt}`);
+        if (result.responsePreview) {
+          parts.push(`Суть: ${clampContextText(result.responsePreview, MAX_NEUROSEARCH_TEXT_CHARS)}`);
+        }
+        lines.push(parts.join('\n'));
+      });
+
+      if (wasTruncated) {
+        lines.push(`(показаны первые ${MAX_NEUROSEARCH_RESULTS} результатов; остальное скрыто для экономии контекста)`);
+      }
+
+      neuroSearchBlocks.push(lines.join('\n'));
+    }
+
+    // 4.2 Виртуальный контекст, который “тащат” родители/предки
+    directParents.forEach((parent, idx) => {
+      if (!parent || excludedIds.includes(parent.id)) return;
+      pushNeuroSearchFromOwner(
+        parent,
+        directParents.length > 1
+          ? `NeuroSearch: виртуальный контекст Родителя №${idx + 1}`
+          : `NeuroSearch: виртуальный контекст Родителя`
+      );
+    });
+    limitedGrandparents.forEach((ancestor, idx) => {
+      if (!ancestor) return;
+      pushNeuroSearchFromOwner(ancestor, `NeuroSearch: виртуальный контекст Предка (уровень -${idx + 2})`);
+    });
+
+    // =========================================================================
+    // СКЛЕЙКА СЕКЦИЙ В ФИНАЛЬНУЮ СТРОКУ
+    // =========================================================================
+    const sections: string[] = [];
+
+    if (lineageBlocks.length > 0) {
+      const header = [
+        '=== ВАЖНО: РОДОСЛОВНАЯ (ОСНОВНОЙ КОНТЕКСТ) ===',
+        'Здесь находятся реальные родители/предки и (при необходимости) цитаты.',
+        'Используй это как основной источник истины.',
+      ].join('\n');
+
+      // Если предки были обрезаны — уведомляем модель (и человека при отладке).
+      const tail = wasGrandparentsTruncated
+        ? `(родословная обрезана: всего предков ${grandparents.length}, лимит ${MAX_ANCESTORS})`
+        : null;
+
+      sections.push([header, ...lineageBlocks, tail].filter(Boolean).join('\n\n'));
+    }
+
+    if (attachmentBlocks.length > 0) {
+      const header = [
+        '=== ДОПОЛНИТЕЛЬНО: ВЛОЖЕНИЯ ПРЕДКОВ (ВТОРОСТЕПЕННЫЙ КОНТЕКСТ) ===',
+        'Это НЕ полные файлы, а только “суть” (summary/excerpt или описание изображения).',
+        'Если блоки конфликтуют с родословной — доверяй родословной.',
+      ].join('\n');
+      sections.push([header, ...attachmentBlocks].join('\n\n'));
+    }
+
+    if (neuroSearchBlocks.length > 0) {
+      const header = [
+        '=== НИЗКИЙ ПРИОРИТЕТ: NEUROSEARCH (ВИРТУАЛЬНЫЙ КОНТЕКСТ) ===',
+        'Это похожие по смыслу карточки, которые могут быть шумом.',
+        'НЕ считай этот раздел более важным, чем родословную.',
+      ].join('\n');
+      sections.push([header, ...neuroSearchBlocks].join('\n\n'));
+    }
+
+    const final = sections.join('\n\n').trim();
+    return final ? final : undefined;
   }, [
     directParents, 
     ancestorChain, 

@@ -16,7 +16,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { buildFullSystemPrompt } from '@/lib/systemPrompt';
 import { DEFAULT_CHAT_MODEL_ID, getChatModelMaxContextTokens } from '@/lib/aiCatalog';
 import { fileTypeFromBuffer } from 'file-type';
-import { readAttachmentFile } from '@/lib/attachmentsFs';
+import { promises as fs } from 'fs';
+import { getLibraryFilePath, getLibraryTrashFilePath } from '@/lib/paths';
+import { readLibraryIndex } from '@/lib/libraryIndex';
+import { isValidDocId } from '@/lib/libraryFs';
 
 // =============================================================================
 // NEXT.JS ROUTE КОНФИГУРАЦИЯ (для streaming)
@@ -112,18 +115,16 @@ interface ChatRequestBody {
   corporateMode?: boolean;
 
   // ===========================================================================
-  // ВЛОЖЕНИЯ (ATTACHMENTS)
+  // ВЛОЖЕНИЯ (ATTACHMENTS) — ТОЛЬКО ГЛОБАЛЬНАЯ БИБЛИОТЕКА
   // ===========================================================================
   //
   // ВАЖНО:
   // - Клиент передаёт список attachmentId (и, опционально, display метаданные).
-  // - Сами файлы лежат на диске: data/attachments/<canvasId>/<attachmentId>
+  // - `attachmentId` теперь является `docId` из глобальной библиотеки документов.
+  // - Сами файлы лежат на диске: data/library/files/<docId> (и могут быть в data/library/.trash/<docId>)
   // - Сервер:
   //   - читает текстовые файлы и подмешивает их как system-context
   //   - читает изображения и добавляет их в user-message как multimodal parts
-
-  /** ID холста (нужен, чтобы найти файлы вложений на диске) */
-  canvasId?: string;
 
   /**
    * Список вложений, прикреплённых к текущей карточке.
@@ -243,21 +244,12 @@ export async function POST(request: NextRequest) {
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
     const hasAttachments = attachments.length > 0;
 
-    // Если вложения есть, но canvasId не передали — мы не можем найти файлы.
-    if (hasAttachments && !body.canvasId) {
-      return NextResponse.json(
-        {
-          error: 'Не указан canvasId для вложений',
-          details: 'Для отправки вложений серверу нужно знать, к какому холсту они относятся.',
-        },
-        { status: 400 }
-      );
-    }
-
     // Regex-валидация ID (anti path traversal).
-    const CANVAS_ID_RE = /^[a-zA-Z0-9_-]+$/;
-    const ATTACHMENT_ID_RE =
-      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.[a-z0-9]+$/;
+    // NOTE:
+    // - В legacy слое здесь валидировались canvasId + attachmentId.
+    // - Теперь `attachmentId` == `docId` библиотеки, и canvasId больше не используется.
+    const DOC_ID_RE =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.[a-z0-9]{1,16}$/;
 
     const ALLOWED_IMAGE_MIMES = new Set<string>([
       'image/png',
@@ -300,9 +292,23 @@ export async function POST(request: NextRequest) {
       return text.replace(/```/g, '``\u200b`');
     };
 
-    const canvasId = body.canvasId;
+    // Читаем индекс библиотеки один раз на запрос.
+    // Это важнее производительности, чем "ленивая" загрузка на каждый файл:
+    // attachments обычно немного, а диск/JSON — относительно быстрые для локального приложения.
+    const docById = new Map<
+      string,
+      Awaited<ReturnType<typeof readLibraryIndex>>['docs'][number]
+    >();
+    if (hasAttachments) {
+      const libraryIndex = await readLibraryIndex();
+      for (const d of libraryIndex.docs) {
+        docById.set(d.docId, d);
+      }
+    }
     const textAttachmentBlocks: string[] = [];
-    const imageParts: ImageUrlPart[] = [];
+    // Массив multimodal-контента для изображений (картинка + описание)
+    // Теперь используем ContentPart[] вместо ImageUrlPart[], чтобы добавлять и text, и image_url
+    const imageParts: ContentPart[] = [];
 
     // Лимит по “примерным токенам” для текстовых файлов
     // (не путать с max_tokens генерации — это про “входной контекст”).
@@ -313,18 +319,11 @@ export async function POST(request: NextRequest) {
     );
 
     if (hasAttachments) {
-      if (!canvasId || !CANVAS_ID_RE.test(canvasId)) {
-        return NextResponse.json(
-          { error: 'Некорректный canvasId' },
-          { status: 400 }
-        );
-      }
-
       for (let index = 0; index < attachments.length; index++) {
         const a = attachments[index];
         const attachmentId = String(a?.attachmentId || '').trim();
 
-        if (!ATTACHMENT_ID_RE.test(attachmentId)) {
+        if (!DOC_ID_RE.test(attachmentId) || !isValidDocId(attachmentId)) {
           // Некорректный ID — безопаснее сразу отказать, чем “угадать путь”.
           return NextResponse.json(
             { error: 'Некорректный attachmentId', details: attachmentId },
@@ -332,34 +331,95 @@ export async function POST(request: NextRequest) {
           );
         }
 
+        // Ищем метаданные документа в индексе.
+        const doc = docById.get(attachmentId) || null;
+        if (!doc) {
+          // Best-effort: документ мог быть удалён/перемещён в ходе гонки или index повреждён.
+          // Мы не валим весь запрос, а просто пропускаем этот attachment.
+          console.warn('[Chat API] Library doc not found in index, skipping:', { docId: attachmentId });
+          continue;
+        }
+
+        // Читаем файл с диска best-effort:
+        // - ожидаемое место зависит от trashedAt,
+        // - но на всякий случай пробуем и fallback (на случай ручного вмешательства/гонки).
+        const primaryPath = doc.trashedAt ? getLibraryTrashFilePath(doc.docId) : getLibraryFilePath(doc.docId);
+        const fallbackPath = doc.trashedAt ? getLibraryFilePath(doc.docId) : getLibraryTrashFilePath(doc.docId);
+
         let buf: Buffer;
         try {
-          // КРИТИЧНО (undo/redo):
-          // - Если файл был "удалён" как последняя ссылка, он попадает в `.trash`.
-          // - При undo ссылка может вернуться, и chat должен продолжить работать.
-          // - Поэтому читаем через helper с auto-restore из `.trash`.
-          const r = await readAttachmentFile(canvasId, attachmentId);
-          buf = r.buf;
-        } catch (err: unknown) {
-          // Graceful degradation:
-          // - файл могли удалить руками из data-папки
-          // - в этом случае не валим всю генерацию, просто пропускаем вложение
+          buf = await fs.readFile(primaryPath);
+        } catch (e1: unknown) {
           const code =
-            err && typeof err === 'object' && 'code' in err
-              ? String((err as { code?: unknown }).code)
-              : null;
-          console.warn('[Chat API] Attachment file missing, skipping:', { canvasId, attachmentId, code });
-          continue;
+            e1 && typeof e1 === 'object' && 'code' in e1 ? String((e1 as { code?: unknown }).code) : null;
+          if (code !== 'ENOENT') throw e1;
+          try {
+            buf = await fs.readFile(fallbackPath);
+          } catch (e2: unknown) {
+            const code2 =
+              e2 && typeof e2 === 'object' && 'code' in e2 ? String((e2 as { code?: unknown }).code) : null;
+            if (code2 === 'ENOENT') {
+              console.warn('[Chat API] Library file missing on disk, skipping:', { docId: doc.docId });
+              continue;
+            }
+            throw e2;
+          }
         }
 
         // Определяем реальный тип по magic bytes (если возможно)
         const detected = await fileTypeFromBuffer(buf);
         const detectedMime = detected?.mime;
 
-        // 1) Изображение → превращаем в data URL и добавляем image_url part
+        // 1) Изображение → превращаем в data URL и добавляем image_url part + описание
         if (detectedMime && ALLOWED_IMAGE_MIMES.has(detectedMime)) {
           const base64 = buf.toString('base64');
           const dataUrl = `data:${detectedMime};base64,${base64}`;
+
+          // =======================================================================
+          // LLM IMAGE + DESCRIPTION (Task E.1)
+          // =======================================================================
+          //
+          // По плану:
+          // - берём doc.analysis.image.description (caption-only) из library-index.json
+          // - добавляем рядом с image_url TEXT part с описанием
+          // - если описания нет — добавляем placeholder или только картинку
+          //
+          // Зачем это нужно:
+          // - Модель получает и картинку (для визуального анализа), и текстовое описание
+          // - Описание помогает модели лучше понять контекст изображения
+          // - Если описание ещё не сгенерировано — модель справится только по картинке
+
+          // Получаем описание из библиотеки
+          const imageDescription = (doc.analysis?.image?.description || '').trim();
+          const displayName = safeNameForContext(a?.originalName, doc.name || attachmentId);
+
+          // Формируем текстовую часть с описанием
+          if (imageDescription) {
+            // Если есть описание — добавляем его перед картинкой
+            const descriptionText = [
+              `--- Изображение: ${displayName} ---`,
+              `ID: ${attachmentId}`,
+              '',
+              'Описание изображения:',
+              imageDescription,
+              '',
+              '(Само изображение прикреплено ниже)',
+            ].join('\n');
+
+            imageParts.push({ type: 'text', text: descriptionText });
+          } else {
+            // Если описания нет — добавляем placeholder
+            const placeholderText = [
+              `--- Изображение: ${displayName} ---`,
+              `ID: ${attachmentId}`,
+              '',
+              '(Описание изображения ещё не сгенерировано. Изображение прикреплено ниже.)',
+            ].join('\n');
+
+            imageParts.push({ type: 'text', text: placeholderText });
+          }
+
+          // Добавляем само изображение
           imageParts.push({ type: 'image_url', image_url: { url: dataUrl } });
           continue;
         }
@@ -372,7 +432,7 @@ export async function POST(request: NextRequest) {
           const decoder = new TextDecoder('utf-8', { fatal: true });
           text = decoder.decode(buf);
         } catch {
-          console.warn('[Chat API] Attachment is not valid UTF-8 text, skipping:', { canvasId, attachmentId });
+          console.warn('[Chat API] Attachment is not valid UTF-8 text, skipping:', { docId: attachmentId });
           continue;
         }
 
@@ -390,7 +450,11 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const displayName = safeNameForContext(a?.originalName, attachmentId);
+        // Для красивого имени в контексте:
+        // - предпочитаем snapshot от клиента (originalName),
+        // - иначе берём doc.name из индекса,
+        // - иначе fallback на docId.
+        const displayName = safeNameForContext(a?.originalName, doc.name || attachmentId);
         const safeText = escapeTripleBackticks(text);
 
         // “Язык” подсветки — не критичен, но помогает модели понять структуру.

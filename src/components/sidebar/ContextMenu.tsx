@@ -135,8 +135,12 @@ export function ContextMenu({
    */
   useEffect(() => {
     if (isOpen) {
-      // Сразу устанавливаем позицию клика
-      setAdjustedPosition(position);
+      // Устанавливаем начальную позицию с учётом preferLeft/preferTop
+      // Используем minWidth как приблизительную ширину меню до измерения
+      // Это предотвращает "прыжок" меню при первом открытии
+      const initialX = preferLeft ? position.x - minWidth : position.x;
+      const initialY = position.y;
+      setAdjustedPosition({ x: initialX, y: initialY });
       
       // Показываем меню
       setIsVisible(true);
@@ -161,57 +165,73 @@ export function ContextMenu({
       
       return () => clearTimeout(timer);
     }
-  }, [isOpen, isVisible, position]);
+  }, [isOpen, isVisible, position, preferLeft, minWidth]);
   
   /**
    * Автопозиционирование меню относительно viewport (корректировка после рендера)
    * Учитывает preferLeft и preferTop для правильного отображения у границ сайдбара
    */
-  useEffect(() => {
-    if (!isOpen || !menuRef.current) return;
+  React.useLayoutEffect(() => {
+    if (!isOpen || !isVisible || !menuRef.current) return;
     
-    // Даём браузеру отрендерить меню, затем корректируем позицию
-    const timer = requestAnimationFrame(() => {
-      if (!menuRef.current) return;
-      
-      const menu = menuRef.current;
-      const rect = menu.getBoundingClientRect();
-      
-      let { x, y } = position;
-      
-      // Если предпочтительно открытие слева - сразу смещаем меню влево от точки клика
-      if (preferLeft) {
-        x = x - rect.width;
-      }
-      
-      // Если предпочтительно открытие сверху - сразу смещаем меню вверх от точки клика
-      if (preferTop) {
-        y = y - rect.height;
-      }
-      
-      // Корректируем по горизонтали - если меню выходит за правый край
-      if (x + rect.width > window.innerWidth - VIEWPORT_PADDING) {
-        x = Math.max(VIEWPORT_PADDING, x - rect.width);
-      }
-      
-      // Корректируем по вертикали - если меню выходит за нижний край
-      if (y + rect.height > window.innerHeight - VIEWPORT_PADDING) {
-        y = Math.max(VIEWPORT_PADDING, y - rect.height);
-      }
-      
-      // Убеждаемся что меню не выходит за левый/верхний край
-      if (x < VIEWPORT_PADDING) {
-        x = VIEWPORT_PADDING;
-      }
-      if (y < VIEWPORT_PADDING) {
-        y = VIEWPORT_PADDING;
-      }
-      
-      setAdjustedPosition({ x, y });
-    });
+    // Измеряем реальные размеры меню
+    const menu = menuRef.current;
+    const rect = menu.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
     
-    return () => cancelAnimationFrame(timer);
-  }, [isOpen, position, preferLeft, preferTop]);
+    const { x, y } = position;
+    
+    // 1. Determine preferred position based on props
+    // Используем реальную ширину меню (rect.width) вместо minWidth
+    let finalX = preferLeft ? x - rect.width : x;
+    let finalY = preferTop ? y - rect.height : y;
+
+    // 2. Intelligent flip if preferred position doesn't fit
+    // Horizontal flip
+    if (preferLeft) {
+      // If preferred left doesn't fit (left edge < padding), try right
+      if (finalX < VIEWPORT_PADDING) {
+         // Check if right side fits better
+         if (x + rect.width <= viewportWidth - VIEWPORT_PADDING) {
+           finalX = x;
+         }
+      }
+    } else {
+      // If preferred right doesn't fit (right edge > viewport), try left
+      if (finalX + rect.width > viewportWidth - VIEWPORT_PADDING) {
+         // Check if left side fits better
+         if (x - rect.width >= VIEWPORT_PADDING) {
+           finalX = x - rect.width;
+         }
+      }
+    }
+
+    // Vertical flip
+    if (preferTop) {
+       if (finalY < VIEWPORT_PADDING) {
+          if (y + rect.height <= viewportHeight - VIEWPORT_PADDING) {
+             finalY = y;
+          }
+       }
+    } else {
+       if (finalY + rect.height > viewportHeight - VIEWPORT_PADDING) {
+          if (y - rect.height >= VIEWPORT_PADDING) {
+             finalY = y - rect.height;
+          }
+       }
+    }
+
+    // 3. Hard Clamp to Viewport (Safety Net)
+    // This ensures the menu is ALWAYS fully visible, even if it overlaps the cursor/trigger
+    const maxX = viewportWidth - rect.width - VIEWPORT_PADDING;
+    const maxY = viewportHeight - rect.height - VIEWPORT_PADDING;
+
+    finalX = Math.max(VIEWPORT_PADDING, Math.min(finalX, maxX));
+    finalY = Math.max(VIEWPORT_PADDING, Math.min(finalY, maxY));
+    
+    setAdjustedPosition({ x: finalX, y: finalY });
+  }, [isOpen, isVisible, position, preferLeft, preferTop]);
   
   /**
    * Закрытие при клике вне меню
@@ -330,7 +350,7 @@ export function ContextMenu({
       ref={menuRef}
       className={cn(
         // Позиционирование - fixed для отвязки от родительских overflow
-        'fixed z-[9999]',
+        'fixed z-[99999]',
         // Glassmorphism эффект
         'bg-[#1e1e2e]/95 backdrop-blur-xl',
         // Граница и тень
@@ -434,19 +454,7 @@ export function ContextMenu({
   return createPortal(menuContent, document.body);
 }
 
-// =============================================================================
-// ХУКИ
-// =============================================================================
-
-/**
- * Хук для управления контекстным меню
- * 
- * @example
- * const { isOpen, position, open, close } = useContextMenu();
- * 
- * <div onContextMenu={(e) => open(e)}>Right click me</div>
- * <ContextMenu isOpen={isOpen} position={position} onClose={close} ... />
- */
+// ... (hook left as is) ...
 export function useContextMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -478,4 +486,3 @@ export function useContextMenu() {
 }
 
 export default ContextMenu;
-

@@ -11,6 +11,8 @@
 <p align="center">
   <a href="#-download">Download</a> •
   <a href="#-features">Features</a> •
+  <a href="#-file-manager">File Manager</a> •
+  <a href="#-attachments-files-in-cards">Attachments</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-hotkeys">Hotkeys</a> •
   <a href="#-api-setup">API Setup</a>
@@ -122,6 +124,15 @@ Combines 4 search methods for perfect results:
 
 ![Context View](./docs/images/ContextView.png)
 
+### 📂 File Manager
+Built-in **global library** for your knowledge files:
+- **Upload & Organize**: folders, move/rename, replace file contents.
+- **Fast Preview**: open text and images instantly (no external apps required).
+- **Attach to Cards**: use files as context for AI generation.
+- **Safe Deletion**: Trash, Restore, Empty Trash, and Garbage Collection (GC).
+- **Usage Awareness**: see which canvases/cards use a file and jump there.
+- **Background AI Analysis**: generate summaries (text) and descriptions (images) for better context.
+
 ### ⚙️ Advanced Capabilities
 - **Embeddings Model Selection**: tune search quality (`text-embedding-3`, `multilingual-e5`, etc.)
 - **Corporate Mode**: work in networks with SSL inspection
@@ -130,6 +141,129 @@ Combines 4 search methods for perfect results:
 - **Undo/Redo**: full history with `Ctrl+Z` / `Ctrl+Y`
 - **Batch Operations**: mass collapse/expand for selected cards
 - **Stale Detection**: automatic tracking of outdated cards when context changes
+
+---
+
+## 📂 File Manager
+
+NeuroCanvas includes a **File Manager** (right sidebar) — a global library where you keep documents and assets that can be reused across your canvases.
+
+### What you can do
+
+- **Upload files**
+  - Drag & drop files into the File Manager.
+  - Or click to select files from your system.
+  - Uploading supports **name conflicts** (same name in the same folder) and lets you choose:
+    - Replace the existing file (keeps the same file entry),
+    - Upload as a new file (with a new name),
+    - Skip.
+
+- **Browse & organize**
+  - **Folders** with nested structure.
+  - **Move** files between folders.
+  - **Rename** files and folders.
+  - **Replace** a file’s contents while keeping it as the same library item (useful when you update a document).
+
+- **Preview & download**
+  - **Preview** text documents directly in the app.
+  - **Preview** images instantly.
+  - **Download** any file from the library.
+
+- **Find files quickly**
+  - Search by file name.
+  - Optional filters:
+    - filter by **canvas** (show files used on a specific canvas),
+    - filter by **file extension** (e.g. `md`, `pdf`, `png`).
+
+- **Trash & cleanup**
+  - **Trash** moves a file into the library Trash.
+  - **Restore** brings it back.
+  - **Empty Trash** permanently removes files in Trash.
+  - **GC (Garbage Collection)** permanently removes files that are safe to delete (advanced cleanup).
+
+- **See where a file is used**
+  - The File Manager can show **where** a file is referenced (by canvas/card).
+  - You can jump directly to the card that uses a file.
+
+### Tabs: Files vs Trash
+
+- **Files tab**: your normal library view (folders, filters, upload).
+- **Trash tab**: a global list of deleted files (no filters, to keep restore/cleanup simple and predictable).
+
+---
+
+## 📎 Attachments (Files in Cards)
+
+Attachments are how you bring files into your AI prompts. A card stores a **reference** to a library file, and uses that file as context during generation.
+
+### Attach a file to a card
+
+You have two convenient ways:
+
+- **Attach from your computer (upload + attach)**
+  - Click the **paperclip** on a card and select files.
+  - Files are uploaded to the library and immediately attached to the card.
+
+- **Attach from the File Manager (drag & drop link)**
+  - Drag a file from File Manager onto a card.
+  - This attaches the existing library file without re-uploading.
+
+### Preview attachments
+
+- Click an attachment thumbnail in the card to preview it:
+  - images open instantly,
+  - text files are loaded on demand and shown as plain text.
+
+### Include / exclude attachments from context (per card)
+
+Sometimes a file is attached but you don’t want it to influence a specific question.
+
+- You can **exclude** an attachment from context on a per-card basis.
+- Excluded attachments stay visible in the card UI, but won’t be used when building the context for generation.
+
+### AI analysis for attachments (recommended)
+
+NeuroCanvas can generate lightweight metadata for your library files:
+
+- **Text files**: a short **summary** (used for better, smaller context downstream).
+- **Images**: a natural-language **description** (so descendants can “understand” an image even without multimodal input).
+
+This analysis runs:
+- automatically in the background after upload/replace (when possible),
+- and can be triggered manually from the File Manager.
+
+### Statuses you may see
+
+- **Ready**: the file has up-to-date AI metadata (summary/description) for its current content.
+- **Processing**: analysis is running.
+- **Stale**: the file changed (e.g. replaced) and metadata should be refreshed.
+- **Error**: analysis failed (often due to missing/invalid API key or network/provider issues).
+
+---
+
+## 🧭 Common Workflows
+
+### 1) Upload a file and use it in a card
+
+1. Upload a file in the File Manager (or attach directly from the card).
+2. Attach it to a card.
+3. Generate an answer — the file will be used as context.
+
+### 2) Update a document (Replace) and refresh affected cards
+
+1. In File Manager, choose **Replace** on a file.
+2. Any cards relying on that file may become **stale** (context changed).
+3. Regenerate stale cards to update answers.
+
+### 3) Remove a file from a card vs delete a file from the library
+
+- **Remove from card**: detaches it only from that card (the library file remains available elsewhere).
+- **Trash/Delete in File Manager**: removes the file from the library, which can affect every place it’s used.
+
+### 4) Restore something you deleted by accident
+
+1. Open File Manager → **Trash** tab.
+2. Click **Restore** on the file.
 
 ---
 

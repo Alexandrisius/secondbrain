@@ -10,22 +10,16 @@ export interface ChatRequestParams {
   context?: string;
   /** Системная инструкция холста (добавляется к глобальной) */
   systemPrompt?: string;
-  /**
-   * ID текущего холста.
-   *
-   * Нужен серверу (/api/chat), чтобы найти файлы вложений:
-   * data/attachments/<canvasId>/<attachmentId>
-   */
-  canvasId?: string;
 
   /**
    * Вложения текущей карточки.
    *
    * ВАЖНО:
-   * - Мы передаём только метаданные + attachmentId.
-   * - Сервер сам читает файл с диска и решает:
-   *   - text → добавить в system-context
-   *   - image → добавить в multimodal user content
+   * - `attachmentId` теперь = `docId` из глобальной библиотеки (data/library/**).
+   * - Клиент передаёт только метаданные + docId.
+   * - Сервер (/api/chat) сам читает файл ТОЛЬКО из библиотеки и решает:
+   *   - text → добавить как system-context
+   *   - image → добавить как multimodal parts (image_url)
    */
   attachments?: NodeAttachment[];
   apiKey: string;
@@ -93,7 +87,6 @@ export async function streamChatCompletion({
   messages,
   context,
   systemPrompt,
-  canvasId,
   attachments,
   apiKey,
   apiBaseUrl,
@@ -108,7 +101,6 @@ export async function streamChatCompletion({
       messages,
       context,
       systemPrompt, // Передаём системную инструкцию холста
-      canvasId,
       attachments,
       apiKey,
       apiBaseUrl,
