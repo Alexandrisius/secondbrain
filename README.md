@@ -269,11 +269,18 @@ This analysis runs:
 
 ## 🔑 API Setup
 
-To use the application, **you need your own API key** from your chosen provider (OpenAI, OpenRouter, etc.).
+To use the application, you can either provide your own API key **or** start without one using **Demo Mode**.
+
+- **With your own API key**: you get stable access to the provider/models you choose.
+- **Without an API key (Demo Mode)**:
+  - Chat & summaries are routed through **OpenRouter** and the app automatically picks a random **free model** (model id ends with `:free`).
+  - Embeddings use **`qwen/qwen3-embedding-8b`** (so NeuroSearch and reindexing work in demo mode).
+  - **Image attachments are not used** in demo mode (free models usually don’t support vision inputs).
+  - The free pool may be **rate-limited** — in that case just wait and retry.
 
 1. Open settings (⚙️) in the top right corner.
 2. Select a provider (OpenRouter or Custom).
-3. Enter your API key.
+3. (Optional) Enter your API key to disable Demo Mode.
 4. Select a chat model and (optionally) an embeddings model.
 
 ### 🔐 API key storage (Security)
@@ -286,13 +293,6 @@ NeuroCanvas supports two modes for API key storage:
 Notes:
 - This protects you from the common “plain text in localStorage” issue.
 - It does **not** protect against malware on your machine.
-
-> 🎁 **Need a test key?**
-> 
-> If you don't have a key, I'm ready to provide a **free test key** in exchange for a Star ⭐️ on this repository!
-> 
-> 1. Give this project a Star ⭐.
-> 2. Email me at: **klim95alex@yandex.by** with the subject "NeuroCanvas Key".
 
 ---
 
