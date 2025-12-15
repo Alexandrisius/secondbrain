@@ -49,6 +49,19 @@ export const en: TranslationKeys = {
     apiKeyDescription: 'Enter the API key from your selected provider.',
     apiKeyPlaceholder: 'sk-...',
     apiKeyRequired: 'API key is required for the application to work. Generation is impossible without it.',
+    /**
+     * Demo Mode notice (when the user did not provide an API key).
+     *
+     * Important:
+     * - This is informational, not an error.
+     * - In demo mode, server routes automatically use the built-in OpenRouter demo key.
+     *
+     * Demo behavior:
+     * - Chat/Summary: dynamically picks any available free model (id ends with `:free`)
+     * - Embeddings: forced to qwen/qwen3-embedding-8b (project requirement)
+     */
+    apiKeyDemoModeNotice:
+      'No key provided — Demo Mode is enabled: chat/summaries use OpenRouter with any free model (:free), embeddings use qwen/qwen3-embedding-8b. For long-term use, enter your own API key.',
     showKey: 'Show key',
     hideKey: 'Hide key',
 
@@ -276,6 +289,19 @@ export const en: TranslationKeys = {
     // some context items (nodes/attachments), i.e. the context is "configured".
     contextHasExclusions: 'Context has exclusions',
 
+    // -------------------------------------------------------------------------
+    // DEMO MODE (UX)
+    // -------------------------------------------------------------------------
+    // Short banner label (single line).
+    demoModeBannerTitle: 'Demo mode',
+    // Details are shown only via tooltip (hover on the banner icon/text).
+    demoModeBannerDescription:
+      'Running without a user API key: the server uses OpenRouter demo access and picks a random free model (:free). The selected model may change over time.',
+    demoModeBannerModel: 'model: {model}',
+    demoModeModelAuto: 'auto (:free)',
+    demoModeImagesIgnored:
+      'Image attachments are not used in demo mode (free models usually do not support image input). To use images, enter your own API key and select a vision-capable model.',
+
     // Stale state
     staleContext: 'Context changed — regeneration required',
     staleConnections: 'Connections changed — regeneration required',
@@ -295,6 +321,19 @@ export const en: TranslationKeys = {
 
     // Errors
     apiKeyMissing: 'API key not specified. Please add it in settings.',
+
+    /**
+     * "Soft" notices for generation issues.
+     *
+     * We intentionally do NOT show raw technical errors in the UI:
+     * - upstream errors can be noisy/frequent (especially in Demo Mode),
+     * - raw messages often contain JSON/HTTP details that are not user-friendly.
+     */
+    generationNoticeTemporary: 'Unable to get a response right now. Please try again.',
+    generationNoticeAuth: 'Invalid API key or access denied. Please check your settings.',
+    generationNoticeRateLimit: 'Too many requests. Please wait a bit and try again.',
+    generationNoticeNetwork: 'Cannot reach the API. Check your internet connection and try again.',
+    generationNoticeTimeout: 'Request timed out. Please try again.',
 
     // Stop generation
     stopGeneration: 'Stop generation',

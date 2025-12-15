@@ -180,7 +180,18 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
       async (queryText: string) => {
         // Функция для получения эмбеддинга запроса
         // Если провайдер не поддерживает эмбеддинги - возвращаем null
-        if (!apiKey || !supportsEmbeddings) return null;
+        // =========================================================================
+        // DEMO MODE (NO USER API KEY) — semantic search should still work
+        // =========================================================================
+        //
+        // Раньше мы требовали apiKey на клиенте, иначе семантический поиск отключался.
+        // Теперь /api/embeddings умеет demo fallback:
+        // - если apiKey пустой → OpenRouter demo key + qwen/qwen3-embedding-8b.
+        //
+        // Поэтому:
+        // - проверяем только supportsEmbeddings,
+        // - apiKey допускаем пустой строкой.
+        if (!supportsEmbeddings) return null;
 
         try {
           const response = await fetch('/api/embeddings', {
@@ -188,7 +199,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               text: queryText,
-              apiKey,
+              apiKey: apiKey || '',
               embeddingsBaseUrl,
               // Модель эмбеддингов из настроек
               model: embeddingsModel,
@@ -447,11 +458,15 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     if (!searchQuery.trim() || searchQuery.length < MIN_QUERY_LENGTH) {
       return;
     }
-
-    if (!apiKey) {
-      setError(t.node.apiKeyMissing);
-      return;
-    }
+    // =========================================================================
+    // DEMO MODE (NO USER API KEY)
+    // =========================================================================
+    //
+    // Раньше "full search" (с семантикой) был невозможен без apiKey.
+    // Теперь серверный /api/embeddings поддерживает demo fallback, поэтому:
+    // - не блокируем поиск на клиенте,
+    // - а в случае, если embeddings реально недоступны (ошибка/лимит),
+    //   пользователь просто увидит обычное сообщение об ошибке.
 
     setIsFullSearching(true);
     setError(null);
@@ -482,7 +497,7 @@ export function SearchBar({ isOpen, onClose, onSelectResult }: SearchBarProps) {
     } finally {
       setIsFullSearching(false);
     }
-  }, [apiKey, activeCanvasId, searchAllCanvases, t, initSearchEngine]);
+  }, [activeCanvasId, searchAllCanvases, t, initSearchEngine]);
 
   /**
    * Обработчик изменения запроса

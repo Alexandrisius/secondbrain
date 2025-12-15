@@ -20,6 +20,20 @@ import { promises as fs } from 'fs';
 import { getLibraryFilePath, getLibraryTrashFilePath } from '@/lib/paths';
 import { readLibraryIndex } from '@/lib/libraryIndex';
 import { isValidDocId } from '@/lib/libraryFs';
+import {
+  getDemoOpenRouterApiKey,
+  isDemoModeApiKey,
+  OPENROUTER_BASE_URL,
+  pickDemoChatModelId,
+  pickAnotherDemoFreeChatModelId,
+  markDemoFreeModelBad,
+  getDemoFreeRateLimitedUntilMs,
+  isDemoFreeRateLimitedNow,
+  setDemoFreeRateLimitedUntilMs,
+  tryGetRateLimitResetMsFromErrorText,
+  tryGetRateLimitResetMsFromHeaders,
+  getWaitSecondsUntil,
+} from '@/lib/openrouterDemo';
 
 // =============================================================================
 // NEXT.JS ROUTE КОНФИГУРАЦИЯ (для streaming)
@@ -59,6 +73,99 @@ const DEFAULT_MODEL = DEFAULT_CHAT_MODEL_ID;
  * Таймаут запроса в миллисекундах
  */
 const REQUEST_TIMEOUT = 60000; // 60 секунд
+
+// =============================================================================
+// SSE HELPERS (локальные "сообщения", без HTTP ошибок)
+// =============================================================================
+//
+// Продуктовое требование (из вашего запроса):
+// - пользователь НЕ должен видеть "красные ошибки" от сервера/провайдера,
+//   особенно в Demo Mode, где бесплатные модели могут вести себя нестабильно.
+//
+// Почему вообще возможны "ошибки":
+// - upstream провайдер (OpenRouter free / custom API) может вернуть 4xx/5xx,
+// - сеть может отвалиться,
+// - может случиться таймаут,
+// - бесплатная модель может быть несовместима с system/developer инструкциями.
+//
+// Как решаем:
+// - вместо возврата JSON ошибки + HTTP статус (который клиент покажет как error),
+//   мы в "мягких" сценариях (Demo Mode) возвращаем SSE 200 и отправляем короткое
+//   системное сообщение (как будто это ответ ассистента).
+//
+// Важно:
+// - Клиентский парсер SSE в `useNodeGeneration` ожидает OpenAI-compatible streaming chunks:
+//   data: {"choices":[{"delta":{"content":"..."}}]}\n\n
+//   data: [DONE]\n\n
+// - Поэтому мы генерируем именно такой формат.
+const SSE_HEADERS_BASE: Record<string, string> = {
+  'Content-Type': 'text/event-stream',
+  // Отключаем кеширование (иначе могут быть странные буферы/повторы)
+  'Cache-Control': 'no-cache, no-store, must-revalidate',
+  // Держим соединение открытым (SSE)
+  'Connection': 'keep-alive',
+  // Отключаем буферизацию в nginx/reverse-proxy (если вдруг будет)
+  'X-Accel-Buffering': 'no',
+  // Отключаем сжатие: оно может буферизировать чанки и ломать "живой" стриминг
+  'Content-Encoding': 'none',
+};
+
+/**
+ * Создаёт ReadableStream, который отдаёт ОДНО сообщение ассистента как SSE stream.
+ *
+ * Важно:
+ * - Мы отправляем JSON chunk в формате OpenAI streaming,
+ *   чтобы клиентский код корректно "достал" delta.content.
+ * - Затем обязательно отправляем [DONE], иначе клиент может ждать конца стрима.
+ */
+function buildSingleAssistantMessageSseStream(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const payload = JSON.stringify({
+    choices: [{ delta: { content: String(text || '') } }],
+  });
+
+  const sse = [
+    `data: ${payload}\n\n`,
+    'data: [DONE]\n\n',
+  ].join('');
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(sse));
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Формирует "мягкий" SSE-ответ (HTTP 200), который не выглядит как ошибка.
+ *
+ * Это критично для UX:
+ * - клиент НЕ получит HttpError,
+ * - не покажет красный error-блок,
+ * - но пользователь всё равно увидит понятное сообщение.
+ */
+function makeLocalSseAssistantMessageResponse(params: {
+  text: string;
+  demoMode: boolean;
+  modelUsed: string;
+  demoDidSkipImages: boolean;
+  extraHeaders?: Record<string, string>;
+}): Response {
+  return new Response(buildSingleAssistantMessageSseStream(params.text), {
+    status: 200,
+    headers: {
+      ...SSE_HEADERS_BASE,
+      // ===================================================================
+      // META HEADERS (for UI)
+      // ===================================================================
+      'X-NeuroCanvas-Demo-Mode': params.demoMode ? '1' : '0',
+      'X-NeuroCanvas-Model-Used': String(params.modelUsed || ''),
+      'X-NeuroCanvas-Demo-Ignored-Images': params.demoDidSkipImages ? '1' : '0',
+      ...(params.extraHeaders || {}),
+    },
+  });
+}
 
 // =============================================================================
 // ТИПЫ
@@ -180,26 +287,50 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    // Проверка наличия API ключа
-    if (!body.apiKey) {
-      return NextResponse.json(
-        { 
-          error: 'API ключ не указан',
-          details: 'Пожалуйста, добавьте API ключ в настройках приложения',
-        },
-        { status: 401 }
-      );
-    }
-    
-    // Используем baseUrl из запроса или URL по умолчанию
-    const apiBaseUrl = body.apiBaseUrl || DEFAULT_API_BASE_URL;
-    
+
+    // =========================================================================
+    // DEMO MODE (NO USER API KEY) — Desktop-friendly "try without key"
+    // =========================================================================
+    //
+    // Требование проекта:
+    // - Пользователь должен иметь возможность протестировать приложение,
+    //   даже если у него нет собственного API key.
+    //
+    // Как реализуем:
+    // - Если apiKey пустой, мы включаем demoMode и используем:
+    //   - встроенный OpenRouter demo key (обфусцированный),
+    //   - baseUrl = OpenRouter,
+    //   - модель = любая доступная `:free` (выбирается динамически).
+    //
+    // ВАЖНО (best-effort совместимость с локальными серверами):
+    // - Некоторые OpenAI-compatible сервера (LM Studio/ollama proxy) могут работать БЕЗ ключа.
+    // - Если пользователь явно указал локальный baseUrl (localhost/127.0.0.1),
+    //   мы НЕ должны насильно включать demoMode только из-за пустого apiKey.
+    //
+    // Поэтому demoMode включаем только когда apiKey пустой И baseUrl выглядит как "удалённый провайдер"
+    // (в MVP: vsellm.ru или openrouter.ai, либо baseUrl отсутствует).
+    const incomingApiKey = String(body.apiKey ?? '').trim();
+    const incomingBaseUrlRaw = String(body.apiBaseUrl ?? '').trim();
+    const incomingBaseUrl = incomingBaseUrlRaw || DEFAULT_API_BASE_URL;
+
+    const isLocalHostLike =
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(incomingBaseUrl);
+    const isKnownRemoteProvider =
+      /openrouter\.ai/i.test(incomingBaseUrl) || /api\.vsellm\.ru/i.test(incomingBaseUrl);
+
+    const demoMode = isDemoModeApiKey(incomingApiKey) && !isLocalHostLike && (isKnownRemoteProvider || !incomingBaseUrlRaw);
+
+    // Итоговые значения, с которыми реально пойдём в upstream API
+    const apiKeyToUse = demoMode ? getDemoOpenRouterApiKey() : incomingApiKey;
+    const apiBaseUrl = demoMode ? OPENROUTER_BASE_URL : incomingBaseUrl;
+
+    // Модель:
+    // - не демо → берём из запроса/дефолта (как раньше)
+    // - демо → выбираем auto `:free` (или используем присланную `...:free`)
+    const model = demoMode ? await pickDemoChatModelId(body.model) : (body.model || DEFAULT_MODEL);
+
     // Формируем полный URL для chat/completions
     const apiUrl = `${apiBaseUrl}/chat/completions`;
-    
-    // Используем модель из запроса или модель по умолчанию
-    const model = body.model || DEFAULT_MODEL;
     
     // =========================================================================
     // ПОДГОТОВКА СООБЩЕНИЙ
@@ -309,6 +440,10 @@ export async function POST(request: NextRequest) {
     // Массив multimodal-контента для изображений (картинка + описание)
     // Теперь используем ContentPart[] вместо ImageUrlPart[], чтобы добавлять и text, и image_url
     const imageParts: ContentPart[] = [];
+    // Demo Mode: изображения не отправляем в LLM (free модели часто не vision-capable).
+    // Вместо этого аккуратно добавим system-заметку, что изображения были проигнорированы.
+    const demoSkippedImageNotes: string[] = [];
+    let demoDidSkipImages = false;
 
     // Лимит по “примерным токенам” для текстовых файлов
     // (не путать с max_tokens генерации — это про “входной контекст”).
@@ -372,6 +507,40 @@ export async function POST(request: NextRequest) {
 
         // 1) Изображение → превращаем в data URL и добавляем image_url part + описание
         if (detectedMime && ALLOWED_IMAGE_MIMES.has(detectedMime)) {
+          // =====================================================================
+          // DEMO MODE: IMAGE INPUT IS DISABLED
+          // =====================================================================
+          //
+          // Проблема (как на скриншоте пользователя):
+          // - В demo режиме мы выбираем любую `:free` модель.
+          // - Большинство бесплатных моделей НЕ поддерживают image input.
+          // - Если отправить image_url parts → OpenRouter может вернуть 404 вида:
+          //   "No endpoints found that support image input".
+          //
+          // Решение:
+          // - В demo режиме НЕ отправляем изображение вообще (не делаем base64),
+          // - Вместо этого добавляем компактную system-заметку,
+          //   что изображения не были учтены.
+          //
+          // Это делает UX честным и предотвращает "странные" ошибки.
+          if (demoMode) {
+            demoDidSkipImages = true;
+            const displayName = safeNameForContext(a?.originalName, doc.name || attachmentId);
+            const imageDescription = (doc.analysis?.image?.description || '').trim();
+
+            demoSkippedImageNotes.push(
+              [
+                `--- Изображение (игнорировано в Demo Mode): ${displayName} ---`,
+                `ID: ${attachmentId}`,
+                imageDescription ? '' : '(Описание изображения ещё не сгенерировано.)',
+                imageDescription ? `Описание (из библиотеки):\n${imageDescription}` : '',
+              ]
+                .filter(Boolean)
+                .join('\n')
+            );
+            continue;
+          }
+
           const base64 = buf.toString('base64');
           const dataUrl = `data:${detectedMime};base64,${base64}`;
 
@@ -545,6 +714,41 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // -----------------------------------------------------------------------
+      // DEMO MODE NOTICE: IMAGES WERE IGNORED
+      // -----------------------------------------------------------------------
+      //
+      // Важно:
+      // - даже если текстовых вложений нет, мы всё равно хотим честно сообщить
+      //   модели (и косвенно пользователю через ответы), что изображения НЕ были учтены.
+      //
+      // Почему это system message:
+      // - оно не должно смешиваться с пользовательским запросом,
+      // - и должно иметь приоритет над попытками "галлюцинировать" содержание картинки.
+      if (demoMode && demoSkippedImageNotes.length > 0) {
+        const insertAt =
+          Math.max(
+            0,
+            messages.findIndex((m) => m.role === 'user') === -1
+              ? messages.length
+              : messages.findIndex((m) => m.role === 'user')
+          );
+
+        const demoImagesNotice = [
+          '=== DEMO MODE NOTICE: IMAGE ATTACHMENTS WERE NOT SENT ===',
+          '',
+          'The user attached images, but Demo Mode uses a free model that may not support image input.',
+          'Therefore the images were NOT provided to you.',
+          '',
+          'If the user asks about image content, ask them to enter their own API key and use a vision-capable model.',
+          '',
+          'Images list (metadata/description only):',
+          demoSkippedImageNotes.join('\n\n'),
+        ].join('\n');
+
+        messages.splice(insertAt, 0, { role: 'system', content: demoImagesNotice });
+      }
+
       // Если есть изображения — превращаем последнее user сообщение в multimodal.
       if (imageParts.length > 0) {
         const lastUserIndex = (() => {
@@ -607,33 +811,237 @@ export async function POST(request: NextRequest) {
     // Создаём AbortController для таймаута
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-    
+
+    // В demo режиме мы можем менять модель в ходе failover.
+    // Поэтому держим её в let, чтобы:
+    // - писать в X-NeuroCanvas-Model-Used "реально использованную",
+    // - и корректно логировать/диагностировать.
+    let modelUsed = model;
+
+    /**
+     * Общий helper: вернуть SSE 200 с коротким системным сообщением.
+     *
+     * Важно:
+     * - Перед возвратом обязательно чистим таймер, чтобы не было утечек setTimeout.
+     */
+    const returnLocalSse = (text: string, extraHeaders?: Record<string, string>): Response => {
+      clearTimeout(timeoutId);
+      return makeLocalSseAssistantMessageResponse({
+        text,
+        demoMode,
+        modelUsed,
+        demoDidSkipImages,
+        extraHeaders,
+      });
+    };
+
     try {
       console.log(`[Chat API] Запрос к ${apiUrl}, модель: ${model}, corporateMode: ${body.corporateMode || false}`);
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Авторизация через Bearer token
-          'Authorization': `Bearer ${body.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: model,
-          messages,
-          temperature: body.temperature ?? 0.7,
-          max_tokens: body.maxTokens ?? 2048,
-          stream: true, // Включаем streaming
-        }),
-        signal: controller.signal,
-      });
-      
+
+      // ---------------------------------------------------------------------
+      // Demo mode local cooldown (если недавно получили 429 free-models-per-min)
+      // ---------------------------------------------------------------------
+      if (demoMode && isDemoFreeRateLimitedNow()) {
+        const until = getDemoFreeRateLimitedUntilMs();
+        const waitSec = getWaitSecondsUntil(until);
+        // ВАЖНО:
+        // - Раньше мы отдавали 429 JSON → клиент ловил HttpError и показывал "ошибку".
+        // - Теперь по требованию UX возвращаем SSE 200 с понятным сообщением,
+        //   чтобы пользователь НЕ видел "ошибку", а видел инструкцию что делать.
+        return returnLocalSse(
+          `Демо режим: лимит бесплатных моделей (free-models-per-min). Подождите ~${waitSec} сек и попробуйте снова.`,
+          {
+            // Для будущего UI (countdown):
+            'X-NeuroCanvas-Demo-RateLimit-Until': String(until),
+            'X-NeuroCanvas-Demo-RateLimit-Wait-Seconds': String(waitSec),
+          }
+        );
+      }
+
+      /**
+       * Один запрос к upstream (OpenAI-compatible chat/completions).
+       *
+       * Важно:
+       * - В demo режиме мы можем автоматически попробовать другую `:free` модель,
+       *   если выбранная модель несовместима с нашими system/developer инструкциями.
+       */
+      const doFetch = async (modelToUse: string) => {
+        return await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // Авторизация через Bearer token
+            ...(apiKeyToUse
+              ? { 'Authorization': `Bearer ${apiKeyToUse}` }
+              : {}),
+
+            // Best-practice заголовки OpenRouter (не секреты).
+            // Они помогают OpenRouter корректно атрибутировать трафик.
+            ...( /openrouter\.ai/i.test(apiBaseUrl)
+              ? {
+                  'HTTP-Referer': 'https://neurocanvas.local',
+                  'X-Title': demoMode ? 'NeuroCanvas (Demo Mode)' : 'NeuroCanvas',
+                }
+              : {}),
+          },
+          body: JSON.stringify({
+            model: modelToUse,
+            messages,
+            temperature: body.temperature ?? 0.7,
+            max_tokens: body.maxTokens ?? 2048,
+            stream: true, // Включаем streaming
+          }),
+          signal: controller.signal,
+        });
+      };
+
+      // ---------------------------------------------------------------------
+      // Demo-mode fallback: перебор free моделей при "несовместимой" модели
+      // ---------------------------------------------------------------------
+      //
+      // Наблюдаемая проблема (как в вашем логе):
+      // - OpenRouter может выбрать `:free` модель, у которой провайдер
+      //   отклоняет "developer/system instruction" и возвращает 400.
+      //
+      // Решение:
+      // - если demoMode и response.status === 400 и текст ошибки похож на:
+      //   "Developer instruction is not enabled ..."
+      //   → помечаем модель как плохую и пробуем 1-2 другие free модели.
+      //
+      // ВАЖНО:
+      // - мы делаем это ДО начала streaming (response.ok === false, body нам не нужен),
+      // - чтобы пользователь не видел “рандомные” 400 при демо-тесте.
+      // ВАЖНО:
+      // - В demo-ветке мы присваиваем response внутри цикла.
+      // - Чтобы TypeScript не ругался на "used before assigned", держим nullable тип
+      //   и после цикла делаем явную проверку.
+      let response: Response | null = null;
+      let lastErrorText: string | null = null;
+
+      // ---------------------------------------------------------------------
+      // Demo-mode FAILOVER: при ЛЮБОЙ ошибке пробуем другую free модель
+      // ---------------------------------------------------------------------
+      //
+      // Требование UX:
+      // - "при любой ошибке сервера пробовать другую модель"
+      // - "не показывать ошибки" → поэтому если всё плохо, всё равно возвращаем SSE 200
+      //
+      // Почему это делаем ТОЛЬКО в demoMode:
+      // - в обычном режиме пользователь явно выбрал модель и ключ,
+      //   и "тихо подменять" модель неправильно (может менять качество/стоимость/политику).
+      const DEMO_MAX_MODEL_TRIES = 4; // 1 исходная + 3 fallback
+      const triedModels = new Set<string>();
+
+      if (demoMode) {
+        for (let attempt = 0; attempt < DEMO_MAX_MODEL_TRIES; attempt++) {
+          triedModels.add(modelUsed);
+          response = await doFetch(modelUsed);
+
+          if (response.ok) {
+            lastErrorText = null;
+            break;
+          }
+
+          // Важно: читаем body один раз (Response text() потребляет поток).
+          lastErrorText = await response.text().catch(() => '');
+
+          // 429: rate limit → смена модели не поможет (лимит на free пул),
+          // поэтому ставим cooldown и возвращаем "мягкое" SSE сообщение.
+          if (response.status === 429) {
+            const resetFromHeaders = tryGetRateLimitResetMsFromHeaders(response.headers);
+            const resetFromBody = tryGetRateLimitResetMsFromErrorText(lastErrorText);
+            const resetAt = resetFromHeaders || resetFromBody || (Date.now() + 60_000);
+            setDemoFreeRateLimitedUntilMs(resetAt);
+            const waitSec = getWaitSecondsUntil(resetAt);
+
+            return returnLocalSse(
+              `Демо режим: лимит бесплатных моделей (free-models-per-min). Подождите ~${waitSec} сек и попробуйте снова.`,
+              {
+                'X-NeuroCanvas-Demo-RateLimit-Until': String(resetAt),
+                'X-NeuroCanvas-Demo-RateLimit-Wait-Seconds': String(waitSec),
+              }
+            );
+          }
+
+          // 401/403: проблема авторизации/доступа. Смена модели не исправит.
+          // Возвращаем мягкое сообщение (без "ошибки").
+          if (response.status === 401 || response.status === 403) {
+            return returnLocalSse('Демо режим: демо‑доступ временно недоступен. Попробуйте позже или укажите свой API‑ключ.');
+          }
+
+          // -----------------------------------------------------------------
+          // Badlist: помечаем модель как "плохую" на время.
+          // -----------------------------------------------------------------
+          //
+          // Мы делаем это для ЛЮБОЙ ошибки, чтобы:
+          // - не выбирать ту же модель снова в этом же запросе,
+          // - уменьшить шанс "вечных" циклов на одной проблемной модели.
+          //
+          // TTL:
+          // - если ошибка похожа на "instruction not enabled" → 1 час (это обычно устойчивое ограничение провайдера)
+          // - для остальных ошибок → 10 минут (это может быть временное)
+          const looksLikeUnsupportedInstructions =
+            response.status === 400 &&
+            (
+              /Developer instruction is not enabled/i.test(lastErrorText) ||
+              /developer instruction/i.test(lastErrorText) ||
+              /system instruction/i.test(lastErrorText)
+            );
+
+          const badTtlMs = looksLikeUnsupportedInstructions ? 60 * 60 * 1000 : 10 * 60 * 1000;
+          markDemoFreeModelBad(modelUsed, badTtlMs);
+
+          // Если попытки закончились — выходим и ниже вернём мягкий ответ.
+          const hasMoreAttempts = attempt < DEMO_MAX_MODEL_TRIES - 1;
+          if (!hasMoreAttempts) break;
+
+          // Выбираем следующую free модель, исключая уже пробованные.
+          try {
+            const nextModel = await pickAnotherDemoFreeChatModelId({
+              apiKeyForModelsCall: apiKeyToUse,
+              exclude: triedModels,
+            });
+            modelUsed = nextModel;
+          } catch (e) {
+            // Если что-то пошло не так при выборе модели (например, /models недоступен),
+            // прекращаем перебор и вернём мягкий ответ ниже.
+            console.warn('[Chat API] Demo Mode: не удалось выбрать другую free модель для failover:', e);
+            break;
+          }
+        }
+
+        if (!response) {
+          return returnLocalSse('Демо режим: временная ошибка. Попробуйте ещё раз чуть позже.');
+        }
+      } else {
+        // Не демо: один запрос, без подмены модели.
+        response = await doFetch(modelUsed);
+      }
+
+      // Safety: теоретически response может быть null только при очень странном control-flow.
+      // Лучше вернуть мягкое сообщение, чем "ронять" весь endpoint.
+      if (!response) {
+        return returnLocalSse('Временная ошибка сервера. Попробуйте ещё раз чуть позже.');
+      }
+
       clearTimeout(timeoutId);
-      
-      // Проверяем статус ответа
+
+      // Проверяем статус ответа (после возможных demo fallback ретраев)
       if (!response.ok) {
-        const errorText = await response.text();
+        // Если мы уже читали body (lastErrorText), второй раз читать нельзя.
+        const errorText = lastErrorText ?? await response.text().catch(() => '');
         console.error('API error:', errorText);
+
+        // Demo Mode: НЕ возвращаем "ошибки" в UI. Даже если ничего не помогло —
+        // отдаём мягкое SSE сообщение, чтобы пользователь НЕ видел красный error.
+        if (demoMode) {
+          // Мы не включаем сюда raw errorText, чтобы:
+          // - не показывать пользователю "простыню",
+          // - не палить лишние внутренности провайдера.
+          return returnLocalSse(
+            'Демо режим: сейчас не удалось получить ответ даже после попыток с разными бесплатными моделями. Попробуйте ещё раз через минуту.'
+          );
+        }
         
         // Специальная обработка ошибки авторизации
         if (response.status === 401) {
@@ -657,6 +1065,10 @@ export async function POST(request: NextRequest) {
       
       // Проверяем наличие body для streaming
       if (!response.body) {
+        // В demo режиме — опять же, не "ошибка", а мягкое сообщение.
+        if (demoMode) {
+          return returnLocalSse('Демо режим: провайдер вернул пустой ответ. Попробуйте ещё раз.');
+        }
         return NextResponse.json(
           { error: 'Нет ответа от API' },
           { status: 500 }
@@ -688,6 +1100,20 @@ export async function POST(request: NextRequest) {
           'X-Accel-Buffering': 'no',
           // Отключаем сжатие - оно может буферизировать чанки
           'Content-Encoding': 'none',
+
+          // ===================================================================
+          // META HEADERS (for UI)
+          // ===================================================================
+          //
+          // Эти заголовки нужны только нашему клиенту (same-origin),
+          // чтобы UI мог:
+          // - показать контрастный баннер Demo Mode,
+          // - отобразить фактически использованную модель (auto free),
+          // - предупредить, что изображения были проигнорированы.
+          'X-NeuroCanvas-Demo-Mode': demoMode ? '1' : '0',
+          // Если demo-mode делал перебор моделей, здесь окажется реально использованная.
+          'X-NeuroCanvas-Model-Used': String(modelUsed || ''),
+          'X-NeuroCanvas-Demo-Ignored-Images': demoDidSkipImages ? '1' : '0',
         },
       });
       
@@ -705,6 +1131,9 @@ export async function POST(request: NextRequest) {
       
       // Обработка ошибки таймаута
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        if (demoMode) {
+          return returnLocalSse('Демо режим: превышено время ожидания ответа. Попробуйте ещё раз чуть позже.');
+        }
         return NextResponse.json(
           { error: 'Превышено время ожидания ответа от API' },
           { status: 504 }
@@ -715,6 +1144,9 @@ export async function POST(request: NextRequest) {
       if (fetchError instanceof Error && 
           (fetchError.message.includes('ECONNREFUSED') || 
            fetchError.message.includes('fetch failed'))) {
+        if (demoMode) {
+          return returnLocalSse('Демо режим: не удалось подключиться к API. Проверьте интернет и попробуйте ещё раз.');
+        }
         return NextResponse.json(
           { 
             error: 'Не удалось подключиться к API',
@@ -729,6 +1161,11 @@ export async function POST(request: NextRequest) {
           (fetchError.message.includes('certificate') || 
            fetchError.message.includes('SSL') ||
            fetchError.message.includes('CERT'))) {
+        if (demoMode) {
+          return returnLocalSse(
+            'Демо режим: ошибка SSL сертификата. Если вы в корпоративной сети — включите "Корпоративный режим" в настройках.'
+          );
+        }
         return NextResponse.json(
           { 
             error: 'Ошибка SSL сертификата',

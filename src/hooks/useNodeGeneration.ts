@@ -7,8 +7,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useCanvasStore } from '@/store/useCanvasStore';
 import { useSettingsStore, selectApiKey, selectApiBaseUrl, selectModel, selectCorporateMode, selectUseSummarization, selectEmbeddingsBaseUrl } from '@/store/useSettingsStore';
 import { streamChatCompletion, generateSummary, HttpError } from '@/services/aiService';
-import { useTranslation } from '@/lib/i18n';
 import type { NeuroNode, NodeAttachment } from '@/types/canvas';
+import { useTranslation } from '@/lib/i18n';
 
 interface UseNodeGenerationProps {
   id: string;
@@ -95,11 +95,32 @@ const isAbortError = (err: unknown): boolean => {
 /**
  * Какие HTTP-статусы считаем временными и достойными ретрая.
  */
-const isRetryableHttpStatus = (status: number): boolean => {
+const isRetryableHttpStatus = (status: number, errorMessage?: string): boolean => {
   // 408: request timeout (промежуточные прокси, gateway)
   if (status === 408) return true;
   // 429: rate limit
-  if (status === 429) return true;
+  if (status === 429) {
+    // -----------------------------------------------------------------------
+    // DEMO MODE RATE LIMIT (free-models-per-min)
+    // -----------------------------------------------------------------------
+    //
+    // В demo режиме OpenRouter free пул может ограничивать частоту запросов.
+    // В таких случаях авторетрай только ухудшает ситуацию:
+    // - он "съедает" попытки,
+    // - увеличивает нагрузку,
+    // - и всё равно не успевает до reset.
+    //
+    // Поэтому:
+    // - если в тексте ошибки есть явный маркер demo rate limit — НЕ ретраим.
+    //
+    // Маркеры:
+    // - error: "DEMO_RATE_LIMIT" (наш серверный код)
+    // - free-models-per-min (текст OpenRouter)
+    const msg = String(errorMessage || '');
+    if (/DEMO_RATE_LIMIT/i.test(msg)) return false;
+    if (/free-models-per-min/i.test(msg)) return false;
+    return true;
+  }
   // 5xx: проблемы upstream/серверные временные ошибки
   if (status >= 500 && status <= 599) return true;
   return false;
@@ -166,7 +187,7 @@ export const useNodeGeneration = ({
   setIsAnswerExpanded
 }: UseNodeGenerationProps) => {
   const { t } = useTranslation();
-  
+
   // Zustand actions
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const saveContextHash = useCanvasStore((s) => s.saveContextHash);
@@ -263,7 +284,17 @@ export const useNodeGeneration = ({
    * Генерация эмбеддинга (фоновая)
    */
   const handleGenerateEmbedding = useCallback(async (responseText: string, summary?: string) => {
-    if (!apiKey || !embeddingsBaseUrl || !embeddingsModel) return;
+    // =========================================================================
+    // DEMO MODE (NO USER API KEY) — embeddings
+    // =========================================================================
+    //
+    // Раньше мы полностью отключали эмбеддинги без apiKey.
+    // Теперь /api/embeddings на сервере поддерживает demo fallback:
+    // - если apiKey пустой → OpenRouter demo key + qwen/qwen3-embedding-8b.
+    //
+    // Поэтому здесь мы блокируемся только если нет URL/модели,
+    // а apiKey допускаем пустым.
+    if (!embeddingsBaseUrl || !embeddingsModel) return;
 
     try {
         const { generateAndSaveEmbedding } = await import('@/lib/search/semantic');
@@ -276,7 +307,8 @@ export const useNodeGeneration = ({
                 canvasId,
                 localPrompt,
                 responseText,
-                apiKey,
+                // ВАЖНО: apiKey может быть пустым → сервер включит demo fallback.
+                apiKey || '',
                 embeddingsBaseUrl,
                 corporateMode,
                 embeddingsModel,
@@ -345,7 +377,21 @@ export const useNodeGeneration = ({
     let lastVisibleText = '';
 
     try {
-      if (!apiKey) throw new Error(t.node.apiKeyMissing);
+      // =========================================================================
+      // DEMO MODE (NO USER API KEY)
+      // =========================================================================
+      //
+      // Раньше мы жёстко блокировали генерацию без apiKey.
+      // Теперь серверные роуты (/api/chat, /api/summarize) умеют demo fallback:
+      // - если apiKey пустой, сервер подставит встроенный OpenRouter demo key
+      //   и выберет `:free` модель автоматически.
+      //
+      // Поэтому на клиенте мы НЕ бросаем ошибку и позволяем запросу уйти.
+      //
+      // ВАЖНО:
+      // - это применимо именно к Desktop/Demo сценарию;
+      // - если пользователь использует локальный OpenAI-compatible сервер без ключа,
+      //   серверный маршрут тоже постарается не ломать этот кейс (см. /api/chat).
 
       const parentContext = buildParentContext();
 
@@ -454,6 +500,37 @@ export const useNodeGeneration = ({
           corporateMode,
           signal,
         });
+
+        // =========================================================================
+        // DEMO MODE META (from /api/chat response headers)
+        // =========================================================================
+        //
+        // Сервер /api/chat в Demo Mode добавляет meta headers:
+        // - X-NeuroCanvas-Demo-Mode
+        // - X-NeuroCanvas-Model-Used
+        // - X-NeuroCanvas-Demo-Ignored-Images
+        //
+        // Это позволяет UI:
+        // - показать контрастный баннер "Demo Mode",
+        // - вывести фактически использованную модель (auto free),
+        // - аккуратно предупредить, что изображения не учитывались.
+        //
+        // Важно:
+        // - headers читаются сразу после получения Response (ещё до чтения stream),
+        //   чтобы UI мог обновиться мгновенно.
+        try {
+          const demoModeHeader = String(response.headers.get('X-NeuroCanvas-Demo-Mode') || '').trim();
+          const modelUsedHeader = String(response.headers.get('X-NeuroCanvas-Model-Used') || '').trim();
+          const ignoredImagesHeader = String(response.headers.get('X-NeuroCanvas-Demo-Ignored-Images') || '').trim();
+
+          updateNodeData(id, {
+            demoMode: demoModeHeader === '1',
+            modelUsed: modelUsedHeader || null,
+            demoIgnoredImages: ignoredImagesHeader === '1',
+          });
+        } catch {
+          // Best-effort: если по какой-то причине headers недоступны, не ломаем генерацию.
+        }
 
         const reader = response.body?.getReader();
         if (!reader) throw new Error('No reader available');
@@ -601,7 +678,7 @@ export const useNodeGeneration = ({
 
           // Если это HTTP ошибка — ретраим только «временные» статусы.
           const isRetryable = err instanceof HttpError
-            ? isRetryableHttpStatus(err.status)
+            ? isRetryableHttpStatus(err.status, err.message)
             : true; // сетевые/стрим ошибки обычно временные
 
           const hasMoreAttempts = attempt < maxRetries;
@@ -640,8 +717,47 @@ export const useNodeGeneration = ({
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
 
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setError(msg);
+      // =====================================================================
+      // UX: "НЕ ПОКАЗЫВАЕМ ОШИБКИ", показываем мягкое уведомление
+      // =====================================================================
+      //
+      // Пользовательский запрос:
+      // - "Не хочу чтобы вообще мы видели ошибки"
+      //
+      // На практике это означает:
+      // - НЕ показывать raw-технические сообщения (HTTP 500 + JSON),
+      // - НЕ показывать "деструктивный" (красный) алерт,
+      // - а показывать короткое, человекочитаемое уведомление.
+      //
+      // Важно:
+      // - Сервер /api/chat в Demo Mode уже старается возвращать SSE 200 даже при проблемах,
+      //   поэтому сюда чаще попадают:
+      //   - не-demo ошибки (неверный ключ и т.п.)
+      //   - сетевые ошибки/обрывы stream
+      //   - редкие случаи внутренних ошибок.
+      const getUserFacingNotice = (e: unknown): string => {
+        // 1) Наш тип HttpError даёт статус → можно дать более конкретный текст.
+        if (e instanceof HttpError) {
+          if (e.status === 401 || e.status === 403) return t.node.generationNoticeAuth;
+          if (e.status === 429) return t.node.generationNoticeRateLimit;
+          // 5xx: временная проблема upstream/сервера
+          if (e.status >= 500 && e.status <= 599) return t.node.generationNoticeTemporary;
+          return t.node.generationNoticeTemporary;
+        }
+
+        // 2) Обычные ошибки (сетевые/стрим). По тексту иногда можно понять причину,
+        //    но мы намеренно не показываем этот текст пользователю.
+        if (e instanceof Error) {
+          const m = String(e.message || '');
+          if (/timeout/i.test(m)) return t.node.generationNoticeTimeout;
+          if (/ECONNREFUSED|fetch failed/i.test(m)) return t.node.generationNoticeNetwork;
+        }
+
+        return t.node.generationNoticeTemporary;
+      };
+
+      const notice = getUserFacingNotice(err);
+      setError(notice);
 
       // ВАЖНО (по плану): если стрим оборвался и все ретраи исчерпаны,
       // мы сохраняем partial последней попытки, чтобы пользователь не терял результат.
@@ -673,8 +789,8 @@ export const useNodeGeneration = ({
       cascadedChildrenStaleThisAttemptRef.current = false;
     }
   }, [
-    id, localPrompt, apiKey, t.node.apiKeyMissing, buildParentContext, 
-    apiBaseUrl, model, corporateMode, systemPrompt, updateNodeData, saveContextHash, 
+    id, localPrompt, apiKey, buildParentContext, 
+    apiBaseUrl, model, corporateMode, systemPrompt, t, updateNodeData, saveContextHash, 
     onBatchNodeComplete, handleGenerateEmbedding, useSummarization, 
     handleGenerateSummary, setIsAnswerExpanded,
     // STALE v2

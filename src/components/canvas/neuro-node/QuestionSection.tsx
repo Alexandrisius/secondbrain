@@ -32,6 +32,7 @@ import { searchSimilar } from '@/lib/search/semantic';
 import {
   useSettingsStore,
   selectApiKey,
+  selectApiBaseUrl,
   selectEmbeddingsBaseUrl,
   selectCorporateMode,
   selectEmbeddingsModel,
@@ -290,10 +291,10 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
   
   // Settings Store
   const apiKey = useSettingsStore(selectApiKey);
-  // NOTE:
-  // apiBaseUrl/model в этом компоненте не используются напрямую:
-  // - генерация/чатовые запросы делаются через другие слои (useNodeGeneration/aiService),
-  // - но eslint ругается на "unused", поэтому не держим лишние переменные.
+  // apiBaseUrl нужен для определения demo-mode UX:
+  // - если ключ пустой, но baseUrl указывает на localhost, это может быть локальный сервер без ключа,
+  //   и тогда не нужно показывать пользователю демо-предупреждения.
+  const apiBaseUrl = useSettingsStore(selectApiBaseUrl);
   const embeddingsBaseUrl = useSettingsStore(selectEmbeddingsBaseUrl);
   const corporateMode = useSettingsStore(selectCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
@@ -529,17 +530,56 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
    */
   const isContextButtonOrange = data.isStale || hasContextBlocksDisabled;
 
+  // ===========================================================================
+  // DEMO MODE (CLIENT-SIDE HEURISTICS)
+  // ===========================================================================
+  //
+  // Сервер /api/chat сам решает, включать ли demoMode, но UI нужно:
+  // - показывать контрастный баннер,
+  // - предупреждать про изображения.
+  //
+  // Источник истины:
+  // - `data.demoMode/modelUsed/demoIgnoredImages` — метаданные ПОСЛЕДНЕГО запроса (из response headers)
+  //
+  // До первого запроса эти поля могут быть undefined → используем эвристику:
+  // - demo вероятен, если:
+  //   - apiKey пустой
+  //   - apiBaseUrl НЕ localhost/127.0.0.1
+  //   - apiBaseUrl похож на “удалённого” провайдера (openrouter или vsellm дефолт)
+  const isDemoModeActive = useMemo(() => {
+    if (typeof data.demoMode === 'boolean') return data.demoMode;
+    const keyEmpty = String(apiKey || '').trim().length === 0;
+    const base = String(apiBaseUrl || '').trim();
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(base);
+    const isKnownRemote = /openrouter\.ai/i.test(base) || /api\.vsellm\.ru/i.test(base) || !base;
+    return keyEmpty && !isLocal && isKnownRemote;
+  }, [data.demoMode, apiKey, apiBaseUrl]);
+
   /**
-   * Флаг "у карточки есть вложения".
+   * Вложения:
+   * - `hasAnyAttachments`: есть ли вообще вложения (для UI миниатюр/менеджмента).
+   * - `hasAttachmentsForContext`: есть ли вложения, которые реально пойдут в LLM контекст.
    *
    * Важно:
-   * - Даже если у карточки нет родителей/NeuroSearch, вложения всё равно являются контекстом
-   *   для LLM (они подмешиваются сервером в /api/chat).
-   * - Поэтому, если attachments.length > 0, мы должны:
-   *   1) показывать кнопку "контекст" (чтобы можно было открыть ContextViewerModal),
-   *   2) показывать компактные миниатюры рядом с этой кнопкой (как в чатах).
+   * - В demo режиме изображения НЕ отправляются в LLM (free модели часто не vision-capable).
+   * - Поэтому для контекста считаем “используемыми” только текстовые вложения.
    */
-  const hasAttachments = attachments.length > 0;
+  const hasAnyAttachments = attachments.length > 0;
+  const hasImageAttachments = useMemo(
+    () => attachments.some((a) => a.kind === 'image'),
+    [attachments]
+  );
+  const hasTextAttachments = useMemo(
+    () => attachments.some((a) => a.kind === 'text'),
+    [attachments]
+  );
+  const hasAttachmentsForContext = hasTextAttachments || (!isDemoModeActive && hasImageAttachments);
+
+  // Какая модель реально использовалась в последней генерации (если сервер сообщил).
+  const modelUsedLabel = useMemo(() => {
+    const v = typeof data.modelUsed === 'string' ? data.modelUsed.trim() : '';
+    return v || null;
+  }, [data.modelUsed]);
 
   /**
    * Единый флаг "есть хоть какой-то контекст", который стоит показать пользователю.
@@ -549,7 +589,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
    * - NeuroSearch результатов
    * - вложений текущей карточки
    */
-  const hasAnyContextBadge = hasParentContext || neuroSearchResults.length > 0 || hasAttachments;
+  const hasAnyContextBadge = hasParentContext || neuroSearchResults.length > 0 || hasAttachmentsForContext;
 
   /**
    * Текст кнопки контекста.
@@ -573,13 +613,13 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
             : t.node.attachmentsContextUsed));
 
     // Если вложения присутствуют И есть ещё какой-то контекст — показываем суффикс.
-    if (hasAttachments && (directParents.length > 0 || neuroSearchResults.length > 0)) {
+    if (hasAttachmentsForContext && (directParents.length > 0 || neuroSearchResults.length > 0)) {
       base += t.node.attachmentsSuffix;
     }
     return base;
   }, [
     directParents.length,
-    hasAttachments,
+    hasAttachmentsForContext,
     neuroSearchResults.length,
     t.node.attachmentsContextUsed,
     t.node.attachmentsSuffix,
@@ -1647,6 +1687,64 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
         )}
       />
 
+      {/* =======================================================================
+          DEMO MODE BANNER (компактный, нейтрально‑предупреждающий)
+          ======================================================================= */}
+      {isDemoModeActive && (
+        <div
+          className={cn(
+            // Одна строка, без “огромных” описаний.
+            'mb-2 flex items-center gap-2',
+            'rounded-md border px-2 py-1',
+            // Нейтральный “настораживающий” цвет: оранжевый/amber, без “ядовитых” тонов.
+            'bg-amber-50 text-amber-900 border-amber-200',
+            'dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-800/50'
+          )}
+        >
+          {/* Иконка + tooltip про demo режим */}
+          {/* 
+            ВАЖНО:
+            - Lucide-иконки типизированы так, что у них нет пропса `title`.
+            - Поэтому tooltip делаем нативным способом через `title` на wrapper-элементе.
+            - Hover по svg/circle всё равно попадает в wrapper → tooltip показывается.
+          */}
+          <span
+            className="inline-flex"
+            // Native tooltip: показывается и при hover по SVG, и по svg>circle.
+            title={t.node.demoModeBannerDescription}
+          >
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          </span>
+
+          <span
+            className="text-[11px] font-medium leading-none"
+            title={t.node.demoModeBannerDescription}
+          >
+            {t.node.demoModeBannerTitle}
+          </span>
+
+          {/* Модель, которую реально использовал сервер (если известна) */}
+          <span
+            className="ml-auto text-[11px] font-mono opacity-90"
+            title={t.node.demoModeBannerDescription}
+          >
+            {format(t.node.demoModeBannerModel, { model: modelUsedLabel || t.node.demoModeModelAuto })}
+          </span>
+
+          {/* Иконка-намёк про изображения: подробности только в tooltip */}
+          {hasImageAttachments && (
+            <span
+              className="inline-flex"
+              // Пользователь просил tooltip на circle внутри svg:
+              // у lucide AlertCircle внутри есть <circle>, а title на wrapper покрывает и hover по circle.
+              title={t.node.demoModeImagesIgnored}
+            >
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 opacity-90" />
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Контекст родителя badge - всегда видна при наличии родительского контекста */}
       {/* Убрано условие !data.isStale чтобы кнопка была доступна даже в stale состоянии */}
       {/* Это позволяет пользователю изменять настройки контекста без необходимости регенерации */}
@@ -2042,7 +2140,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
       {/* =======================================================================
           ПАНЕЛЬ ВЛОЖЕНИЙ (список + ошибки)
           ======================================================================= */}
-      {(hasAttachments || attachmentError) && (
+      {(hasAnyAttachments || attachmentError) && (
         <>
           {/* ===================================================================
               ВИЗУАЛЬНОЕ РАЗДЕЛЕНИЕ СЕКЦИЙ (UX):
@@ -2067,7 +2165,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
               'mt-2 flex flex-col gap-2',
               // Разделитель между “панелью кнопок” и “панелью миниатюр”.
               // Показываем только при реальных вложениях (см. комментарий выше).
-              hasAttachments && 'border-t border-border/40 pt-2'
+              hasAnyAttachments && 'border-t border-border/40 pt-2'
             )}
           >
           {/* Ошибки вложений */}
@@ -2078,7 +2176,7 @@ export const QuestionSection: React.FC<QuestionSectionProps> = ({
           )}
 
           {/* Миниатюры вложений (ниже строки ввода — как в чатах) */}
-          {hasAttachments && (
+          {hasAnyAttachments && (
             <div className="flex flex-wrap items-center gap-2">
               {attachments.map((att) => {
                 const isDeleting = deletingAttachmentId === att.attachmentId;

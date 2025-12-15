@@ -93,9 +93,27 @@ export const AnswerSection: React.FC<AnswerSectionProps> = ({
           </div>
         )}
 
-        {/* Error state */}
+        {/* =====================================================================
+            NOTICE / "SOFT ERROR" state
+
+            Требование UX (по задаче):
+            - пользователь НЕ должен видеть "ошибки" (красные алерты / технические простыни),
+              потому что в Demo Mode и в целом при работе с LLM ошибки могут быть частыми/шумными.
+
+            Поэтому:
+            - мы используем нейтрально‑предупреждающий amber стиль (не destructive),
+            - и ожидаем, что верхний слой (useNodeGeneration / сервер) передаст сюда
+              КОРОТКОЕ и ЧЕЛОВЕЧЕСКОЕ сообщение, а не raw JSON/stacktrace.
+           ===================================================================== */}
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+          <div
+            className={cn(
+              'flex items-center gap-2 p-3 rounded-lg border text-sm',
+              // Нейтральный “внимание”, а не “ошибка”.
+              'bg-amber-50 text-amber-900 border-amber-200',
+              'dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-800/50'
+            )}
+          >
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>

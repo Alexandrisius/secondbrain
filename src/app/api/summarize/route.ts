@@ -14,6 +14,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_CHAT_MODEL_ID } from '@/lib/aiCatalog';
+import {
+  getDemoOpenRouterApiKey,
+  isDemoModeApiKey,
+  OPENROUTER_BASE_URL,
+  pickDemoChatModelId,
+} from '@/lib/openrouterDemo';
 
 // =============================================================================
 // КОНФИГУРАЦИЯ
@@ -121,26 +127,36 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    // Проверка наличия API ключа
-    if (!body.apiKey) {
-      return NextResponse.json(
-        { 
-          error: 'API ключ не указан',
-          details: 'Пожалуйста, добавьте API ключ в настройках приложения',
-        },
-        { status: 401 }
-      );
-    }
-    
-    // Используем baseUrl из запроса или URL по умолчанию
-    const apiBaseUrl = body.apiBaseUrl || DEFAULT_API_BASE_URL;
-    
+
+    // =========================================================================
+    // DEMO MODE (NO USER API KEY)
+    // =========================================================================
+    //
+    // Суммаризация используется фоном и очень важна для UX (контекст для внуков).
+    // Поэтому в demo режиме мы тоже позволяем работать без ключа:
+    // - используем встроенный OpenRouter demo key
+    // - выбираем любую актуальную `:free` модель динамически
+    //
+    // NOTE про localhost:
+    // - как и в /api/chat, не хотим ломать keyless локальные OpenAI-compatible сервера,
+    //   поэтому если baseUrl указывает на localhost/127.0.0.1 — demo не включаем.
+    const incomingApiKey = String(body.apiKey ?? '').trim();
+    const incomingBaseUrlRaw = String(body.apiBaseUrl ?? '').trim();
+    const incomingBaseUrl = incomingBaseUrlRaw || DEFAULT_API_BASE_URL;
+
+    const isLocalHostLike =
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(incomingBaseUrl);
+    const isKnownRemoteProvider =
+      /openrouter\.ai/i.test(incomingBaseUrl) || /api\.vsellm\.ru/i.test(incomingBaseUrl);
+
+    const demoMode = isDemoModeApiKey(incomingApiKey) && !isLocalHostLike && (isKnownRemoteProvider || !incomingBaseUrlRaw);
+
+    const apiKeyToUse = demoMode ? getDemoOpenRouterApiKey() : incomingApiKey;
+    const apiBaseUrl = demoMode ? OPENROUTER_BASE_URL : incomingBaseUrl;
+    const model = demoMode ? await pickDemoChatModelId(body.model) : (body.model || DEFAULT_MODEL);
+
     // Формируем полный URL для chat/completions
     const apiUrl = `${apiBaseUrl}/chat/completions`;
-    
-    // Используем модель из запроса или модель по умолчанию
-    const model = body.model || DEFAULT_MODEL;
     
     // Если текст слишком короткий, возвращаем его как есть
     if (body.text.length < 100) {
@@ -172,7 +188,15 @@ export async function POST(request: NextRequest) {
         headers: {
           'Content-Type': 'application/json',
           // Авторизация через Bearer token
-          'Authorization': `Bearer ${body.apiKey}`,
+          ...(apiKeyToUse
+            ? { 'Authorization': `Bearer ${apiKeyToUse}` }
+            : {}),
+          ...( /openrouter\.ai/i.test(apiBaseUrl)
+            ? {
+                'HTTP-Referer': 'https://neurocanvas.local',
+                'X-Title': demoMode ? 'NeuroCanvas (Demo Mode)' : 'NeuroCanvas',
+              }
+            : {}),
         },
         body: JSON.stringify({
           model: model,

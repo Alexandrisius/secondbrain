@@ -18,6 +18,12 @@ import {
   type EmbeddingResponse,
   type EmbeddingError,
 } from '@/types/embeddings';
+import {
+  getDemoOpenRouterApiKey,
+  isDemoModeApiKey,
+  OPENROUTER_BASE_URL,
+  pickDemoEmbeddingsModelId,
+} from '@/lib/openrouterDemo';
 
 /**
  * Модель эмбеддингов по умолчанию (fallback если не указана в запросе)
@@ -58,7 +64,7 @@ interface RequestBody {
   /** Текст для векторизации */
   text: string;
   /** API ключ для авторизации */
-  apiKey: string;
+  apiKey?: string;
   /** Базовый URL API провайдера для эмбеддингов (например "https://api.openai.com/v1") */
   embeddingsBaseUrl?: string;
   /** Модель эмбеддингов (опционально) */
@@ -127,15 +133,37 @@ export async function POST(request: NextRequest) {
       };
       return NextResponse.json(error, { status: 400 });
     }
-    
-    // Валидация: API ключ обязателен
-    if (!body.apiKey || typeof body.apiKey !== 'string') {
-      const error: EmbeddingError = {
-        error: 'API ключ не указан',
-        details: 'Пожалуйста, добавьте API ключ в настройках приложения',
-      };
-      return NextResponse.json(error, { status: 401 });
-    }
+
+    // =========================================================================
+    // DEMO MODE (NO USER API KEY) — embeddings enabled
+    // =========================================================================
+    //
+    // Требование проекта:
+    // - В demo режиме мы хотим, чтобы работали и эмбеддинги (NeuroSearch),
+    //   чтобы пользователь мог полноценно протестировать приложение.
+    //
+    // Решение:
+    // - если apiKey пустой → используем встроенный OpenRouter demo key,
+    // - embeddingsBaseUrl принудительно ставим на OpenRouter,
+    // - модель принудительно ставим на qwen/qwen3-embedding-8b (по требованию автора).
+    //
+    // NOTE про localhost:
+    // - если пользователь явно использует локальный embeddingsBaseUrl (localhost),
+    //   мы НЕ включаем demoMode: некоторые локальные API могут работать без ключа.
+    const incomingApiKey = String(body.apiKey ?? '').trim();
+    const incomingBaseUrlRaw = String(body.embeddingsBaseUrl ?? '').trim();
+    const incomingBaseUrl = incomingBaseUrlRaw || DEFAULT_EMBEDDINGS_BASE_URL;
+
+    const isLocalHostLike =
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(incomingBaseUrl);
+    const isKnownRemoteProvider =
+      /openrouter\.ai/i.test(incomingBaseUrl) || /api\.vsellm\.ru/i.test(incomingBaseUrl);
+
+    const demoMode = isDemoModeApiKey(incomingApiKey) && !isLocalHostLike && (isKnownRemoteProvider || !incomingBaseUrlRaw);
+
+    const apiKeyToUse = demoMode ? getDemoOpenRouterApiKey() : incomingApiKey;
+    const embeddingsBaseUrl = demoMode ? OPENROUTER_BASE_URL : incomingBaseUrl;
+    const model = demoMode ? pickDemoEmbeddingsModelId() : (body.model || FALLBACK_EMBEDDING_MODEL);
     
     // Валидация: длина текста
     if (body.text.length > MAX_TEXT_LENGTH) {
@@ -146,15 +174,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(error, { status: 400 });
     }
     
-    // Используем baseUrl из запроса или URL по умолчанию
-    const embeddingsBaseUrl = body.embeddingsBaseUrl || DEFAULT_EMBEDDINGS_BASE_URL;
-    
     // Формируем полный URL для embeddings
     const apiUrl = `${embeddingsBaseUrl}/embeddings`;
-    
-    // Используем модель из запроса или fallback модель
-    // ВАЖНО: Модель должна быть передана из настроек клиента!
-    const model = body.model || FALLBACK_EMBEDDING_MODEL;
     
     // =========================================================================
     // ЗАПРОС К API ЭМБЕДДИНГОВ
@@ -178,7 +199,15 @@ export async function POST(request: NextRequest) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${body.apiKey}`,
+          ...(apiKeyToUse
+            ? { 'Authorization': `Bearer ${apiKeyToUse}` }
+            : {}),
+          ...( /openrouter\.ai/i.test(embeddingsBaseUrl)
+            ? {
+                'HTTP-Referer': 'https://neurocanvas.local',
+                'X-Title': demoMode ? 'NeuroCanvas (Demo Mode)' : 'NeuroCanvas',
+              }
+            : {}),
         },
         body: JSON.stringify({
           model: model,

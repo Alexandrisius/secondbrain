@@ -1130,9 +1130,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {/* Предупреждение если ключ не введён */}
               {!apiKey && (
-                <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200">
+                <div className="flex items-start gap-2 p-3 rounded-md text-sm bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
                   <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>{t.settings.apiKeyRequired}</span>
+                  <span>
+                    {/* 
+                      DEMO MODE UX:
+                      - Пользователь может тестировать приложение без ключа.
+                      - Серверные роуты сами включают demo fallback:
+                        - Chat/Summary: OpenRouter demo key + auto `:free` модель
+                        - Embeddings: OpenRouter demo key + qwen/qwen3-embedding-8b
+                      
+                      Важно: это не "ошибка", а информирование.
+                    */}
+                    {t.settings.apiKeyDemoModeNotice}
+                  </span>
                 </div>
               )}
             </div>

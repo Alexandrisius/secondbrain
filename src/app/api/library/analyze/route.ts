@@ -39,6 +39,12 @@ import { readLibraryIndex, writeLibraryIndex, type LibraryDoc, type LibraryDocAn
 import { readUsageIndex, getUsageLinksForDoc } from '@/lib/libraryUsageIndex';
 import { assertDocIdOrThrow } from '@/app/api/library/_shared';
 import type { NodeAttachment } from '@/types/canvas';
+import {
+  getDemoOpenRouterApiKey,
+  isDemoModeApiKey,
+  OPENROUTER_BASE_URL,
+  pickDemoChatModelId,
+} from '@/lib/openrouterDemo';
 
 // Next.js распознаёт `runtime`/`dynamic` только как литералы в `route.ts`.
 // Ре-экспорт из другого файла приводит к warning и игнорированию настройки.
@@ -128,6 +134,7 @@ type AnalyzeDocResult =
         | 'FILE_NOT_FOUND'
         | 'UNSUPPORTED_KIND'
         | 'ALREADY_UP_TO_DATE'
+        | 'DEMO_MODE_VISION_DISABLED'
         | 'INVALID_DOC_ID';
     }
   | {
@@ -255,7 +262,18 @@ async function callChatCompletions(params: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${params.apiKey}`,
+        // Авторизация через Bearer token (если ключ есть).
+        // В некоторых локальных OpenAI-compatible серверах ключ может быть не нужен.
+        ...(params.apiKey ? { Authorization: `Bearer ${params.apiKey}` } : {}),
+
+        // Best-practice заголовки OpenRouter (не секреты).
+        // Здесь мы не знаем, demoMode это или нет, поэтому ставим нейтральный X-Title.
+        ...( /openrouter\.ai/i.test(params.apiUrl)
+          ? {
+              'HTTP-Referer': 'https://neurocanvas.local',
+              'X-Title': 'NeuroCanvas',
+            }
+          : {}),
       },
       body: JSON.stringify({
         model: params.model,
@@ -365,16 +383,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 1) Валидация базовых полей
     // -------------------------------------------------------------------------
     const docIdsRaw = Array.isArray(body.docIds) ? body.docIds : [];
-    const apiKey = String(body.apiKey || '').trim();
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error: 'API ключ не указан',
-          details: 'Передайте apiKey в теле запроса (как в /api/chat).',
-        },
-        { status: 401 }
-      );
-    }
+
+    // -------------------------------------------------------------------------
+    // DEMO MODE (NO USER API KEY)
+    // -------------------------------------------------------------------------
+    //
+    // В файловом менеджере анализ документов — это важная часть UX.
+    // Поэтому в demo режиме мы делаем best-effort поддержку:
+    // - текстовые документы: summary можно сделать через OpenRouter demo key (free model)
+    // - изображения: vision в demo режиме НЕ гарантирован (free vision может отсутствовать),
+    //   поэтому мы честно пропускаем изображения с понятной причиной.
+    //
+    // NOTE про localhost:
+    // - как и в /api/chat, если пользователь использует локальный OpenAI-compatible сервер
+    //   без ключа, не хотим ломать этот кейс.
+    const incomingApiKey = String(body.apiKey || '').trim();
+    const incomingBaseUrlRaw = String(body.apiBaseUrl || '').trim();
+    const incomingBaseUrl = incomingBaseUrlRaw || DEFAULT_API_BASE_URL;
+
+    const isLocalHostLike =
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(incomingBaseUrl);
+    const isKnownRemoteProvider =
+      /openrouter\.ai/i.test(incomingBaseUrl) || /api\.vsellm\.ru/i.test(incomingBaseUrl);
+
+    const demoMode = isDemoModeApiKey(incomingApiKey) && !isLocalHostLike && (isKnownRemoteProvider || !incomingBaseUrlRaw);
+
+    const apiKey = demoMode ? getDemoOpenRouterApiKey() : incomingApiKey;
 
     if (docIdsRaw.length === 0) {
       return NextResponse.json({ error: 'docIds обязателен (непустой массив)' }, { status: 400 });
@@ -388,9 +422,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // -------------------------------------------------------------------------
     // 2) Готовим LLM конфиг
     // -------------------------------------------------------------------------
-    const apiBaseUrl = String(body.apiBaseUrl || '').trim() || DEFAULT_API_BASE_URL;
+    const apiBaseUrl = demoMode ? OPENROUTER_BASE_URL : (String(body.apiBaseUrl || '').trim() || DEFAULT_API_BASE_URL);
     const apiUrl = `${apiBaseUrl}/chat/completions`;
-    const model = String(body.model || '').trim() || DEFAULT_CHAT_MODEL_ID;
+    const model = demoMode ? await pickDemoChatModelId(body.model) : (String(body.model || '').trim() || DEFAULT_CHAT_MODEL_ID);
     const corporateMode = Boolean(body.corporateMode);
     const languageHintText = String(body.languageHintText || '').trim() || null;
 
@@ -471,6 +505,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // (Для текста нам нужен summary, для изображения — description.)
       if ((isImage && imageUpToDate) || (!isImage && summaryUpToDate)) {
         results.push({ docId, status: 'skipped', reason: 'ALREADY_UP_TO_DATE' });
+        continue;
+      }
+
+      // -----------------------------------------------------------------------
+      // 4.3.5) Demo-mode ограничение: vision для изображений отключаем
+      // -----------------------------------------------------------------------
+      //
+      // Почему отключаем:
+      // - В OpenRouter free-пуле может НЕ быть мультимодальных моделей.
+      // - Даже если появляются — их доступность/лимиты нестабильны.
+      // - Мы не хотим, чтобы demo-опыт "ломался" из-за vision.
+      //
+      // Поэтому:
+      // - для изображений в demo режиме возвращаем "skipped" с явной причиной,
+      // - для текста — продолжаем (summary работает стабильно).
+      if (demoMode && isImage) {
+        results.push({ docId, status: 'skipped', reason: 'DEMO_MODE_VISION_DISABLED' });
         continue;
       }
 
