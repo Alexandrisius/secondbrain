@@ -127,6 +127,14 @@ export const en: TranslationKeys = {
     russian: 'Русский',
     english: 'English',
 
+    // Theme
+    themeSection: 'Visual Theme',
+    theme: 'Theme',
+    themeDescription: 'Choose your interface color scheme.',
+    themeLight: 'Light',
+    themeDark: 'Dark',
+    themeSystem: 'System',
+
     // Interface
     interfaceSection: 'Interface',
     defaultCardWidth: 'Default Card Width',
@@ -260,6 +268,18 @@ export const en: TranslationKeys = {
     redoTooltip: 'Redo undone action',
     noUndoAvailable: 'Nothing to undo',
     noRedoAvailable: 'Nothing to redo',
+
+    // Delete confirmation modal
+    deleteConfirmTitle: 'Delete card?',
+    deleteConfirmTitlePlural: 'Delete cards?',
+    deleteConfirmDescription: 'Are you sure you want to delete {count} card? This action cannot be undone.',
+    deleteConfirmDescriptionPlural: 'Are you sure you want to delete {count} cards? This action cannot be undone.',
+    deleteConfirmEdgesNote: '{count} edges will also be deleted.',
+    // Delete edges only
+    deleteEdgeTitle: 'Delete edge?',
+    deleteEdgeTitlePlural: 'Delete edges?',
+    deleteEdgeDescription: 'Are you sure you want to delete {count} edge?',
+    deleteEdgeDescriptionPlural: 'Are you sure you want to delete {count} edges?',
   },
 
   // ===========================================================================
@@ -337,6 +357,10 @@ export const en: TranslationKeys = {
 
     // Stop generation
     stopGeneration: 'Stop generation',
+
+    // Delete confirmation
+    confirmDelete: 'Confirm delete',
+    cancelDelete: 'Cancel delete',
 
     // Resize
     resizeCard: 'Resize card width',

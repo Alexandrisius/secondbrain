@@ -10,7 +10,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2, Monitor, LayoutTemplate, Check } from 'lucide-react';
+import { Settings, Info, Zap, BookOpen, RotateCcw, Key, Cpu, Eye, EyeOff, Globe, Server, Link, ShieldAlert, Building2, Search, AlertTriangle, RefreshCw, Loader2, Monitor, LayoutTemplate, Check, Moon, Sun } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -41,6 +41,8 @@ import {
   selectSetUseSummarization,
   selectLanguage,
   selectSetLanguage,
+  selectTheme,
+  selectSetTheme,
   selectCorporateMode,
   selectSetCorporateMode,
   selectEmbeddingsModel,
@@ -54,6 +56,7 @@ import {
   selectResetSettings,
   API_PROVIDERS,
   type Language,
+  type Theme,
   type ApiProvider,
 } from '@/store/useSettingsStore';
 import { useTranslation } from '@/lib/i18n';
@@ -309,6 +312,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setUseSummarization = useSettingsStore(selectSetUseSummarization);
   const language = useSettingsStore(selectLanguage);
   const setLanguage = useSettingsStore(selectSetLanguage);
+  const theme = useSettingsStore(selectTheme);
+  const setTheme = useSettingsStore(selectSetTheme);
   const corporateMode = useSettingsStore(selectCorporateMode);
   const setCorporateMode = useSettingsStore(selectSetCorporateMode);
   const embeddingsModel = useSettingsStore(selectEmbeddingsModel);
@@ -905,6 +910,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
           
+          {/* =============================================================== */}
+          {/* СЕКЦИЯ: ТЕМА ОФОРМЛЕНИЯ */}
+          {/* =============================================================== */}
+          
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            <Monitor className="w-4 h-4" />
+            {t.settings.themeSection}
+          </div>
+          
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Moon className="w-4 h-4 text-purple-500" />
+                {t.settings.theme}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {t.settings.themeDescription}
+              </p>
+              
+              <div className="flex bg-muted p-1 rounded-lg">
+                {[
+                  { value: 'light', label: t.settings.themeLight, icon: Sun },
+                  { value: 'dark', label: t.settings.themeDark, icon: Moon },
+                  { value: 'system', label: t.settings.themeSystem, icon: Monitor },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setTheme(option.value as Theme)}
+                    className={`
+                      flex-1 flex items-center justify-center gap-2
+                      px-3 py-2 rounded-md text-sm font-medium transition-all duration-200
+                      ${theme === option.value 
+                        ? 'bg-background text-foreground shadow-sm' 
+                        : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
+                      }
+                    `}
+                  >
+                    <option.icon className="w-4 h-4" />
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* =============================================================== */}
           {/* СЕКЦИЯ: ИНТЕРФЕЙС */}
           {/* =============================================================== */}

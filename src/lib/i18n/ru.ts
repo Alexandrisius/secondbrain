@@ -129,6 +129,14 @@ export const ru = {
     russian: 'Русский',
     english: 'English',
 
+    // Тема
+    themeSection: 'Тема оформления',
+    theme: 'Тема',
+    themeDescription: 'Выберите цветовую схему интерфейса.',
+    themeLight: 'Светлая',
+    themeDark: 'Тёмная',
+    themeSystem: 'Системная',
+
     // Интерфейс
     interfaceSection: 'Интерфейс',
     defaultCardWidth: 'Ширина карточек',
@@ -262,6 +270,18 @@ export const ru = {
     redoTooltip: 'Повторить отменённое действие',
     noUndoAvailable: 'Нечего отменять',
     noRedoAvailable: 'Нечего повторять',
+
+    // Модальное окно подтверждения удаления
+    deleteConfirmTitle: 'Удалить карточку?',
+    deleteConfirmTitlePlural: 'Удалить карточки?',
+    deleteConfirmDescription: 'Вы уверены, что хотите удалить {count} карточку? Это действие нельзя отменить.',
+    deleteConfirmDescriptionPlural: 'Вы уверены, что хотите удалить {count} карточек? Это действие нельзя отменить.',
+    deleteConfirmEdgesNote: 'Также будут удалены {count} связей.',
+    // Удаление только связей
+    deleteEdgeTitle: 'Удалить связь?',
+    deleteEdgeTitlePlural: 'Удалить связи?',
+    deleteEdgeDescription: 'Вы уверены, что хотите удалить {count} связь?',
+    deleteEdgeDescriptionPlural: 'Вы уверены, что хотите удалить {count} связей?',
   },
 
   // ===========================================================================
@@ -340,6 +360,10 @@ export const ru = {
 
     // Остановка генерации
     stopGeneration: 'Остановить генерацию',
+
+    // Подтверждение удаления
+    confirmDelete: 'Подтвердить удаление',
+    cancelDelete: 'Отменить удаление',
 
     // Resize
     resizeCard: 'Изменить ширину карточки',

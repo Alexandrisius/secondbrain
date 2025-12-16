@@ -306,8 +306,8 @@ export function Sidebar() {
       className={cn(
         // Базовые стили
         'h-full flex flex-col relative',
-        'bg-[#1e1e2e]/95 backdrop-blur-md',
-        'border-r border-[#313244]/80',
+        'bg-[#11111b]/95 backdrop-blur-md',
+        'border-r border-[#313244]/50',
         // Тень для глубины
         'shadow-2xl shadow-black/20',
         // Анимация только когда не resizing
@@ -326,8 +326,8 @@ export function Sidebar() {
         className={cn(
           'flex items-center justify-between',
           'h-14 px-3',
-          'border-b border-[#313244]/60',
-          'bg-gradient-to-b from-[#181825] to-[#1e1e2e]',
+          'border-b border-[#313244]/50',
+          'bg-gradient-to-b from-[#0e0e16] to-[#11111b]',
         )}
       >
         {/* Заголовок (скрывается при сворачивании) */}

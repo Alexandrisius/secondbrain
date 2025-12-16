@@ -42,6 +42,11 @@ import {
 export type Language = 'ru' | 'en';
 
 /**
+ * Поддерживаемые темы оформления
+ */
+export type Theme = 'light' | 'dark' | 'system';
+
+/**
  * Поддерживаемые API провайдеры (OpenAI-совместимые)
  * 
  * ВАЖНО: мы оставляем только два режима работы:
@@ -256,6 +261,16 @@ export interface AppSettings {
    * - 'en' - English
    */
   language: Language;
+
+  /**
+   * Тема оформления приложения
+   * 
+   * Поддерживаемые значения:
+   * - 'light' - Светлая
+   * - 'dark' - Тёмная (по умолчанию)
+   * - 'system' - Как в системе
+   */
+  theme: Theme;
   
   /**
    * Корпоративный режим (отключение проверки SSL сертификатов)
@@ -404,6 +419,12 @@ export interface SettingsStore extends AppSettings {
    * @param language - Код языка ('ru' или 'en')
    */
   setLanguage: (language: Language) => void;
+
+  /**
+   * Установить тему оформления
+   * @param theme - Тема ('light', 'dark', 'system')
+   */
+  setTheme: (theme: Theme) => void;
   
   /**
    * Включить/выключить корпоративный режим
@@ -498,6 +519,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   useSummarization: true,
   // Язык интерфейса по умолчанию - русский
   language: 'ru',
+  // Тема по умолчанию - тёмная (по требованию)
+  theme: 'dark',
   // Корпоративный режим по умолчанию выключен (полная проверка SSL)
   corporateMode: false,
   // Модель эмбеддингов по умолчанию из конфигурации провайдера
@@ -748,6 +771,15 @@ export const useSettingsStore = create<SettingsStore>()(
       setLanguage: (language: Language) => {
         set({ language });
       },
+
+      /**
+       * Установить тему оформления
+       * 
+       * @param theme - Тема ('light', 'dark', 'system')
+       */
+      setTheme: (theme: Theme) => {
+        set({ theme });
+      },
       
       /**
        * Установить корпоративный режим
@@ -842,7 +874,9 @@ export const useSettingsStore = create<SettingsStore>()(
       // - apiKey больше НЕ persist'ится
       // - добавлено поле apiKeyStorageMode (persist'ится)
       // - миграция гарантированно очищает старый apiKey из localStorage
-      version: 11,
+      //
+      // ВАЖНО: увеличена с 11 до 12 при добавлении выбора темы оформления (Theme)
+      version: 12,
 
       /**
        * Ограничиваем persisted-state до “не секретных” настроек.
@@ -864,6 +898,7 @@ export const useSettingsStore = create<SettingsStore>()(
         model: state.model,
         useSummarization: state.useSummarization,
         language: state.language,
+        theme: state.theme,
         corporateMode: state.corporateMode,
         embeddingsModel: state.embeddingsModel,
         neuroSearchMinSimilarity: state.neuroSearchMinSimilarity,
@@ -938,6 +973,7 @@ export const useSettingsStore = create<SettingsStore>()(
           embeddingsBaseUrl?: unknown;
           embeddingsModel?: unknown;
           apiKeyStorageMode?: unknown;
+          theme?: unknown;
         };
 
         const raw = (persistedState ?? {}) as PersistedSettings;
@@ -999,6 +1035,15 @@ export const useSettingsStore = create<SettingsStore>()(
         // defaultCardContentHeight появилось в v9
         if (version < 9 && (next.defaultCardContentHeight === undefined || next.defaultCardContentHeight === null)) {
           next.defaultCardContentHeight = 400;
+        }
+
+        // Theme появилось в v12
+        // Если тема не задана или некорректна — ставим 'dark' (по требованию пользователя)
+        if (version < 12) {
+          const t = raw.theme;
+          if (t !== 'light' && t !== 'dark' && t !== 'system') {
+            next.theme = 'dark';
+          }
         }
 
         // ---------------------------------------------------------------------
@@ -1196,6 +1241,16 @@ export const selectLanguage = (state: SettingsStore) => state.language;
 export const selectSetLanguage = (state: SettingsStore) => state.setLanguage;
 
 /**
+ * Селектор для получения текущей темы
+ */
+export const selectTheme = (state: SettingsStore) => state.theme;
+
+/**
+ * Селектор для получения функции изменения темы
+ */
+export const selectSetTheme = (state: SettingsStore) => state.setTheme;
+
+/**
  * Селектор для получения корпоративного режима
  * 
  * @example
@@ -1261,4 +1316,3 @@ export const selectSetDefaultCardContentHeight = (state: SettingsStore) => state
  * Селектор для получения функции сброса настроек
  */
 export const selectResetSettings = (state: SettingsStore) => state.resetSettings;
-

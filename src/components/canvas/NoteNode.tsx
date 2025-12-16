@@ -21,9 +21,9 @@ import {
     Copy,
     Trash2,
     Check,
+    X,
     Quote,
     PlusCircle,
-    X,
     GripVertical,
     BookOpen,
 } from 'lucide-react';
@@ -102,6 +102,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
     const [debouncedContent] = useDebounce(localContent, 2000);
 
     const [copied, setCopied] = useState(false);
+    const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     const [isResizing, setIsResizing] = useState(false);
     const [resizeWidth, setResizeWidth] = useState(data.width ?? DEFAULT_CARD_WIDTH);
 
@@ -465,8 +466,8 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
         >
             <div
                 className={cn(
-                    'neuro-node bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800 shadow-lg backdrop-blur-sm transition-all duration-300',
-                    selected && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background',
+                    'neuro-node bg-amber-50 dark:bg-card rounded-xl border border-amber-200 dark:border-border shadow-lg backdrop-blur-sm transition-all duration-300',
+                    selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
                     // Reuse stale/invalid styles if needed, though notes rarely go stale in the same way
                     data.isQuoteInvalidated && 'neuro-node--quote-invalid'
                 )}
@@ -474,7 +475,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                 {/* HEADER: Title */}
                 <div
                     className={cn(
-                        "relative p-4 border-b border-amber-100 dark:border-amber-900/50",
+                        "relative p-4 border-b border-amber-100 dark:border-border",
                         !isEditingTitle && "cursor-grab"
                     )}
                     onDoubleClick={handleTitleDoubleClick}
@@ -500,19 +501,19 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             minRows={1}
                             className={cn(
                                 'w-full resize-none overflow-hidden bg-transparent border-none p-0',
-                                'text-lg font-bold text-amber-900 dark:text-amber-100 placeholder:text-amber-900/30 dark:placeholder:text-amber-100/30',
+                                'text-lg font-bold text-amber-900 dark:text-foreground placeholder:text-amber-900/30 dark:placeholder:text-muted-foreground',
                                 'focus:outline-none focus:ring-0 nodrag'
                             )}
                         />
                     ) : (
-                        <div className="text-lg font-bold text-amber-900 dark:text-amber-100 min-h-[28px]">
-                            {localTitle || <span className="text-amber-900/30 dark:text-amber-100/30">{t.noteNode?.titlePlaceholder || 'Note title'}</span>}
+                        <div className="text-lg font-bold text-amber-900 dark:text-foreground min-h-[28px]">
+                            {localTitle || <span className="text-amber-900/30 dark:text-muted-foreground">{t.noteNode?.titlePlaceholder || 'Note title'}</span>}
                         </div>
                     )}
                 </div>
 
                 {/* TOOLBAR */}
-                <div className="flex items-center justify-between px-2 py-1 bg-amber-100/50 dark:bg-amber-900/30">
+                <div className="flex items-center justify-between px-2 py-1 bg-amber-100/50 dark:bg-muted/50">
                     <div className="flex items-center gap-1">
                         {/* Copy */}
                         <Button
@@ -520,7 +521,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                             size="sm"
                             onClick={handleCopy}
                             onPointerDown={(e) => e.stopPropagation()}
-                            className="h-8 w-8 p-0 nodrag text-amber-800 dark:text-amber-200 hover:bg-amber-200/50 dark:hover:bg-amber-900/50"
+                            className="h-8 w-8 p-0 nodrag text-amber-800 dark:text-muted-foreground hover:bg-amber-200/50 dark:hover:bg-muted"
                         >
                             {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                         </Button>
@@ -533,8 +534,8 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                                 onClick={isQuoteMode ? handleExitQuoteMode : handleEnterQuoteMode}
                                 onPointerDown={(e) => e.stopPropagation()}
                                 className={cn(
-                                    'h-8 w-8 p-0 nodrag text-amber-800 dark:text-amber-200 hover:bg-amber-200/50 dark:hover:bg-amber-900/50',
-                                    isQuoteMode && 'bg-amber-200 dark:bg-amber-800'
+                                    'h-8 w-8 p-0 nodrag text-amber-800 dark:text-muted-foreground hover:bg-amber-200/50 dark:hover:bg-muted',
+                                    isQuoteMode && 'bg-amber-200 dark:bg-muted'
                                 )}
                             >
                                 {isQuoteMode ? <X className="w-4 h-4" /> : <Quote className="w-4 h-4" />}
@@ -546,7 +547,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                                     size="sm"
                                     onClick={handleCreateQuoteCard}
                                     onPointerDown={(e) => e.stopPropagation()}
-                                    className="h-8 px-2 text-amber-800 dark:text-amber-200 hover:bg-amber-200/50 gap-1.5 animate-in fade-in nodrag"
+                                    className="h-8 px-2 text-amber-800 dark:text-foreground hover:bg-amber-200/50 dark:hover:bg-muted gap-1.5 animate-in fade-in nodrag"
                                 >
                                     <PlusCircle className="w-4 h-4" />
                                     <span className="text-xs font-medium">
@@ -563,7 +564,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                                 size="sm"
                                 onClick={handleOpenReadingMode}
                                 onPointerDown={(e) => e.stopPropagation()}
-                                className="h-8 w-8 p-0 nodrag text-amber-800 dark:text-amber-200 hover:bg-amber-200/50 dark:hover:bg-amber-900/50"
+                                className="h-8 w-8 p-0 nodrag text-amber-800 dark:text-muted-foreground hover:bg-amber-200/50 dark:hover:bg-muted"
                                 title={t.readingMode?.openReadingMode || 'Режим чтения (F2)'}
                             >
                                 <BookOpen className="w-4 h-4" />
@@ -572,20 +573,51 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                     </div>
 
                     <div className="flex items-center gap-1">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleDelete}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 nodrag"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {isConfirmingDelete ? (
+                            // Режим подтверждения: две кнопки - отмена (X) и подтверждение (✓)
+                            <div className="flex items-center gap-1 animate-in fade-in slide-in-from-right-2 duration-200">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setIsConfirmingDelete(false)}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted nodrag"
+                                    title={t.node.cancelDelete}
+                                >
+                                    <X className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                        setIsConfirmingDelete(false);
+                                        handleDelete();
+                                    }}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 nodrag"
+                                    title={t.node.confirmDelete}
+                                >
+                                    <Check className="w-4 h-4" />
+                                </Button>
+                            </div>
+                        ) : (
+                            // Обычный режим: кнопка удаления
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setIsConfirmingDelete(true)}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 nodrag"
+                                title={t.node.deleteCard}
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </Button>
+                        )}
 
                         <div
                             onMouseDown={handleResizeStart}
                             onPointerDown={(e) => e.stopPropagation()}
-                            className="neuro-resize-handle h-8 w-4 -mr-2 flex items-center justify-center cursor-ew-resize text-amber-900/30 hover:text-amber-900 hover:bg-amber-200/50 nodrag"
+                            className="neuro-resize-handle h-8 w-4 -mr-2 flex items-center justify-center cursor-ew-resize text-amber-900/30 hover:text-amber-900 hover:bg-amber-200/50 dark:text-muted-foreground/30 dark:hover:text-muted-foreground dark:hover:bg-muted/50 nodrag"
                         >
                             <GripVertical className="w-3 h-4" />
                         </div>
@@ -655,7 +687,7 @@ const NoteNodeComponent = ({ id, data, selected }: NoteNodeProps) => {
                 </div>
 
                 {/* Footer info */}
-                <div className="px-4 py-2 text-xs text-amber-900/40 dark:text-amber-100/40 flex justify-between">
+                <div className="px-4 py-2 text-xs text-amber-900/40 dark:text-muted-foreground/40 flex justify-between">
                     <span>{localContent.length} {t.noteNode?.chars || 'chars'}</span>
                     {data.isSummarizing && <span className="animate-pulse">{t.noteNode?.summarizing || 'Summarizing...'}</span>}
                 </div>

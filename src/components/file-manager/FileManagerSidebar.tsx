@@ -957,7 +957,7 @@ export function FileManagerSidebar() {
 
   return (
     <aside
-      className="h-full relative flex flex-col bg-[#1e1e2e]/95 backdrop-blur-md border-l border-[#313244]/80 shadow-2xl z-50"
+      className="h-full relative flex flex-col bg-[#11111b]/95 backdrop-blur-md border-l border-[#313244]/50 shadow-2xl z-50"
       style={{ width }}
     >
       <div
@@ -973,7 +973,7 @@ export function FileManagerSidebar() {
       </div>
 
       {/* HEADER */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-[#313244]/60 bg-[#181825]/50">
+      <div className="h-14 flex items-center justify-between px-4 border-b border-[#313244]/50 bg-[#0e0e16]/50">
         <div className="flex items-center gap-2">
           <button 
              onClick={() => setIsCollapsed(true)}

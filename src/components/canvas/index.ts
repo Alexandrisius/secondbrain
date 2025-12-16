@@ -22,6 +22,7 @@ export { SettingsModal, SettingsButton } from './SettingsModal';
 
 // Модальное окно просмотра контекста
 export { ContextViewerModal } from './ContextViewerModal';
+export { DeleteConfirmModal } from './DeleteConfirmModal';
 
 // Модальное окно донатов/поддержки
 export { DonateModal, DonateButtonTrigger } from './DonateModal';

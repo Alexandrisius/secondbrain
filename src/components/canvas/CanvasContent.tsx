@@ -44,6 +44,7 @@ import { SettingsModal, SettingsButton } from './SettingsModal';
 import { DonateModal, DonateButtonTrigger } from './DonateModal';
 import { SearchBar } from './SearchBar';
 import { ReadingModeModal } from './ReadingModeModal';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { SystemPromptModal, SystemPromptButton } from './SystemPromptModal';
 import { useReadingModeStore } from '@/store/useReadingModeStore';
 import { useSettingsStore, selectDefaultCardWidth } from '@/store/useSettingsStore';
@@ -212,6 +213,21 @@ export function CanvasContent() {
    * Открывается по Ctrl+P или кликом на кнопку поиска
    */
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  /**
+   * Состояние модального окна подтверждения удаления
+   * Открывается при нажатии Delete/Backspace для выделенных нод/связей
+   */
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+
+  /**
+   * Данные для удаления (ноды и связи)
+   * Сохраняются при открытии модалки, используются при подтверждении
+   */
+  const [pendingDeleteData, setPendingDeleteData] = useState<{
+    nodeIds: string[];
+    edgeIds: string[];
+  }>({ nodeIds: [], edgeIds: [] });
 
   /**
    * Флаг: идёт ли процесс выделения рамкой
@@ -659,6 +675,9 @@ export function CanvasContent() {
    * а не ноды. Для удаления ноды при редактировании - сначала Escape (blur),
    * затем Delete.
    * 
+   * ИЗМЕНЕНИЕ: Теперь вместо немедленного удаления показывается модальное окно
+   * подтверждения для защиты от случайного удаления.
+   * 
    * Проверки:
    * 1. Активный элемент - INPUT или TEXTAREA
    * 2. Активный элемент - contentEditable
@@ -698,29 +717,47 @@ export function CanvasContent() {
       // Находим выделенные связи
       const selectedEdges = edges.filter((e) => e.selected);
 
-      // Если есть что удалять - предотвращаем дефолтное поведение
+      // Если есть что удалять - показываем модальное окно подтверждения
       if (selectedNodes.length > 0 || selectedEdges.length > 0) {
         event.preventDefault();
 
-        // Удаляем все выделенные ноды
-        selectedNodes.forEach((node) => {
-          removeNode(node.id);
+        // Сохраняем данные для удаления
+        setPendingDeleteData({
+          nodeIds: selectedNodes.map((n) => n.id),
+          edgeIds: selectedEdges.map((e) => e.id),
         });
 
-        // Удаляем все выделенные связи через onEdgesChange
-        if (selectedEdges.length > 0) {
-          const edgeChanges = selectedEdges.map((edge) => ({
-            type: 'remove' as const,
-            id: edge.id,
-          }));
-          onEdgesChange(edgeChanges);
-        }
+        // Открываем модальное окно подтверждения
+        setIsDeleteConfirmOpen(true);
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, edges, removeNode, onEdgesChange]);
+  }, [nodes, edges]);
+
+  /**
+   * Обработчик подтверждения удаления из модального окна
+   * Удаляет все сохранённые ноды и связи
+   */
+  const handleConfirmDelete = useCallback(() => {
+    // Удаляем все сохранённые ноды
+    pendingDeleteData.nodeIds.forEach((nodeId) => {
+      removeNode(nodeId);
+    });
+
+    // Удаляем все сохранённые связи через onEdgesChange
+    if (pendingDeleteData.edgeIds.length > 0) {
+      const edgeChanges = pendingDeleteData.edgeIds.map((edgeId) => ({
+        type: 'remove' as const,
+        id: edgeId,
+      }));
+      onEdgesChange(edgeChanges);
+    }
+
+    // Очищаем данные для удаления
+    setPendingDeleteData({ nodeIds: [], edgeIds: [] });
+  }, [pendingDeleteData, removeNode, onEdgesChange]);
 
   // ===========================================================================
   // ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ГОРЯЧИХ КЛАВИШ ДЛЯ ВЫДЕЛЕННЫХ НОД
@@ -1989,6 +2026,18 @@ export function CanvasContent() {
 
       {/* ----- РЕЖИМ ПОЛНОЭКРАННОГО ЧТЕНИЯ КАРТОЧЕК ----- */}
       <ReadingModeModal />
+
+      {/* ----- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ ----- */}
+      <DeleteConfirmModal
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => {
+          setIsDeleteConfirmOpen(false);
+          setPendingDeleteData({ nodeIds: [], edgeIds: [] });
+        }}
+        onConfirm={handleConfirmDelete}
+        nodeCount={pendingDeleteData.nodeIds.length}
+        edgeCount={pendingDeleteData.edgeIds.length}
+      />
 
       {/* ----- ИНДИКАТОР СОХРАНЕНИЯ, UNDO/REDO И КНОПКА РУЧНОГО СОХРАНЕНИЯ ----- */}
       <div className="absolute top-4 left-4 z-50 pointer-events-auto flex items-center gap-2">

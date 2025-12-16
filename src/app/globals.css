@@ -93,53 +93,54 @@
      ============================================================================= */
 
   .dark {
-    /* --- Основные цвета --- */
-    --background: 220 20% 7%;
-    --foreground: 220 10% 98%;
+    /* --- Основные цвета (Obsidian Style) --- */
+    /* Canvas: Нейтральный тёмно-серый, светлее сайдбара */
+    --background: 240 5% 12%; /* ~#1e1e21 */
+    --foreground: 240 5% 90%;
 
     /* --- Карточки --- */
-    --card: 220 20% 10%;
-    --card-foreground: 220 10% 98%;
+    --card: 240 5% 16%; /* Чуть светлее фона */
+    --card-foreground: 240 5% 90%;
 
     /* --- Popover --- */
-    --popover: 220 20% 10%;
-    --popover-foreground: 220 10% 98%;
+    --popover: 240 5% 16%;
+    --popover-foreground: 240 5% 90%;
 
-    /* --- Primary (акцентный - яркий индиго) --- */
-    --primary: 245 70% 65%;
-    --primary-foreground: 220 20% 7%;
+    /* --- Primary (акцентный - мягкий фиолетовый/индиго) --- */
+    --primary: 260 50% 65%;
+    --primary-foreground: 0 0% 100%;
 
     /* --- Secondary --- */
-    --secondary: 220 20% 15%;
-    --secondary-foreground: 220 10% 98%;
+    --secondary: 240 5% 20%;
+    --secondary-foreground: 240 5% 90%;
 
     /* --- Muted --- */
-    --muted: 220 20% 15%;
-    --muted-foreground: 220 10% 60%;
+    --muted: 240 5% 20%;
+    --muted-foreground: 240 5% 60%;
 
     /* --- Accent --- */
-    --accent: 220 20% 15%;
-    --accent-foreground: 220 10% 98%;
+    --accent: 240 5% 20%;
+    --accent-foreground: 240 5% 90%;
 
     /* --- Destructive --- */
     --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 100%;
 
     /* --- Границы и инпуты --- */
-    --border: 220 20% 18%;
-    --input: 220 20% 18%;
-    --ring: 245 70% 65%;
+    --border: 240 5% 25%;
+    --input: 240 5% 25%;
+    --ring: 260 50% 65%;
 
     /* --- Графики --- */
-    --chart-1: 245 70% 65%;
+    --chart-1: 260 50% 65%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
 
     /* --- NeuroCanvas тёмная тема --- */
-    --neuro-node-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
-    --neuro-node-shadow-hover: 0 8px 30px -4px rgba(0, 0, 0, 0.6);
+    --neuro-node-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+    --neuro-node-shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
   }
 }
 
@@ -206,6 +207,15 @@
   /* --- MiniMap --- */
   .neuro-minimap {
     @apply bg-card/80 backdrop-blur-sm border border-border rounded-lg shadow-lg overflow-hidden;
+  }
+
+  /* ВАЖНО: Принудительно красим SVG-фон мини-карты в тёмный цвет в тёмной теме */
+  .dark .neuro-minimap {
+    background-color: hsl(var(--card));
+  }
+  
+  .dark .neuro-minimap .react-flow__minimap-mask {
+    fill: rgba(0, 0, 0, 0.6);
   }
 
   .neuro-minimap .react-flow__minimap-mask {

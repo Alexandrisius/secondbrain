@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Check,
   Copy,
@@ -54,6 +54,7 @@ export const AnswerToolbar: React.FC<AnswerToolbarProps> = ({
   handleResizeStart,
 }) => {
   const { t } = useTranslation();
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   return (
     <div className="neuro-answer-toolbar flex items-center justify-between px-2 py-1 border-t border-border bg-muted/30">
@@ -165,16 +166,46 @@ export const AnswerToolbar: React.FC<AnswerToolbarProps> = ({
 
       {/* Правая часть: кнопка удаления + ручка resize */}
       <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDelete}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="h-8 w-8 p-0 text-destructive hover:text-destructive nodrag"
-          title={t.node.deleteCard}
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
+        {isConfirmingDelete ? (
+          // Режим подтверждения: две кнопки - отмена (X) и подтверждение (✓)
+          <div className="flex items-center gap-1 animate-in fade-in slide-in-from-right-2 duration-200">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsConfirmingDelete(false)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted nodrag"
+              title={t.node.cancelDelete}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setIsConfirmingDelete(false);
+                handleDelete();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950 nodrag"
+              title={t.node.confirmDelete}
+            >
+              <Check className="w-4 h-4" />
+            </Button>
+          </div>
+        ) : (
+          // Обычный режим: кнопка удаления
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsConfirmingDelete(true)}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="h-8 w-8 p-0 text-destructive hover:text-destructive nodrag"
+            title={t.node.deleteCard}
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        )}
 
         <div
           onMouseDown={handleResizeStart}
