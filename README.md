@@ -56,8 +56,9 @@ NeuroCanvas allows you to:
 ## 🌟 Features
 
 ### 🤖 Multi-AI Support
-- **OpenRouter** (Gemini, Claude, DeepSeek, etc.)
-- **Custom API** (Any OpenAI-compatible API, user-defined base URL; default is prefilled with VSELLM URL for backward compatibility)
+- **Curated Catalog**: Built-in support for top-tier models (GPT-5.2, Claude Opus 4.5, Gemini 2.5 Flash, DeepSeek V3.2, etc.).
+- **OpenRouter & Custom**: Full compatibility with OpenRouter and any OpenAI-compatible API.
+- **Smart Configuration**: Automatic handling of context window limits and model capabilities.
 
 ### 🧠 System Instructions
 Define global system instructions and behavioral rules for the LLM that apply to the entire canvas context. Control the persona, tone, and constraints of your AI assistant.
@@ -302,7 +303,7 @@ Notes:
 - **Frontend**: Next.js 14 + React 18 + TypeScript 5
 - **Desktop**: Electron 39 with auto-updates
 - **Canvas**: React Flow (@xyflow/react) for infinite canvas
-- **State Management**: Zustand with Immer for immutable updates
+- **State Management**: Zustand with Immer (Architecture split into modular slices)
 - **History**: Zundo for undo/redo functionality
 - **Database**: Dexie (IndexedDB wrapper) for local storage
 - **Search**: Hybrid RRF (Reciprocal Rank Fusion) with BM25, semantic, fuzzy, and exact matching
@@ -335,6 +336,12 @@ Notes:
 - **Retries**: on transient failures (network errors and retryable HTTP statuses like 408/429/5xx), the app performs **3 automatic retries** with exponential backoff + jitter.
   - retry strategy: restart streaming **from scratch** (partial text is overwritten by the new attempt)
   - if all retries fail, the last partial text is preserved so the user doesn't lose it
+
+### 📚 Documentation
+For deeper dive into the codebase:
+- [**API Endpoints**](./docs/api/endpoints.md) — Detailed description of all backend routes.
+- [**Class Reference**](./docs/api/reference.md) — Documentation for core classes (SearchEngine, Stores, Database).
+
 
 ---
 
